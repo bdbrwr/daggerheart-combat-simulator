@@ -1,4 +1,4 @@
 from .common import AdvantageState
-from .duality import DualityRollResult, Outcome, roll_duality
+from .duality import DualityRollResult, DualityOutcome, roll_duality
 
-__all__ = ["AdvantageState", "DualityRollResult", "Outcome", "roll_duality"]
+__all__ = ["AdvantageState", "DualityRollResult", "DualityOutcome", "roll_duality"]

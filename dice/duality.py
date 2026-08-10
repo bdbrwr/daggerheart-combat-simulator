@@ -4,7 +4,7 @@ import random
 
 from .common import AdvantageState
 
-class Outcome(Enum):
+class DualityOutcome(Enum):
     HOPE = "hope"
     FEAR = "fear"
     CRIT = "crit"
@@ -20,10 +20,10 @@ class DualityRollResult:
     difficulty: int | None = None
 
     @property
-    def outcome(self) -> Outcome:
+    def outcome(self) -> DualityOutcome:
         if self.hope_die_result == self.fear_die_result:
-            return Outcome.CRIT
-        return Outcome.HOPE if self.hope_die_result > self.fear_die_result else Outcome.FEAR
+            return DualityOutcome.CRIT
+        return DualityOutcome.HOPE if self.hope_die_result > self.fear_die_result else DualityOutcome.FEAR
 
     @property
     def advantage_total(self) -> int:
@@ -45,7 +45,7 @@ class DualityRollResult:
 
     @property
     def is_critical(self) -> bool:
-        return self.outcome == Outcome.CRIT
+        return self.outcome == DualityOutcome.CRIT
 
     @property
     def is_success(self) -> bool | None:
