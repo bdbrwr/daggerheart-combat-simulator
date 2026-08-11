@@ -1,16 +1,10 @@
 """Duality dice (2d12, Hope vs. Fear) resolution - PC rolls only.
 
-Hope > Fear -> Hope; Fear > Hope -> Fear; equal -> Critical (auto-success
-regardless of difficulty, gain 1 Hope, clear 1 Stress per the SRD - those
-Hope/Stress side effects are the caller's responsibility, not modeled here).
+Hope > Fear -> Hope; Fear > Hope -> Fear; equal -> Critical (auto-successregardless of difficulty, gain 1 Hope, clear 1 Stress per the SRD - those Hope/Stress side effects are the caller's responsibility, not modeled here).
 
-Advantage/Disadvantage is resolved additively here: roll a d6 and add it
-(Advantage) or subtract it (Disadvantage) from the total. This differs from
-D20 rolls, which take the higher/lower of two full d20s - see dice/d20.py.
+Advantage/Disadvantage is resolved additively here: roll a d6 and add it (Advantage) or subtract it (Disadvantage) from the total.
 
-Help (also additive, but a separate mechanic) is a die pool from a helping
-ally, rolled independently of Advantage/Disadvantage and does NOT cancel
-against Disadvantage - only the single best help die counts.
+Help (also additive, but a separate mechanic) is a die pool from a helping ally, rolled independently of Advantage/Disadvantage and does NOT cancelagainst Disadvantage - only the single best help die counts.
 """
 
 from dataclasses import dataclass, field
@@ -30,9 +24,7 @@ class DualityOutcome(Enum):
 class DualityRollResult:
     """Immutable result of a single duality (2d12) roll.
 
-    All derived values (outcome, total, is_success, ...) are computed via
-    properties from the raw dice fields - never add a stored field that
-    duplicates one of these.
+    All derived values (outcome, total, is_success, ...) are computed viaproperties from the raw dice fields - never add a stored field that duplicates one of these.
     """
 
     hope_die_result: int
@@ -121,20 +113,13 @@ def roll_duality(
     Args:
         modifier: Flat modifier added to the total.
         difficulty: Target number to beat; if None, `is_success` is None.
-        advantage_state: ADVANTAGE/DISADVANTAGE additionally rolls a d6 and
-            adds/subtracts it from the total; NONE rolls nothing extra.
-        help_dice: Die sizes of any allies helping (e.g. [6, 8] for a d6 and
-            a d8 helper); only the single best result is applied.
+        advantage_state: ADVANTAGE/DISADVANTAGE additionally rolls a d6 andadds/subtracts it from the total; NONE rolls nothing extra.
+        help_dice: Die sizes of any allies helping (e.g. [6, 8] for a d6 anda d8 helper); only the single best result is applied.
         hope_die: Die size for the Hope die (default d12).
         fear_die: Die size for the Fear die (default d12).
 
     Returns:
         A DualityRollResult with every raw die roll recorded.
-
-    Note:
-        Draws from the global `random` module directly - there is no
-        injectable `rng` parameter by design. Seed `random` for determinism
-        in tests, don't reintroduce an `rng=` param without discussing it.
     """
 
     hope_die_result = random.randint(1,hope_die)

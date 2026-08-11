@@ -1,9 +1,6 @@
 """D20 roll resolution - adversaries and environments only, not PCs.
 
-Advantage/Disadvantage here follows the classic d20 convention: roll two
-d20s and take the higher (Advantage) or lower (Disadvantage). This is NOT
-additive like duality rolls - see dice/duality.py for the PC-side
-resolution, which uses the same AdvantageState enum but a different rule.
+Advantage/Disadvantage here follows the classic d20 convention: roll two d20s and take the higher (Advantage) or lower (Disadvantage).
 """
 
 from dataclasses import dataclass
@@ -16,12 +13,7 @@ from .common import AdvantageState
 class D20RollResult:
     """Immutable result of a single (or double, under adv/disadv) d20 roll.
 
-    Resolved against a PC's Evasion rather than a generic "difficulty" -
-    hence the more specific `evasion` field/param name, since d20 rolls only
-    ever have this one use case (adversaries/environments attacking PCs).
-    All derived values (total, is_critical, is_success, ...) are computed
-    via properties from the raw dice fields - never add a stored field that
-    duplicates one of these.
+    All derived values (total, is_critical, is_success, ...) are computed via properties from the raw dice fields - never add a stored field thatduplicates one of these.
     """
 
     die_results: list[int]  # one roll normally; two if advantage/disadvantage
@@ -31,8 +23,7 @@ class D20RollResult:
 
     @property
     def die_result(self) -> int:
-        """The roll that counts: the only roll under NONE, the higher of two
-        under ADVANTAGE, the lower of two under DISADVANTAGE."""
+        """The roll that counts: the only roll under NONE, the higher of twounder ADVANTAGE, the lower of two under DISADVANTAGE."""
         if self.advantage_state is AdvantageState.ADVANTAGE:
             return max(self.die_results)
         if self.advantage_state is AdvantageState.DISADVANTAGE:
@@ -47,19 +38,12 @@ class D20RollResult:
     @property
     def is_critical(self) -> bool:
         """True on a natural 20.
-
-        Because this checks `die_result` rather than each raw die, Advantage
-        crits if either roll is a 20 (die_result is the max), while
-        Disadvantage only crits if BOTH rolls are 20 (die_result is the
-        min) - no separate advantage-aware branching needed. No
-        fumble-on-natural-1 mechanic is implemented.
         """
         return self.die_result == 20
 
     @property
     def is_success(self) -> bool | None:
         """True/False against evasion, or None if no evasion was given.
-
         A critical always succeeds regardless of evasion.
         """
         if self.evasion is None:
@@ -91,18 +75,11 @@ def roll_d20(
 
     Args:
         modifier: Flat modifier added to the total.
-        evasion: Target's Evasion to check the total against; if None,
-            `is_success` is None.
-        advantage_state: ADVANTAGE/DISADVANTAGE rolls a second d20 and takes
-            the higher/lower of the two; NONE rolls just one.
+        evasion: Target's Evasion to check the total against; if None,`is_success` is None.
+        advantage_state: ADVANTAGE/DISADVANTAGE rolls a second d20 and takes the higher/lower of the two; NONE rolls just one.
 
     Returns:
         A D20RollResult with every raw die roll recorded.
-
-    Note:
-        Draws from the global `random` module directly - there is no
-        injectable `rng` parameter by design. Seed `random` for determinism
-        in tests, don't reintroduce an `rng=` param without discussing it.
     """
     if advantage_state is AdvantageState.NONE:
         die_results = [random.randint(1, 20)]
