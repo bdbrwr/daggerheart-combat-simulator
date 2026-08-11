@@ -1,5 +1,3 @@
-from cmath import e
-
 import pytest
 
 from dice import D20RollResult, AdvantageState
