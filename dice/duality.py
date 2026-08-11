@@ -1,3 +1,18 @@
+"""Duality dice (2d12, Hope vs. Fear) resolution - PC rolls only.
+
+Hope > Fear -> Hope; Fear > Hope -> Fear; equal -> Critical (auto-success
+regardless of difficulty, gain 1 Hope, clear 1 Stress per the SRD - those
+Hope/Stress side effects are the caller's responsibility, not modeled here).
+
+Advantage/Disadvantage is resolved additively here: roll a d6 and add it
+(Advantage) or subtract it (Disadvantage) from the total. This differs from
+D20 rolls, which take the higher/lower of two full d20s - see dice/d20.py.
+
+Help (also additive, but a separate mechanic) is a die pool from a helping
+ally, rolled independently of Advantage/Disadvantage and does NOT cancel
+against Disadvantage - only the single best help die counts.
+"""
+
 from dataclasses import dataclass, field
 from enum import Enum
 import random
@@ -5,12 +20,21 @@ import random
 from .common import AdvantageState
 
 class DualityOutcome(Enum):
+    """Which die won the duality roll: HOPE, FEAR, or a tied CRIT."""
+
     HOPE = "hope"
     FEAR = "fear"
     CRIT = "crit"
 
 @dataclass(frozen=True)
 class DualityRollResult:
+    """Immutable result of a single duality (2d12) roll.
+
+    All derived values (outcome, total, is_success, ...) are computed via
+    properties from the raw dice fields - never add a stored field that
+    duplicates one of these.
+    """
+
     hope_die_result: int
     fear_die_result: int
     modifier: int
@@ -21,34 +45,47 @@ class DualityRollResult:
 
     @property
     def outcome(self) -> DualityOutcome:
+        """HOPE, FEAR, or CRIT depending on which die is higher (or tied)."""
         if self.hope_die_result == self.fear_die_result:
             return DualityOutcome.CRIT
         return DualityOutcome.HOPE if self.hope_die_result > self.fear_die_result else DualityOutcome.FEAR
 
     @property
     def advantage_total(self) -> int:
+        """Signed Advantage/Disadvantage d6 contribution, or 0 if AdvantageState.NONE."""
         if self.advantage_state is AdvantageState.NONE or self.advantage_die_result is None:
             return 0
         return self.advantage_state.value * self.advantage_die_result
 
     @property
     def help_total(self) -> int:
+        """Best single help die, or 0 if no one helped.
+
+        Help dice are NOT summed - only the single best result counts, even
+        if multiple allies helped.
+        """
         if self.help_dice_results is None or len(self.help_dice_results) == 0:
             return 0
         return max(self.help_dice_results)
 
     @property
     def total (self) -> int:
+        """Hope + Fear + modifier + Advantage/Disadvantage swing + best help die."""
         return (
             self.hope_die_result + self.fear_die_result + self.modifier + self.advantage_total + self.help_total
         )
 
     @property
     def is_critical(self) -> bool:
+        """True when the Hope and Fear dice are equal (Critical Success)."""
         return self.outcome == DualityOutcome.CRIT
 
     @property
     def is_success(self) -> bool | None:
+        """True/False against difficulty, or None if no difficulty was given.
+
+        A Critical always succeeds regardless of difficulty.
+        """
         if self.difficulty is None:
             return None
         if self.is_critical:
@@ -79,6 +116,26 @@ def roll_duality(
     hope_die = 12,
     fear_die = 12
 ) -> DualityRollResult:
+    """Roll Hope + Fear duality dice and resolve Advantage/Disadvantage/Help.
+
+    Args:
+        modifier: Flat modifier added to the total.
+        difficulty: Target number to beat; if None, `is_success` is None.
+        advantage_state: ADVANTAGE/DISADVANTAGE additionally rolls a d6 and
+            adds/subtracts it from the total; NONE rolls nothing extra.
+        help_dice: Die sizes of any allies helping (e.g. [6, 8] for a d6 and
+            a d8 helper); only the single best result is applied.
+        hope_die: Die size for the Hope die (default d12).
+        fear_die: Die size for the Fear die (default d12).
+
+    Returns:
+        A DualityRollResult with every raw die roll recorded.
+
+    Note:
+        Draws from the global `random` module directly - there is no
+        injectable `rng` parameter by design. Seed `random` for determinism
+        in tests, don't reintroduce an `rng=` param without discussing it.
+    """
 
     hope_die_result = random.randint(1,hope_die)
     fear_die_result = random.randint(1,fear_die)
