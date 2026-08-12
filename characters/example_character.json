@@ -1,0 +1,64 @@
+{
+  "name": "Kael Ashgrove",
+  "level": 1,
+
+  "class": "Guardian",
+  "subclass": "Stalwart",
+  "ancestry": "Human",
+  "community": "Wanderborne",
+
+  "traits": {
+    "agility": 0,
+    "strength": 2,
+    "finesse": 0,
+    "instinct": 1,
+    "presence": 1,
+    "knowledge": -1
+  },
+
+  "evasion": 9,
+  "proficiency": 1,
+
+  "thresholds": {
+    "major": 6,
+    "severe": 12
+  },
+
+  "hp": {
+    "max": 7,
+    "marked": 0
+  },
+  "stress": {
+    "max": 6,
+    "marked": 0
+  },
+  "hope": {
+    "max": 6,
+    "marked": 2
+  },
+  "armor": {
+    "max": 3,
+    "marked": 0
+  },
+
+  "equipment": {
+    "primary_weapon": "Broadsword",
+    "secondary_weapon": null,
+    "armor": "Gambeson Armor"
+  },
+
+  "domain_cards": {
+    "loadout":["I Am Your Shield", "Get Back Up"],
+    "vault": []
+  },
+
+  "experiences": [
+    { "name": "Former Watch Captain", "modifier": 2 },
+    { "name": "Steady Under Fire", "modifier": 2 }
+  ],
+
+  "consumables": [
+    { "name": "Minor Healing Potion", "quantity": 1 }
+  ]
+
+}
