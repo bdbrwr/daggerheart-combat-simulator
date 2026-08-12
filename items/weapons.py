@@ -5,33 +5,21 @@ Each weapon is a callable, not a data record: reads the attacker's trait and Pro
 Docstrings describe what a weapon *should* do (a paraphrase, not the SRDtext verbatim) so a mismatch between the two is easy to spot while debugging.
 """
 
-from dataclasses import dataclass
 from typing import Protocol
 
 from characters.player_character import PlayerCharacter
+from combat.results import AttackResult
 from dice.common import AdvantageState
-from dice.damage import DamageRollResult, DiceGroup, roll_damage
-from dice.duality import DualityRollResult, roll_duality
+from dice.damage import DiceGroup, roll_damage
+from dice.duality import roll_duality
 
 
 class Target(Protocol):
-    """Anything a PC's weapon can attack - an adversary, once that exists."""
+    """Anything a PC's weapon can attack - an adversary."""
 
     difficulty: int
 
     def take_damage(self, amount: int) -> int: ...
-
-
-@dataclass(frozen=True)
-class AttackResult:
-    """Outcome of one weapon attack: the attack roll, and the damage roll if it hit."""
-
-    attack_roll: DualityRollResult
-    damage_roll: DamageRollResult | None
-
-    @property
-    def hit(self) -> bool:
-        return bool(self.attack_roll.is_success)
 
 
 def broadsword_attack(

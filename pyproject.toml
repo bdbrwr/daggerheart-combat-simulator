@@ -9,8 +9,14 @@ authors = [
 requires-python = ">=3.14"
 dependencies = []
 
-requires = ["uv_build>=0.12.3,<0.13.0"]
-build-backend = "uv_build"
+# No [build-system]: this project is run in place, never installed. uv treats a
+# project without one as virtual - it builds the environment but doesn't try to
+# package the source tree. That suits a flat layout with several top-level
+# packages (dice, characters, items, adversaries, combat, encounters), which a
+# single-module build backend wouldn't map onto cleanly anyway. pytest finds
+# them via pythonpath below.
+[tool.uv]
+package = false
 
 [dependency-groups]
 dev = [

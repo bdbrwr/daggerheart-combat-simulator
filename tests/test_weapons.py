@@ -8,7 +8,11 @@ from items.weapons import broadsword_attack
 
 
 class FakeTarget:
-    """A minimal stand-in for the Target protocol - no Adversary class exists yet."""
+    """A minimal stand-in for the items.weapons.Target protocol.
+
+    Adversary satisfies that protocol too, but a fake keeps these tests to one
+    moving part - the weapon - and records what damage it was handed.
+    """
 
     def __init__(self, difficulty: int = 10):
         self.difficulty = difficulty

@@ -1,23 +1,51 @@
-"""Adversary state - the GM-side equivalent of characters/player_character.py.
+"""Adversary stats and state - the GM-side equivalent of characters/player_character.py.
 
-Like PlayerCharacter, an Adversary is mutable: HP and Stress get marked over
-the course of a simulated fight. Adversaries don't have Hope, Armor Slots, or
-Evasion (PC-only concepts) - the number PC attacks roll against is Difficulty
-instead (per the SRD: "attacks rolled against adversaries use the target's
-Difficulty instead of Evasion").
+An Adversary is a plain bag of numbers plus one generic `attack()`. Every stat
+that affects how dangerous a fight is - Difficulty, thresholds, HP, Stress,
+attack modifier, damage dice, damage modifier - is a field, so tuning an
+adversary never means editing code. That's the whole point: this simulator
+exists to push those numbers around until an encounter lands on the balance
+profile we want, so they have to be reachable as values a run can vary.
+
+Individual adversaries are defined as module-level literals in this package
+(see jagged_knife.py) - one definition per adversary, named as the SRD names
+it, or by its given name if homebrewed. Per-encounter tweaks belong in
+encounters/, not here: `spawn()` copies a definition and applies overrides so
+the definition itself is never mutated by a simulated fight.
+
+Adversaries don't have Hope, Armor Slots, or Evasion (PC-only concepts) - the
+number PC attacks roll against is Difficulty instead (per the SRD: "attacks
+rolled against adversaries use the target's Difficulty instead of Evasion").
 
 Defeat (what happens when an adversary marks its last HP) is deliberately not
 modeled here yet, the same way PlayerCharacter doesn't infer death from
 hp_marked == hp_max - that hasn't been looked up and built on purpose.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Protocol
+
+from combat.results import AttackResult
+from dice.common import AdvantageState
+from dice.d20 import roll_d20
+from dice.damage import DiceGroup, roll_damage
+
+
+class Target(Protocol):
+    """Anything an adversary's attack can target - a PC, for now."""
+
+    evasion: int
+
+    def take_damage(self, amount: int) -> int: ...
 
 
 @dataclass
 class Adversary:
-    """An adversary's stats plus whatever HP/Stress have been marked so far."""
+    """An adversary's stats plus whatever HP/Stress have been marked so far.
+
+    Used both as a reusable definition (a stat block, at starting state) and as
+    a single combatant in a fight - `spawn()` turns the former into the latter.
+    """
 
     name: str
     tier: int
@@ -27,9 +55,56 @@ class Adversary:
     hp_max: int
     stress_max: int
     attack_modifier: int
+    damage_dice: list[DiceGroup] = field(default_factory=list)
+    damage_modifier: int = 0
 
     hp_marked: int = 0
     stress_marked: int = 0
+
+    def spawn(self, **overrides) -> "Adversary":
+        """An independent copy at starting state, with any stat overrides applied.
+
+        One definition can back several combatants in the same fight, so each
+        one needs its own HP/Stress to mark and its own damage_dice list.
+        Overrides are how an encounter tunes a stat block without touching the
+        definition - `JAGGED_KNIFE_BANDIT.spawn(hp_max=7, damage_modifier=3)`.
+        """
+        changes = {
+            "damage_dice": list(self.damage_dice),
+            "hp_marked": 0,
+            "stress_marked": 0,
+        }
+        changes.update(overrides)
+        return replace(self, **changes)
+
+    def attack(
+        self,
+        target: Target,
+        advantage_state: AdvantageState = AdvantageState.NONE,
+    ) -> AttackResult:
+        """Standard attack: d20 + attack_modifier against the target's Evasion.
+
+        On a hit, rolls this adversary's damage dice plus its flat modifier and
+        applies the total to the target. Adversaries whose attack does something
+        a plain roll can't express need their own function alongside their
+        definition; nothing does yet.
+        """
+        attack_roll = roll_d20(
+            modifier=self.attack_modifier,
+            evasion=target.evasion,
+            advantage_state=advantage_state,
+        )
+
+        if not attack_roll.is_success:
+            return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+        damage_roll = roll_damage(
+            dice_groups=self.damage_dice,
+            modifier=self.damage_modifier,
+            is_critical=attack_roll.is_critical,
+        )
+        target.take_damage(damage_roll.total)
+        return AttackResult(attack_roll=attack_roll, damage_roll=damage_roll)
 
     def mark_hp(self, amount: int) -> None:
         self.hp_marked = min(self.hp_marked + amount, self.hp_max)
@@ -62,11 +137,3 @@ class Adversary:
             hp_to_mark = 1
         self.mark_hp(hp_to_mark)
         return hp_to_mark
-
-
-class Target(Protocol):
-    """Anything an adversary's attack can target - a PC, for now."""
-
-    evasion: int
-
-    def take_damage(self, amount: int) -> int: ...

@@ -1,4 +1,9 @@
+from unittest.mock import patch
+
 from adversaries.adversary import Adversary
+from dice.common import AdvantageState
+from dice.d20 import D20RollResult
+from dice.damage import DamageRollResult, DiceGroup
 
 
 def _make_adversary(**overrides) -> Adversary:
@@ -11,9 +16,32 @@ def _make_adversary(**overrides) -> Adversary:
         hp_max=5,
         stress_max=3,
         attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=1,
     )
     defaults.update(overrides)
     return Adversary(**defaults)
+
+
+class FakeTarget:
+    """A minimal stand-in for the adversaries.adversary.Target protocol."""
+
+    def __init__(self, evasion: int = 10):
+        self.evasion = evasion
+        self.damage_taken: list[int] = []
+
+    def take_damage(self, amount: int) -> int:
+        self.damage_taken.append(amount)
+        return amount
+
+
+def _d20_result(*, die: int, modifier: int, evasion: int) -> D20RollResult:
+    return D20RollResult(
+        die_results=[die],
+        modifier=modifier,
+        advantage_state=AdvantageState.NONE,
+        evasion=evasion,
+    )
 
 
 def test_mark_hp_clamps_to_max():
@@ -71,3 +99,114 @@ def test_take_damage_well_above_severe_still_marks_three():
     adversary = _make_adversary(major_threshold=8, severe_threshold=14)
     assert adversary.take_damage(100) == 3
     assert adversary.hp_marked == 3
+
+
+def test_spawn_copies_stats():
+    definition = _make_adversary(hp_max=5, attack_modifier=1)
+    spawned = definition.spawn()
+    assert spawned.name == definition.name
+    assert spawned.hp_max == 5
+    assert spawned.attack_modifier == 1
+
+
+def test_spawn_applies_overrides_without_touching_the_definition():
+    definition = _make_adversary(hp_max=5, damage_modifier=1)
+    spawned = definition.spawn(hp_max=9, damage_modifier=4)
+    assert spawned.hp_max == 9
+    assert spawned.damage_modifier == 4
+    assert definition.hp_max == 5
+    assert definition.damage_modifier == 1
+
+
+def test_spawn_gives_each_copy_its_own_marked_state():
+    definition = _make_adversary(hp_max=5)
+    first, second = definition.spawn(), definition.spawn()
+    first.mark_hp(3)
+    assert first.hp_marked == 3
+    assert second.hp_marked == 0
+    assert definition.hp_marked == 0
+
+
+def test_spawn_resets_marked_state_from_a_used_copy():
+    used = _make_adversary(hp_max=5)
+    used.mark_hp(4)
+    used.mark_stress(2)
+    fresh = used.spawn()
+    assert fresh.hp_marked == 0
+    assert fresh.stress_marked == 0
+
+
+def test_spawn_does_not_share_the_damage_dice_list():
+    definition = _make_adversary()
+    spawned = definition.spawn()
+    spawned.damage_dice.append(DiceGroup(count=1, sides=6))
+    assert len(definition.damage_dice) == 1
+
+
+def test_attack_hit_rolls_and_applies_damage():
+    adversary = _make_adversary(attack_modifier=1, damage_modifier=1)
+    target = FakeTarget(evasion=10)
+    hit_roll = _d20_result(die=15, modifier=1, evasion=10)  # total 16, not a crit
+    damage_roll = DamageRollResult(
+        dice_groups=[DiceGroup(count=1, sides=8)], die_results=[[5]], modifier=1
+    )
+
+    with (
+        patch("adversaries.adversary.roll_d20", return_value=hit_roll) as mock_roll_d20,
+        patch("adversaries.adversary.roll_damage", return_value=damage_roll) as mock_roll_damage,
+    ):
+        result = adversary.attack(target)
+
+    assert result.hit is True
+    assert result.damage_roll is damage_roll
+    assert target.damage_taken == [6]  # 5 rolled + 1 flat modifier
+    assert mock_roll_d20.call_args.kwargs["modifier"] == adversary.attack_modifier
+    assert mock_roll_d20.call_args.kwargs["evasion"] == target.evasion
+    assert mock_roll_damage.call_args.kwargs["dice_groups"] == adversary.damage_dice
+    assert mock_roll_damage.call_args.kwargs["modifier"] == adversary.damage_modifier
+
+
+def test_attack_miss_deals_no_damage():
+    adversary = _make_adversary()
+    target = FakeTarget(evasion=18)
+    miss_roll = _d20_result(die=5, modifier=1, evasion=18)  # total 6, well below evasion
+
+    with (
+        patch("adversaries.adversary.roll_d20", return_value=miss_roll),
+        patch("adversaries.adversary.roll_damage") as mock_roll_damage,
+    ):
+        result = adversary.attack(target)
+
+    assert result.hit is False
+    assert result.damage_roll is None
+    assert target.damage_taken == []
+    mock_roll_damage.assert_not_called()
+
+
+def test_attack_passes_critical_through_to_the_damage_roll():
+    adversary = _make_adversary()
+    target = FakeTarget(evasion=10)
+    crit_roll = _d20_result(die=20, modifier=1, evasion=10)
+
+    with (
+        patch("adversaries.adversary.roll_d20", return_value=crit_roll),
+        patch("adversaries.adversary.roll_damage") as mock_roll_damage,
+    ):
+        adversary.attack(target)
+
+    assert mock_roll_damage.call_args.kwargs["is_critical"] is True
+
+
+def test_attack_uses_tuned_stats_from_spawn():
+    tuned = _make_adversary(attack_modifier=1).spawn(attack_modifier=7, damage_modifier=4)
+    target = FakeTarget(evasion=10)
+    hit_roll = _d20_result(die=15, modifier=7, evasion=10)
+
+    with (
+        patch("adversaries.adversary.roll_d20", return_value=hit_roll) as mock_roll_d20,
+        patch("adversaries.adversary.roll_damage") as mock_roll_damage,
+    ):
+        tuned.attack(target)
+
+    assert mock_roll_d20.call_args.kwargs["modifier"] == 7
+    assert mock_roll_damage.call_args.kwargs["modifier"] == 4
