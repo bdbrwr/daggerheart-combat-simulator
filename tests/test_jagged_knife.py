@@ -5,7 +5,7 @@ transcription error or that someone edited the definition where they meant to
 add an override.
 """
 
-from adversaries.jagged_knife import JAGGED_KNIFE_BANDIT, JAGGED_KNIFE_SNIPER
+from adversaries.srd import JAGGED_KNIFE_BANDIT, JAGGED_KNIFE_SNIPER
 from dice.damage import DiceGroup
 
 

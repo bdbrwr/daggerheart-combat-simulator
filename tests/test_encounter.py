@@ -1,6 +1,6 @@
 import pytest
 
-from adversaries.jagged_knife import JAGGED_KNIFE_BANDIT, JAGGED_KNIFE_SNIPER
+from adversaries.srd import JAGGED_KNIFE_BANDIT, JAGGED_KNIFE_SNIPER
 from encounters.encounter import CHARACTERS_DIR, Encounter, Group
 from encounters.roadside_ambush import ROADSIDE_AMBUSH
 
@@ -12,6 +12,17 @@ def test_group_spawns_requested_count():
     assert all(adversary.name == "Jagged Knife Bandit" for adversary in spawned)
 
 
+def test_group_accepts_an_adversary_by_name():
+    group = Group("Jagged Knife Bandit", count=2)
+    assert group.adversary is JAGGED_KNIFE_BANDIT
+    assert len(group.spawn()) == 2
+
+
+def test_group_rejects_an_unknown_name_at_construction():
+    with pytest.raises(KeyError):
+        Group("Jagged Knife Trebuchet", count=1)
+
+
 def test_group_spawns_independent_copies():
     first, second = Group(JAGGED_KNIFE_BANDIT, count=2).spawn()
     first.mark_hp(2)
@@ -20,13 +31,13 @@ def test_group_spawns_independent_copies():
 
 
 def test_group_overrides_apply_to_every_copy():
-    spawned = Group(JAGGED_KNIFE_SNIPER, count=2, hp_max=5, damage_modifier=4).spawn()
+    spawned = Group("Jagged Knife Sniper", count=2, hp_max=5, damage_modifier=4).spawn()
     assert [adversary.hp_max for adversary in spawned] == [5, 5]
     assert [adversary.damage_modifier for adversary in spawned] == [4, 4]
 
 
 def test_group_overrides_leave_the_definition_alone():
-    Group(JAGGED_KNIFE_SNIPER, count=1, hp_max=5).spawn()
+    Group("Jagged Knife Sniper", count=1, hp_max=5).spawn()
     assert JAGGED_KNIFE_SNIPER.hp_max == 3
 
 

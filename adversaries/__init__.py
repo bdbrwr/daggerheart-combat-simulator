@@ -1,9 +1,10 @@
 from .adversary import Adversary, Target
-from .jagged_knife import JAGGED_KNIFE_BANDIT, JAGGED_KNIFE_SNIPER
+from .registry import all_adversaries, find_adversary, refresh
 
 __all__ = [
     "Adversary",
     "Target",
-    "JAGGED_KNIFE_BANDIT",
-    "JAGGED_KNIFE_SNIPER",
+    "all_adversaries",
+    "find_adversary",
+    "refresh",
 ]

@@ -1,21 +1,27 @@
-"""The Jagged Knife gang's adversaries - both Tier 1, both from the SRD.
+"""Adversaries as printed in the Daggerheart SRD.
 
-Each is a single Adversary literal: the stat block as numbers, nothing else.
-Names match the SRD's exactly so an encounter listing them can be checked
-against the printed stat block without guesswork.
+One module per publication: this file is the SRD, homebrew.py is ours, and a
+purchased adventure or supplement gets its own module named after it. What a
+stat block was published in is the one thing about it that never changes, so
+it's what the filing goes on.
 
-Attacks run through Adversary.attack(), so nothing here needs an attack
-function of its own. Passive features that aren't part of a standard attack
-roll (Climber, From Above, Unseen Strike) aren't modeled - they depend on
-position/Hidden state this scaffolding doesn't track yet. Picked deliberately
-as adversaries whose features have little expected impact on simulated
-outcomes; noted here for debugging, not implemented.
+Definitions here match the book exactly and are sorted by name. Per-encounter
+tuning belongs in encounters/, never here - an encounter overrides a copy, so
+these stay checkable against the printed page.
+
+Nothing imports from this module by path. The registry collects every
+Adversary defined in this package and keys it by name, so encounters ask for
+"Jagged Knife Bandit" and don't care which module it lives in.
+
+Features that aren't part of a standard attack roll aren't modeled - noted per
+adversary for debugging, not implemented.
 """
 
 from adversaries.adversary import Adversary
 from dice.damage import DiceGroup
 
 # Tier 1 Standard. Daggers: melee, 1d8+1 physical.
+# Climber (Passive): easy terrain traversal, not combat-relevant.
 # From Above (Passive): 1d10+1 instead of standard damage when attacking from
 # above - not modeled (no position tracking yet).
 JAGGED_KNIFE_BANDIT = Adversary(

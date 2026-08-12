@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from adversaries.adversary import Adversary
+from adversaries.registry import find_adversary
 from characters.player_character import PlayerCharacter
 
 CHARACTERS_DIR = Path(__file__).resolve().parent.parent / "characters"
@@ -28,13 +29,20 @@ CHARACTERS_DIR = Path(__file__).resolve().parent.parent / "characters"
 class Group:
     """`count` copies of one adversary definition, with optional stat overrides.
 
+    The adversary is named the way the book names it - `Group("Jagged Knife
+    Bandit", count=3)` - and looked up in the registry, so an encounter never
+    has to know which module the definition sits in. Passing the Adversary
+    object itself works too, where a static reference is worth more than the
+    decoupling.
+
     Not a dataclass: overrides are taken as loose keyword arguments so a group
-    reads like the stat block it's tweaking - `Group(SOME_ADVERSARY, count=2,
-    hp_max=5)` - rather than nesting them in a dict literal.
+    reads like the stat block it's tweaking, rather than nesting them in a dict.
     """
 
-    def __init__(self, adversary: Adversary, count: int = 1, **overrides):
-        self.adversary = adversary
+    def __init__(self, adversary: Adversary | str, count: int = 1, **overrides):
+        # Resolved now rather than at spawn, so a misspelled name fails when the
+        # encounter module is imported instead of mid-simulation.
+        self.adversary = find_adversary(adversary) if isinstance(adversary, str) else adversary
         self.count = count
         self.overrides = overrides
 
