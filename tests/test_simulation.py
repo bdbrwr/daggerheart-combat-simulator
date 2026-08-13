@@ -12,7 +12,7 @@ from pathlib import Path
 
 from combat.common import FightOutcome
 from encounters.encounter import Encounter, Group
-from simulation.report import format_report
+from simulation.report import format_comparison, format_report
 from simulation.runner import describe_group, run_simulation
 from simulation.summary import (
     NEAR_DEATH_HP_REMAINING,
@@ -60,9 +60,9 @@ def _make_record(**overrides) -> FightRecord:
     return FightRecord(**defaults)
 
 
-def _make_summary(records: list[FightRecord]) -> SimulationSummary:
+def _make_summary(records: list[FightRecord], name: str = "Rigged") -> SimulationSummary:
     return SimulationSummary(
-        encounter_name="Rigged",
+        encounter_name=name,
         party=["Test PC"],
         opposition=["Jagged Knife Bandit x1"],
         seed=1,
@@ -269,12 +269,78 @@ def test_the_report_covers_every_section():
 
 
 def test_the_report_survives_a_run_the_party_never_won():
+    """The victories column empties out; the defeats column still carries the run."""
     report = format_report(run_simulation(_encounter(DEADLY), runs=5, seed=1))
 
-    assert "no wins to measure" in report
+    assert "COST TO THE PARTY" in report
+    assert "100%, by definition" in report
 
 
 def test_a_clean_run_carries_no_warning():
     report = format_report(run_simulation(_encounter(DOOMED), runs=5, seed=1))
 
     assert "hit the action cap" not in report
+
+
+def test_the_cost_section_puts_victories_beside_defeats():
+    summary = _make_summary(
+        [
+            _make_record(outcome=FightOutcome.PARTY_VICTORY, lowest_hp_remaining=1),
+            _make_record(
+                outcome=FightOutcome.PARTY_DEFEAT,
+                lowest_hp_remaining=0,
+                party_hp_remaining=0,
+                unconscious_pcs=1,
+                surviving_adversaries=2,
+            ),
+        ]
+    )
+
+    report = format_report(summary)
+
+    assert "victories" in report
+    assert "defeats" in report
+    assert "Adversaries left" in report
+
+
+def test_the_report_talks_about_unmarked_hp():
+    """Damage marks HP, so 'HP left' is the wrong way round - see CLAUDE.md."""
+    report = format_report(run_simulation(_encounter(DOOMED), runs=5, seed=1))
+
+    assert "Unmarked HP" in report
+    assert "HP left" not in report
+
+
+# --- Comparison --------------------------------------------------------------
+
+
+def test_a_comparison_has_a_row_for_every_encounter():
+    won = _make_summary([_make_record(outcome=FightOutcome.PARTY_VICTORY)], name="Easy Fight")
+    lost = _make_summary([_make_record(outcome=FightOutcome.PARTY_DEFEAT)], name="Hard Fight")
+
+    table = format_comparison([won, lost])
+
+    assert "Easy Fight" in table
+    assert "Hard Fight" in table
+    assert "100.0%" in table  # the easy fight's win rate
+    assert "0.0%" in table  # the hard one's
+
+
+def test_a_comparison_of_nothing_is_empty_not_an_error():
+    assert format_comparison([]) == ""
+
+
+def test_a_long_encounter_name_is_shortened_to_keep_the_table_aligned():
+    sprawling = "Roadside Ambush With Considerably Too Many Bandits"
+
+    table = format_comparison([_make_summary([_make_record()], name=sprawling)])
+
+    assert sprawling not in table
+    assert "…" in table
+
+
+def test_a_comparison_flags_an_encounter_that_could_not_resolve():
+    stuck = _make_summary([_make_record(outcome=FightOutcome.UNRESOLVED)], name="Stalemate")
+
+    assert "Stalemate" in format_comparison([stuck])
+    assert "hit the action cap" in format_comparison([stuck])

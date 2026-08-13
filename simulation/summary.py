@@ -79,8 +79,18 @@ class FightRecord:
         return self.outcome is FightOutcome.PARTY_VICTORY
 
     @property
+    def pcs_standing(self) -> int:
+        """PCs still conscious when the fight ended."""
+        return self.party_size - self.unconscious_pcs
+
+    @property
     def near_death(self) -> bool:
-        """Whether anyone finished on the edge - or over it."""
+        """Whether anyone finished on the edge - or over it.
+
+        Measured on unmarked HP, so this is true of every defeat by
+        definition: a party is beaten when nobody is left standing, and an
+        unconscious PC has every HP marked.
+        """
         return self.lowest_hp_remaining <= NEAR_DEATH_HP_REMAINING
 
 

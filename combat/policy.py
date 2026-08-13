@@ -18,10 +18,18 @@ Priority order for a PC, most preferred first:
   4. Help an ally, or spend Hope on an Experience, if Hope is plentiful.
   5. Attack.
 
-Only (1), (4)'s Experience half, and (5) exist yet - the Guardian's features
-and domain cards aren't implemented, so their steps are marked and skipped
-rather than faked. Each entry carries its own "does this make sense now?"
-test; the ordering here is the only global policy.
+Only (1), (4)'s Experience half, and (5) exist yet - the Guardian's class
+features aren't implemented, so their steps are marked and skipped rather than
+faked. Each entry carries its own "does this make sense now?" test; the
+ordering here is the only global policy.
+
+Note that domain cards are NOT absent from a fight just because they're absent
+from that list. The two implemented so far are damage responses rather than turn
+actions - nothing chooses to use them, they fire when damage arrives - so they
+hook in where damage is resolved instead. Every card lives in domain_cards/, and
+this module reaches them through exactly one generic call (`_shield`); no card is
+named here, and none ever should be. Cards that really are turn actions will join
+the priority order above through a dispatch call of their own.
 """
 
 from adversaries.adversary import Adversary
@@ -29,6 +37,7 @@ from characters.player_character import PlayerCharacter
 from combat.results import AttackResult
 from combat.state import FightState
 from dice.common import AdvantageState
+from domain_cards import find_shielder
 from items.registry import find_consumable, find_weapon
 
 # A PC drinks at this much HP left or less. Two is the point where the next
@@ -86,6 +95,25 @@ def choose_adversary_target(
         return state.last_pc_to_attack
 
     return standing[0]
+
+
+def _shield(target: PlayerCharacter, state: FightState) -> PlayerCharacter:
+    """Let a domain card move this attack onto a different PC.
+
+    Whether any card does, which one, and whether it's a good idea are all
+    decided inside domain_cards/ - this asks once and reports the answer. It
+    stays this size however many cards get written; see
+    domain_cards/registry.py for why that's the rule.
+    """
+    interception = find_shielder(target, state.conscious_party)
+    if interception is None:
+        return target
+
+    state.note(
+        f"{interception.shielder.name} steps in front of {target.name} "
+        f"({interception.card})"
+    )
+    return interception.shielder
 
 
 def take_pc_turn(pc: PlayerCharacter, state: FightState) -> AttackResult | None:
@@ -182,6 +210,8 @@ def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult
     target = choose_adversary_target(adversary, state)
     if target is None:
         return None
+
+    target = _shield(target, state)
 
     advantage = (
         AdvantageState.ADVANTAGE if target.is_vulnerable else AdvantageState.NONE

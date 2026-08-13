@@ -66,9 +66,79 @@ def test_clear_hp_clamps_to_zero():
 
 
 def test_mark_stress_clamps_to_max():
-    character = _make_character(stress_max=6)
+    character = _make_character(stress_max=6, hp_max=7)
     character.mark_stress(10)
     assert character.stress_marked == 6
+
+
+# --- Stress: forced vs voluntary ---------------------------------------------
+#
+# The SRD splits these two apart and the simulator has to as well. Forced
+# Stress ("must mark 1 or more Stress but can't") overflows into a single HP;
+# a voluntary cost ("mark a Stress" on a card) is simply unavailable when
+# Stress is full and must never touch HP.
+
+
+def test_forced_stress_that_does_not_fit_marks_one_hp():
+    character = _make_character(stress_max=2, hp_max=7)
+    character.mark_stress(2)
+
+    character.mark_stress(1)
+
+    assert character.stress_marked == 2
+    assert character.hp_marked == 1
+
+
+def test_the_overflow_is_one_hp_however_much_stress_did_not_fit():
+    character = _make_character(stress_max=2, hp_max=7)
+
+    character.mark_stress(9)
+
+    assert character.stress_marked == 2
+    assert character.hp_marked == 1
+
+
+def test_forced_stress_overflowing_onto_the_last_hp_still_drops_the_pc():
+    character = _make_character(stress_max=1, hp_max=1, level=0)
+    character.mark_stress(1)
+
+    character.mark_stress(1)
+
+    assert character.hp_marked == 1
+    assert character.unconscious is True
+
+
+def test_stress_that_fits_never_touches_hp():
+    character = _make_character(stress_max=6, hp_max=7)
+
+    character.mark_stress(6)
+
+    assert character.stress_marked == 6
+    assert character.hp_marked == 0
+
+
+def test_a_voluntary_stress_cost_is_refused_rather_than_paid_in_hp():
+    character = _make_character(stress_max=2, hp_max=7)
+    character.mark_stress(2)
+
+    assert character.can_spend_stress(1) is False
+    assert character.spend_stress(1) is False
+    assert character.hp_marked == 0  # the move is off the table, not paid for
+
+
+def test_a_voluntary_stress_cost_is_paid_when_there_is_room():
+    character = _make_character(stress_max=2, hp_max=7)
+
+    assert character.spend_stress(1) is True
+    assert character.stress_marked == 1
+
+
+def test_a_voluntary_cost_bigger_than_the_free_slots_is_all_or_nothing():
+    character = _make_character(stress_max=2, hp_max=7)
+    character.mark_stress(1)
+
+    assert character.spend_stress(2) is False
+    assert character.stress_marked == 1
 
 
 def test_mark_armor_slot_clamps_to_max():

@@ -20,6 +20,8 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
+from domain_cards import soften_damage
+
 
 @dataclass
 class PlayerCharacter:
@@ -104,10 +106,41 @@ class PlayerCharacter:
         self.hp_marked = max(self.hp_marked - amount, 0)
 
     def mark_stress(self, amount: int) -> None:
+        """Mark Stress this PC is being *forced* to take.
+
+        Per the SRD: "When a character must mark 1 or more Stress but can't,
+        they mark 1 HP instead." One HP for the whole unmarkable requirement,
+        not one per Stress that wouldn't fit - and that HP can be the last one,
+        so it goes through the same death check damage does.
+
+        For a *voluntary* cost - a domain card that says "mark a Stress" - use
+        spend_stress() instead. The SRD treats the two differently: a move
+        requiring Stress simply can't be used when Stress is full, and must
+        never fall through to HP.
+        """
+        free = self.stress_max - self.stress_marked
         self.stress_marked = min(self.stress_marked + amount, self.stress_max)
+        if amount > free:
+            self._mark_hp_with_death_check(1)
 
     def clear_stress(self, amount: int) -> None:
         self.stress_marked = max(self.stress_marked - amount, 0)
+
+    def can_spend_stress(self, amount: int = 1) -> bool:
+        """Whether a move costing `amount` Stress is available at all.
+
+        Per the SRD a character can't use a move that requires marking Stress
+        if all of their Stress is marked. Unlike forced Stress, this never
+        converts to HP - the move is simply off the table.
+        """
+        return self.stress_marked + amount <= self.stress_max
+
+    def spend_stress(self, amount: int = 1) -> bool:
+        """Pay a voluntary Stress cost; return whether it went through."""
+        if not self.can_spend_stress(amount):
+            return False
+        self.stress_marked += amount
+        return True
 
     def mark_armor_slot(self, amount: int) -> None:
         self.armor_marked = min(self.armor_marked + amount, self.armor_max)
@@ -152,37 +185,53 @@ class PlayerCharacter:
         """
         return self.armor_marked < self.armor_max
 
+    def severity_of(self, amount: int) -> int:
+        """The HP `amount` marks on its own, before armor or any card softens it.
+
+        Below Major threshold: 1. At/above Major: 2. At/above Severe: 3.
+
+        Massive Damage (an SRD-optional rule: 2x Severe marks 4 instead of 3)
+        and damage-type resistance are NOT implemented.
+        """
+        if amount >= self.severe_threshold:
+            return 3
+        if amount >= self.major_threshold:
+            return 2
+        return 1
+
     def take_damage(self, amount: int) -> int:
         """Mark HP per the SRD's Damage Thresholds rule; return the HP marked.
 
         <=0 damage: mark nothing, and no slot is spent on a hit that wasn't
-        going to land anyway. Below Major threshold: mark 1. At/above Major:
-        mark 2. At/above Severe: mark 3. A free Armor Slot is then always
-        marked to drop that by one, to a floor of zero.
+        going to land anyway. Otherwise the severity is worked out from the
+        thresholds, then softened twice over: a free Armor Slot is always
+        marked to drop it by one, and any damage-response domain card in the
+        loadout gets its say. Both floor at zero.
 
-        Massive Damage (an SRD-optional rule: 2x Severe marks 4 instead of 3)
-        and damage-type resistance are NOT implemented here.
+        Armor goes first so a card is never asked to spend a resource on a hit
+        the free slot already absorbed.
 
         Marking the last HP triggers Avoid Death.
         """
         if amount <= 0:
             return 0
 
-        if amount >= self.severe_threshold:
-            hp_to_mark = 3
-        elif amount >= self.major_threshold:
-            hp_to_mark = 2
-        else:
-            hp_to_mark = 1
+        hp_to_mark = self.severity_of(amount)
 
         if self.should_mark_armor_slot():
             self.mark_armor_slot(1)
             hp_to_mark = max(hp_to_mark - 1, 0)
 
-        self.mark_hp(hp_to_mark)
+        hp_to_mark = soften_damage(self, amount, hp_to_mark)
+
+        self._mark_hp_with_death_check(hp_to_mark)
+        return hp_to_mark
+
+    def _mark_hp_with_death_check(self, amount: int) -> None:
+        """Mark HP and take the death move if that was the last of it."""
+        self.mark_hp(amount)
         if self.hp_marked >= self.hp_max and not self.unconscious:
             self.avoid_death()
-        return hp_to_mark
 
     def avoid_death(self) -> bool:
         """Take the Avoid Death death move; return whether it left a scar.
