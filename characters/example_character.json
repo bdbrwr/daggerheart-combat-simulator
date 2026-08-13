@@ -7,6 +7,7 @@
   "subclass": "Stalwart",
   "ancestry": "Human",
   "community": "Wanderborne",
+  "spellcast_trait": "",
 
   "traits": {
     "agility": 0,

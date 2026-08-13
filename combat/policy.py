@@ -36,8 +36,18 @@ from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.results import AttackResult
 from combat.state import FightState
+import random
+
+from content import (
+    action_options,
+    apply_on_hit,
+    find_shielder,
+    hope_die_for,
+    total_damage_bonus,
+    total_roll_bonus,
+    use_free_abilities,
+)
 from dice.common import AdvantageState
-from domain_cards import find_shielder
 from items.registry import find_consumable, find_weapon
 
 # A PC drinks at this much HP left or less. Two is the point where the next
@@ -53,6 +63,12 @@ EXPERIENCE_HOPE_FLOOR = 5
 # Explicit rather than inferred: the registry maps a name to a callable, but
 # nothing about that callable says whether it heals.
 HEALING_CONSUMABLES = frozenset({"Minor Healing Potion"})
+
+# The spotlight budget - see SIMULATION-RULES.md. Consumables sit outside it,
+# and riders and damage responses don't spend from it either, since neither is
+# an action the PC chose to take.
+FREE_BUDGET_BEFORE_A_ROLL = 1
+FREE_BUDGET_ALONE = 2
 
 
 def choose_pc_target(state: FightState) -> Adversary | None:
@@ -117,30 +133,36 @@ def _shield(target: PlayerCharacter, state: FightState) -> PlayerCharacter:
 
 
 def take_pc_turn(pc: PlayerCharacter, state: FightState) -> AttackResult | None:
-    """Run one PC's turn: free actions first, then the roll that ends it.
+    """Hold the spotlight: everything that needs no roll, then the roll itself.
 
-    Returns the attack that closed the turn, or None if there was nothing left
-    to attack (which only happens if the fight is already over).
+    Returns the roll that closed it, or None if there was nothing left to
+    attack (which only happens if the fight is already over).
     """
-    _use_free_actions(pc, state)
-
     target = choose_pc_target(state)
+    _use_free_actions(pc, state, roll_to_follow=target is not None)
+
     if target is None:
         return None
-    return _attack(pc, target, state)
+    return _make_the_roll(pc, target, state)
 
 
-def _use_free_actions(pc: PlayerCharacter, state: FightState) -> None:
-    """Everything a PC does before committing to a roll.
+def _use_free_actions(
+    pc: PlayerCharacter, state: FightState, roll_to_follow: bool
+) -> None:
+    """Everything a PC does that needs no roll, capped by the spotlight budget.
 
-    None of these pass the spotlight, so a PC can stack as many as apply.
+    Nothing here can pass the spotlight - only a roll does that - so without a
+    cap a PC would fire every free ability they could afford, every spotlight.
+    The budget standing in for a player who doesn't hog the spotlight is in
+    SIMULATION-RULES.md: consumables are free, then either two no-roll actions,
+    or one alongside the roll that ends the spotlight.
     """
     if _should_heal(pc):
-        _heal(pc, state)
+        _heal(pc, state)  # consumables are outside the budget
 
-    # Step 2 (Hope feature) and step 3 (class feature) go here once the
-    # Guardian's features exist. They're free actions or Stress-costed ones,
-    # not rolls, so they belong on this side of the turn.
+    budget = FREE_BUDGET_BEFORE_A_ROLL if roll_to_follow else FREE_BUDGET_ALONE
+    for name in use_free_abilities(pc, state, budget):
+        state.note(f"{pc.name} uses {name}")
 
 
 def _should_heal(pc: PlayerCharacter) -> bool:
@@ -180,10 +202,45 @@ def _experience_bonus(pc: PlayerCharacter, state: FightState) -> int:
     return bonus
 
 
-def _attack(pc: PlayerCharacter, target: Adversary, state: FightState) -> AttackResult:
-    """The roll that ends a PC's turn, with its aftermath applied."""
-    attack = find_weapon(pc.primary_weapon)
-    result = attack(pc, target, AdvantageState.NONE, _experience_bonus(pc, state))
+def _make_the_roll(
+    pc: PlayerCharacter, target: Adversary, state: FightState
+) -> AttackResult:
+    """The one roll that can pass the spotlight, with its aftermath applied.
+
+    A weapon attack is not privileged here - it's the fallback. Content that
+    makes an action roll of its own gets first refusal, and declines by
+    returning None. Nothing in this function knows what any of that content is.
+    """
+    def swing_the_weapon(attacker, at, fight):
+        """The weapon as one option among the rest. It never declines.
+
+        The Experience is only paid for here, once the weapon is definitely
+        taking the roll - content that makes its own roll doesn't receive the
+        bonus, so spending the Hope before choosing would burn it for nothing.
+        """
+        attack = find_weapon(attacker.primary_weapon)
+        return attack(
+            attacker,
+            at,
+            AdvantageState.NONE,
+            _experience_bonus(attacker, fight) + total_roll_bonus(attacker, at, fight),
+            total_damage_bonus(attacker, at, fight),
+            hope_die_for(attacker, fight),
+        )
+
+    # The weapon is shuffled in among the cards rather than being a fallback:
+    # a loadout is unordered, and swinging is a real choice, not a last resort.
+    options = action_options(pc) + [swing_the_weapon]
+    random.shuffle(options)
+
+    result = None
+    for option in options:
+        result = option(pc, target, state)
+        if result is not None:
+            break
+
+    if result.damage_roll is not None:
+        apply_on_hit(pc, target, result, state)
 
     state.last_attacker_of[id(target)] = pc
     state.last_pc_to_attack = pc

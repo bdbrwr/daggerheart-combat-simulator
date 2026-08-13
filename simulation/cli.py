@@ -36,6 +36,7 @@ from pathlib import Path
 
 from combat.fight import run_fight
 from encounters.registry import all_encounters, find_encounter
+from simulation.coverage import format_coverage
 from simulation.report import format_comparison, format_report
 from simulation.runner import DEFAULT_RUNS, describe_group, run_simulation
 
@@ -181,9 +182,19 @@ def _chosen_encounters(parser, arguments) -> list[str] | None:
 
 
 def _run_and_compare(encounters, runs: int, seed: int | None) -> str:
-    """Every encounter's full report, with a comparison table when there's more than one."""
-    summaries = [run_simulation(encounter, runs=runs, seed=seed) for encounter in encounters]
-    blocks = [format_report(summary) for summary in summaries]
+    """Every encounter's full report, with a comparison table when there's more than one.
+
+    Each report is followed by its party's coverage, unconditionally. It's the
+    context the win rate above it has to be read against - a party half of whose
+    features aren't implemented makes any encounter look harder than it is - so
+    it isn't behind a flag.
+    """
+    summaries, blocks = [], []
+    for encounter in encounters:
+        summary = run_simulation(encounter, runs=runs, seed=seed)
+        summaries.append(summary)
+        blocks.append(format_report(summary))
+        blocks.append(format_coverage(encounter.spawn_party()))
 
     if len(summaries) > 1:
         blocks.append(format_comparison(summaries))

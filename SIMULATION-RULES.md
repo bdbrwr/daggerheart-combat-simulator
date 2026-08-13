@@ -36,6 +36,87 @@ the balance numbers, and none of them is wrong in a rules sense.
 | An unconscious PC is never revived and takes no further part | `characters/player_character.py` → `clear_hp` | Per the SRD an ally can clear a downed PC's HP to revive them. Spending a turn on that isn't modelled. |
 | **Get Back Up**: pay the Stress if the hit would drop the PC, otherwise only while a spare Stress slot remains | `domain_cards/blade.py` → `_worth_a_stress` | Using the card is a choice. |
 | **I Am Your Shield**: step in only when the ally is closer to going down than the shielder, and never on the shielder's last HP | `domain_cards/valor.py` → `_worth_shielding` | Using the card is a choice. |
+| A PC picks **at random among the options they can actually use** - every ability whose resources they can pay, plus their weapon attack | `content/registry.py` → `action_options`, `use_free_abilities`; `combat/policy.py` → `_make_the_roll` | Nothing; a player weighs their options. Random-among-viable is the stand-in until there's something better. **No automated scoring** - deliberately not built. |
+| A **no-rest encounter** assumes *every* per-rest ability was already spent | `combat/rest.py` → `Rest.NONE` | Nothing carries between encounters yet, so the simulator can't know which were actually used. Conservative, and makes a no-rest fight harder than it may really be. |
+| **Slumber** is only cast when the GM holds 3+ Fear; **Arcane Barrage** spends Hope down to a floor of 2; **Tava's Armor** waits until somebody has run out of Armor Slots | `domain_cards/codex.py` | All three are player choices the rules leave open. Each is a knob. |
+| **Healing Hands** always clears HP rather than Stress, and only fires for an ally at 2 or fewer unmarked HP | `domain_cards/splendor.py` | The card offers the choice; HP is taken because a downed PC is what ends a fight. |
+
+### Area of effect, standing in for range
+
+No positioning is modelled, so an ability that hits "all targets within X range"
+would otherwise hit everything, every time — which is far more generous than a
+table, where the GM places adversaries and the spread of a fight is what makes an
+AOE good or wasted. Instead, **the range band caps how many adversaries an AOE
+can reach**:
+
+| Range band | Adversaries reached |
+|---|---|
+| Far | all of them |
+| Close | 75%, and never all — at least one is always out of it |
+| Very Close | at most a third |
+| Melee | 2, or 3 once there are a lot of adversaries |
+
+As a formula over `n` living adversaries, with the result floored at 1:
+
+- Far: `n`
+- Close: `min(n * 3 // 4, n - 1)`
+- Very Close: `n // 3`
+- Melee: `2`, or `3` when `n >= MANY_ADVERSARIES`
+
+`MANY_ADVERSARIES` is a knob, not a rule — it needs a number and 6 is a
+reasonable first guess. The percentages are knobs too, and worth sweeping: they
+are the whole of how much an AOE ability is worth in this simulator.
+
+The cap is the **total** number of adversaries caught, uniformly — including,
+for an ability that extends an attack that already hit someone, the adversary
+already hit. There is no separate allowance for "additional" targets.
+
+Worth knowing what that costs: an ability at Very Close reaches `n // 3`, so
+extending a single-target attack adds nobody until there are 6 adversaries in
+the fight. Whirlwind is inert in a four-adversary encounter. That is the
+intended consequence of a uniform rule, not an oversight.
+
+Which adversaries get picked is a separate policy question. Focus fire already
+governs single-target selection, so an AOE takes the most wounded first.
+
+### How much a PC can do before passing the spotlight
+
+The rules put no hard number on the actions that don't require a roll, so a
+simulator left alone will stack every free ability a PC can afford, every time —
+a PC who never lets go of the spotlight. Real play doesn't look like that. The
+budget per spotlight is therefore:
+
+- **Consumables are free** and never count against it.
+- Then **either** two actions requiring no roll, **or** one action requiring no
+  roll plus one action that does.
+- **Riders and damage responses don't count** against any of it. A rider
+  modifies a roll that is already happening, and a damage response fires when
+  damage arrives rather than when its holder acts.
+
+So at most one action roll per spotlight, which is the actual rule, and at most
+two other things around it, which is the simplification.
+
+A PC who spends their budget without making an action roll doesn't pass the
+spotlight — correctly, since only a roll can. Play moves to the next PC who
+hasn't acted this pass. That can't stall a fight in practice because free
+abilities cost Hope, Stress or a per-rest use and run out, but it is why the
+action cap in section 4 exists.
+
+### Temporary conditions, standing in for condition tracking
+
+Conditions other than Vulnerable aren't tracked. Rather than dropping an ability
+that applies one — which would understate it — **applying a temporary condition
+costs the GM 1 Fear**, floored at zero.
+
+This is a simplification, but a well-grounded one: several of these abilities are
+written to end when the GM spends a Fear to clear them (Slumber says exactly
+that), so draining the pool is close to what the condition actually costs the GM
+side. It also lands in the one currency the simulator already tracks carefully,
+which means the effect shows up in the Fear numbers rather than vanishing.
+
+Edge case worth remembering: a GM already at 0 Fear pays nothing, so the
+condition is free to them. That understates the effect, and it happens most in
+exactly the fights where Fear is scarce.
 
 ## 2. Rules interpretations
 
@@ -48,11 +129,20 @@ the numbers.
 | **Get Back Up** triggers on the damage *amount* reaching the Severe threshold, so it applies even after an Armor Slot softened the hit, and the two reductions **stack** (Severe: 3 HP → 1) | `domain_cards/blade.py` → `get_back_up` | "When you take Severe damage" could mean the number rolled, or the severity after other reductions. The other reading makes the pair order-dependent for no stated reason. |
 | **I Am Your Shield** swaps who the attack targets **before it is rolled**, so it resolves against the shielder's Evasion | `domain_cards/valor.py` → `i_am_your_shield` | The effect clause says "make yourself the target of the attack instead"; the trigger clause ("when an ally would take damage") reads as firing after a hit is known, which would use the ally's Evasion instead. |
 | Forced Stress that doesn't fit marks **1 HP total**, not one per Stress that wouldn't fit | `characters/player_character.py` → `mark_stress` | SRD: "When a character must mark 1 or more Stress but can't, they mark 1 HP instead." Singular, read as covering the whole requirement. |
+| A die discarded by **Massive**/**Powerful** doesn't count toward the critical bonus - a crit adds the maximum of the dice that were kept, not of every die rolled | `dice/damage.py` → `critical_bonus` | A crit "adds the maximum possible result of the damage dice"; the SRD doesn't say whether a discarded die is still one of "the damage dice". Counting it would pay for a die that was thrown away. |
 
 ## 3. Not implemented
 
 Real rules we knowingly skip. Listed so a result is never mistaken for a
 complete simulation of the game.
+
+> **Per-character content is tracked in code, not here.** Domain cards,
+> ancestries, communities, classes and subclasses each declare their own state
+> in `content/registry.py` — *modelled* (optionally with declared gaps),
+> *no combat effect* (with a reason), or *unimplemented*. Every run prints the
+> breakdown per character, so this section covers only the rules that apply to
+> everyone. Never leave content silently absent when the answer is "it can't
+> matter": declare it, so a judgement never looks like a gap.
 
 - **Massive Damage** (SRD-optional: 2× Severe marks 4 HP instead of 3) — `characters/player_character.py`
 - **Damage-type resistance and immunity** — nowhere
@@ -65,6 +155,23 @@ complete simulation of the game.
 - **Secondary weapons** — loaded from the sheet, never used
 - **Multi-slot armor marking** — at most one Armor Slot is marked per hit
 - **Nothing marks a PC's Stress except their own card costs.** GM moves and adversary features are the SRD's main sources of Stress, and neither exists here, so Stress rises far more slowly than at a table — and `Vulnerable` is correspondingly rare.
+
+### Order of unordered data is never load-bearing
+
+A loadout is an unordered list - the order someone typed their cards in. Nothing
+in the simulation may depend on it, because arbitrary order carries no
+information and would silently decide which abilities a PC ever gets to use.
+The same goes for the spells inside a multi-spell card, and for which PC acts.
+
+Implemented by shuffling the candidates and taking the first that accepts, which
+over a random permutation is a uniform choice among the willing ones. That
+depends on a contract worth stating plainly: **declining must be side-effect
+free.** An ability asked whether it wants the roll must not spend Hope, mark
+Stress or claim a per-rest use unless it commits.
+
+The **weapon attack is one of the candidates**, not a fallback reached only when
+every card declines. Swinging is a real choice, and for some characters usually
+the right one.
 
 ## 4. Simulator scaffolding
 

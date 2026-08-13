@@ -23,6 +23,7 @@ from adversaries.adversary import Adversary
 from adversaries.registry import find_adversary
 from characters.player_character import PlayerCharacter
 from combat.common import Side
+from combat.rest import Rest
 
 CHARACTERS_DIR = Path(__file__).resolve().parent.parent / "characters"
 
@@ -77,6 +78,12 @@ class Encounter:
     groups: list[Group]
     starting_fear: int = 0
     starting_spotlight: Side = Side.PCS
+
+    # What the party got before this fight. Rest.NONE is an encounter picked up
+    # straight after another one, with nothing refreshed - which is the setup
+    # for asking how a party degrades across an adventuring day rather than only
+    # how it handles one fresh fight. See combat/rest.py.
+    rest: Rest = Rest.LONG
 
     def spawn_party(self) -> list[PlayerCharacter]:
         """Load each PC fresh from its JSON, at whatever state that file describes."""

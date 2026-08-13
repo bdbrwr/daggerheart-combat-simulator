@@ -17,10 +17,10 @@ a stray heal would quietly change fight outcomes.
 
 import json
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from domain_cards import soften_damage
+from content import soften_damage
 
 
 @dataclass
@@ -55,6 +55,29 @@ class PlayerCharacter:
     domain_cards_vault: list[str]
     experiences: list[dict]
     consumables: list[dict]
+
+    # Organisational only - which campaign this PC belongs to. Never read by
+    # the fight loop; useful for telling four sheets apart in a report.
+    campaign: str = ""
+
+    # Which trait this PC's Spellcast Rolls use, as a key into `traits`. It
+    # comes from the subclass, but can be reflavoured to a different trait, so
+    # it's genuinely per-character rather than derivable - which is why it sits
+    # on the sheet as an already-resolved value, the way thresholds and Evasion
+    # do. Blank means this PC makes no Spellcast Rolls: content that needs one
+    # declines rather than guessing a trait.
+    spellcast_trait: str = ""
+
+    # Things on this sheet the simulator knowingly ignores, by the name the
+    # sheet writes them under: {"Wyrmscale Halfplate": "Homebrew. Armor Score
+    # and thresholds are already resolved into the numbers above."}
+    #
+    # This is for the *per-character* case - homebrew gear, mostly - where the
+    # thing exists on one sheet and nowhere else. Content shared across
+    # characters (domain cards, ancestries, communities) is declared in its own
+    # module via content/registry.py instead of being repeated in every sheet
+    # that carries it. Both end up in the coverage report.
+    not_modelled: dict[str, str] = field(default_factory=dict)
 
     hp_marked: int = 0
     stress_marked: int = 0
@@ -93,6 +116,13 @@ class PlayerCharacter:
             domain_cards_vault=data["domain_cards"]["vault"],
             experiences=data["experiences"],
             consumables=data["consumables"],
+            # Optional, so older sheets without them still load.
+            campaign=data.get("campaign", ""),
+            # Lowercased to match the `traits` keys: sheets write "Agility",
+            # traits are keyed "agility", and a mismatch would silently make
+            # every Spellcast Roll decline rather than fail loudly.
+            spellcast_trait=data.get("spellcast_trait", "").strip().lower(),
+            not_modelled=data.get("not_modelled", {}),
             hp_marked=data["hp"]["marked"],
             stress_marked=data["stress"]["marked"],
             hope_marked=data["hope"]["marked"],
@@ -151,8 +181,38 @@ class PlayerCharacter:
     def gain_hope(self, amount: int) -> None:
         self.hope_marked = min(self.hope_marked + amount, self.hope_max)
 
+    def can_spend_hope(self, amount: int = 1) -> bool:
+        """Whether there's enough Hope banked to pay `amount`.
+
+        Separate from spend_hope, which clamps rather than refusing - content
+        that costs Hope has to check first, the same way spend_stress refuses a
+        cost it can't cover.
+        """
+        return self.hope_marked >= amount
+
     def spend_hope(self, amount: int) -> None:
         self.hope_marked = max(self.hope_marked - amount, 0)
+
+    @property
+    def named_features(self) -> list[str]:
+        """Everything this sheet names that game content could implement.
+
+        The input to the coverage report: each of these is either modelled,
+        assessed as having no combat effect, or unimplemented, and a reader of a
+        win rate deserves to know which.
+
+        Ancestry, community, class and subclass go in as single names, which is
+        coarse - a class is really a bundle of features - but it's honest, since
+        an undeclared class name reports as unimplemented until someone splits
+        it up and declares the parts.
+        """
+        return [
+            self.ancestry,
+            self.community,
+            self.character_class,
+            self.subclass,
+            *self.domain_cards_loadout,
+        ]
 
     @property
     def is_conscious(self) -> bool:

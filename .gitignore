@@ -222,6 +222,9 @@ CLAUDE.md
 .reference/
 .notes/
 
+characters/TPK*
+characters/TenStones*
+
 # Saved simulation output (python -m simulation --save). Experiment records,
 # not sources of truth - the encounter definitions that produced them are in
 # encounters/ and are version controlled.

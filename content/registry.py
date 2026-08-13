@@ -1,0 +1,628 @@
+"""Every named thing a character sheet carries, and what the simulator does with it.
+
+A sheet names a lot of content: domain cards, an ancestry, a community, a class,
+a subclass. Some of it changes a fight, some of it can't, and some of it simply
+hasn't been written yet. This module is where all three are declared, so that
+the third is never mistaken for the second.
+
+## The three states
+
+Before this existed, an unimplemented card and a card we'd judged irrelevant
+both looked the same from the outside - a lookup returning nothing. That is a
+bad failure for a tool whose whole claim is being more trustworthy than the
+official Battle Points math, because it hides how much of a character the
+simulator is actually running.
+
+  * MODELLED          - code runs it. Registered with a hook decorator.
+  * NO_COMBAT_EFFECT  - assessed and dismissed, with a reason. Declared with
+                        `no_combat_effect(name, reason)`.
+  * UNIMPLEMENTED     - not declared at all. Work not done, and it should be
+                        visible in output rather than silently absent.
+
+A MODELLED thing can still be *partly* modelled. Hooks take an `unmodelled`
+list for the parts deliberately left out - "Restrained, because no movement is
+tracked" - so a partial implementation says so in the same place it's
+registered, and the gaps reach the coverage report instead of dying in a
+docstring.
+
+## One card, one place
+
+Content is defined in the packages listed in `_DEFINITION_PACKAGES`, one module
+per grouping, and a piece of content's effect *and* its "should this fire?"
+decision both live with it. The rest of the codebase only ever calls the
+dispatch functions at the bottom of this file - one per hook point. Nothing
+outside these packages may grow a branch that knows a name.
+
+Discovery is lazy and cached: the first lookup imports every module in every
+definition package so their decorators and declarations have run.
+"""
+
+import importlib
+import inspect
+import pkgutil
+import random
+from dataclasses import dataclass
+from enum import Enum
+from typing import Callable, Iterable, NamedTuple, Protocol
+
+# Packages holding content definitions. Adding a content type is adding a line
+# here plus the package; nothing else in the codebase changes.
+_DEFINITION_PACKAGES = ("domain_cards", "features")
+
+
+class Status(Enum):
+    """How much of a named piece of content the simulator runs."""
+
+    MODELLED = "modelled"
+    NO_COMBAT_EFFECT = "no combat effect"
+    UNIMPLEMENTED = "unimplemented"
+
+
+@dataclass(frozen=True)
+class Assessment:
+    """What the simulator does with one named thing off a character sheet."""
+
+    name: str
+    status: Status
+    source: str = ""
+    reason: str = ""
+    unmodelled: tuple[str, ...] = ()
+
+    @property
+    def is_complete(self) -> bool:
+        """Modelled with nothing knowingly left out."""
+        return self.status is Status.MODELLED and not self.unmodelled
+
+    @property
+    def is_partial(self) -> bool:
+        """Modelled, but with declared gaps."""
+        return self.status is Status.MODELLED and bool(self.unmodelled)
+
+
+class Holder(Protocol):
+    """The slice of a PC that content touches.
+
+    A Protocol rather than importing PlayerCharacter: characters/ imports this
+    package, and the import can't run both ways.
+    """
+
+    name: str
+    proficiency: int
+    severe_threshold: int
+    hp_remaining: int
+    stress_marked: int
+    stress_max: int
+    hope_marked: int
+    armor_marked: int
+    armor_max: int
+    traits: dict[str, int]
+    spellcast_trait: str
+
+    # Everything the sheet names - domain cards, ancestry, community, class,
+    # subclass. Dispatch scans all of it, not just the loadout: a community
+    # feature reaches into a fight exactly the way a card does, and nothing
+    # about the hooks cares which kind of content registered them.
+    named_features: list[str]
+
+    level: int
+
+    def spend_stress(self, amount: int = 1) -> bool: ...
+    def can_spend_stress(self, amount: int = 1) -> bool: ...
+    def can_spend_hope(self, amount: int = 1) -> bool: ...
+    def spend_hope(self, amount: int) -> None: ...
+    def clear_hp(self, amount: int) -> None: ...
+    def clear_armor_slot(self, amount: int) -> None: ...
+
+
+class Interception(NamedTuple):
+    """A PC stepping in front of another, and the content that let them."""
+
+    shielder: Holder
+    card: str
+
+
+class Fight(Protocol):
+    """The slice of a fight in progress that content is allowed to touch.
+
+    Content needs to see the other side, and some of it drains the GM's Fear
+    (see SIMULATION-RULES.md on temporary conditions). Declared as a Protocol so
+    this package never imports combat/.
+    """
+
+    fear: int
+
+    def note(self, message: str) -> None: ...
+    def token_count(self, holder, name: str) -> int: ...
+    def add_token(self, holder, name: str, cap: int) -> bool: ...
+    def spend_tokens(self, holder, name: str, amount: int) -> int: ...
+    def spend_fear(self, amount: int = 1) -> bool: ...
+    def can_use_once_per_rest(self, holder, ability: str, long: bool = False) -> bool: ...
+    def use_once_per_rest(self, holder, ability: str, long: bool = False) -> bool: ...
+
+    @property
+    def living_adversaries(self) -> list: ...
+
+    @property
+    def conscious_party(self) -> list: ...
+
+
+_assessments: dict[str, Assessment] = {}
+
+# Hook tables - one per point where content can reach into a fight. There is no
+# "turn action" here on purpose: Daggerheart has no turns, only the spotlight,
+# and what moves the spotlight is the outcome of a roll. So content is filed by
+# its relationship to rolls and to damage.
+#
+#   _actions           make the action roll themselves; the outcome can pass the
+#                      spotlight, so at most one resolves per spotlight
+#   _free_abilities    require no roll, so they can never pass the spotlight
+#   _damage_bonuses    add to the damage of a roll already happening
+#   _on_hits           fire after an attack has landed
+#   _severity_responses / _guards
+#                      fire when damage arrives, not when the holder acts
+_actions: dict[str, Callable] = {}
+_hope_dice: dict[str, Callable] = {}
+_roll_bonuses: dict[str, Callable] = {}
+_on_rolls: dict[str, Callable] = {}
+_free_abilities: dict[str, Callable] = {}
+_damage_bonuses: dict[str, Callable] = {}
+_on_hits: dict[str, Callable] = {}
+_severity_responses: dict[str, Callable] = {}
+_guards: dict[str, Callable] = {}
+
+_discovered = False
+_discovering = False
+
+
+# --- Declaring ---------------------------------------------------------------
+
+
+def severity_response(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that changes the HP an incoming hit marks."""
+
+    def register(function: Callable) -> Callable:
+        _claim(_severity_responses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def guard(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that lets its holder take a hit aimed at an ally."""
+
+    def register(function: Callable) -> Callable:
+        _claim(_guards, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def action(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that makes an action roll of its own.
+
+    Signature: `(holder, target, fight) -> AttackResult | None`. Returning None
+    declines - the content had its chance and passed, so the PC falls through to
+    the next option and ultimately to their weapon. Whether the content is a
+    better use of the roll than a weapon attack is its own decision to make.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_actions, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def free(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that takes effect without any roll.
+
+    Signature: `(holder, fight) -> bool` - whether it fired. It can never pass
+    the spotlight, but it does spend from the budget in SIMULATION-RULES.md, so
+    returning True has a cost even though no dice were involved.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_free_abilities, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def damage_bonus(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that adds to the damage of an attack already happening.
+
+    Signature: `(holder, target, fight) -> int`. Applied before thresholds, so
+    it can change how many HP a hit marks rather than only the number printed.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_damage_bonuses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def on_hit(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that fires after an attack has landed.
+
+    Signature: `(holder, target, result, fight) -> None`. For content that
+    extends a successful attack rather than being an attack of its own.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_on_hits, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def hope_die(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that changes the size of the Hope Die.
+
+    Signature: `(holder, fight) -> int | None` - the die to roll instead of a
+    d12, or None to decline. `roll_duality` already takes a `hope_die` size, so
+    nothing in dice/ needs to change for this.
+
+    Unlike the other hooks, being asked *is* the commitment: the roll follows
+    immediately, so content that spends a per-rest use here has genuinely spent
+    it. Content that wants to be choosier should decline before claiming.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_hope_dice, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def roll_bonus(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that adds to an action roll before it's made.
+
+    Signature: `(holder, target, fight) -> int`. Like `hope_die`, being asked is
+    the commitment - the roll follows immediately - so content that spends a
+    resource here has genuinely spent it.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_roll_bonuses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def on_roll(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that responds to how an action roll came out.
+
+    Signature: `(holder, roll, fight) -> None`. Fires after the roll resolves,
+    for content keyed on rolling with Fear, failing, or critting.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_on_rolls, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def no_combat_effect(name: str, reason: str) -> None:
+    """Declare that `name` exists and cannot affect a fight.
+
+    Called at module level in whichever content module the thing belongs to:
+
+        no_combat_effect("Nature's Tongue", "Speaking with animals - never
+                         changes a fight's outcome.")
+
+    The point is the difference between this and silence. Silence means nobody
+    has looked at it yet; this means someone did, and here's why it was left
+    out. Both end up in the coverage report, labelled differently.
+    """
+    _assess(name, Status.NO_COMBAT_EFFECT, _calling_module(), reason=reason)
+
+
+def _calling_module() -> str:
+    """The module that called into here, for provenance in the coverage report."""
+    frame = inspect.currentframe()
+    caller = frame.f_back.f_back if frame and frame.f_back else None
+    return caller.f_globals.get("__name__", "") if caller else ""
+
+
+def _claim(table: dict[str, Callable], name: str, function: Callable) -> None:
+    """Take a name in `table`, refusing to let two pieces of content share one."""
+    existing = table.get(name)
+    if existing is not None and existing is not function:
+        raise ValueError(
+            f"Two different pieces of content are both registered as {name!r}. "
+            "Names have to be unique - a character sheet has nothing else to go on."
+        )
+    table[name] = function
+
+
+def _assess(
+    name: str,
+    status: Status,
+    source: str,
+    reason: str = "",
+    unmodelled: tuple[str, ...] = (),
+) -> None:
+    """Record what we do with `name`, merging a second hook on the same name.
+
+    One piece of content can register for more than one hook - something that
+    both softens damage and guards an ally - so two MODELLED declarations merge
+    their gaps rather than colliding. Declaring the same name both modelled and
+    without combat effect is a contradiction and raises.
+    """
+    existing = _assessments.get(name)
+    if existing is not None and existing.status is not status:
+        raise ValueError(
+            f"{name!r} is declared both {existing.status.value!r} (in "
+            f"{existing.source}) and {status.value!r} (in {source}). It can only "
+            "be one."
+        )
+
+    if existing is not None:
+        unmodelled = tuple(dict.fromkeys(existing.unmodelled + unmodelled))
+        reason = reason or existing.reason
+        source = existing.source
+
+    _assessments[name] = Assessment(
+        name=name,
+        status=status,
+        source=source,
+        reason=reason,
+        unmodelled=unmodelled,
+    )
+
+
+# --- Discovery ---------------------------------------------------------------
+
+
+def _discover() -> None:
+    """Import every content module so its decorators and declarations have run.
+
+    A separate in-progress flag guards against a content module importing this
+    one back and re-entering, while `_discovered` is only set once every import
+    has actually succeeded. Those have to be two different flags: marking
+    discovery done up front means a content module that fails to import leaves
+    the registry silently half-populated, and every piece of content filed after
+    the broken one looks merely unimplemented. One syntax error then reads as a
+    dozen unrelated failures.
+    """
+    global _discovered, _discovering
+    if _discovered or _discovering:
+        return
+
+    _discovering = True
+    try:
+        for package_name in _DEFINITION_PACKAGES:
+            package = importlib.import_module(package_name)
+            for module_info in pkgutil.iter_modules(package.__path__):
+                importlib.import_module(f"{package_name}.{module_info.name}")
+        _discovered = True
+    finally:
+        _discovering = False
+
+
+def refresh() -> None:
+    """Force the next lookup to re-import. For tests, mostly."""
+    global _discovered
+    _discovered = False
+
+
+# --- Assessing ---------------------------------------------------------------
+
+
+def assess(name: str) -> Assessment:
+    """What the simulator does with `name` - UNIMPLEMENTED if nobody has said."""
+    _discover()
+    return _assessments.get(name) or Assessment(name=name, status=Status.UNIMPLEMENTED)
+
+
+def assess_all(names: Iterable[str]) -> list[Assessment]:
+    """`assess` over a sheet's worth of names, in the order given."""
+    return [assess(name) for name in names]
+
+
+def all_assessments() -> dict[str, Assessment]:
+    """Everything declared anywhere - a copy, so callers can't corrupt the cache."""
+    _discover()
+    return dict(_assessments)
+
+
+# --- Lookup ------------------------------------------------------------------
+
+
+def find_severity_response(name: str) -> Callable | None:
+    """The damage-response for `name`, or None if it isn't modelled.
+
+    None rather than an error, unlike items/registry.py: a sheet is allowed to
+    name content nobody has written yet, and a PC carrying it still has to be
+    able to walk into a fight. Gear is different - a weapon that doesn't resolve
+    means a PC who can't attack at all, which is worth failing loudly over.
+    """
+    _discover()
+    return _severity_responses.get(name)
+
+
+def find_guard(name: str) -> Callable | None:
+    """The guard behaviour for `name`, or None if it isn't modelled."""
+    _discover()
+    return _guards.get(name)
+
+
+# --- Dispatch ----------------------------------------------------------------
+#
+# The only functions the rest of the codebase calls. One per hook point. Their
+# number stays constant as content is added; only the definition packages grow.
+
+
+def action_options(holder: Holder) -> list[Callable]:
+    """Every roll-making ability the loadout offers, in a random order.
+
+    A loadout is an unordered list - the order someone typed their cards in -
+    so it must never decide which abilities a PC can use. Shuffling and taking
+    the first that accepts is a uniform choice among the willing ones, without
+    every ability needing a separate "would you act?" predicate.
+
+    That trick only works because **declining is side-effect free**: an ability
+    asked whether it wants the roll must not spend Hope, mark Stress or claim a
+    per-rest use unless it commits. Every ability here has to honour that.
+
+    The caller adds the PC's weapon attack to this list before choosing. The
+    weapon is one of the options, not a fallback - see SIMULATION-RULES.md.
+    """
+    _discover()
+    options = [
+        _actions[name] for name in holder.named_features if name in _actions
+    ]
+    random.shuffle(options)
+    return options
+
+
+def take_action(holder: Holder, target, fight: Fight):
+    """Let one randomly chosen willing ability take this spotlight's roll.
+
+    Returns its result, or None if nothing volunteered. Callers that also offer
+    a weapon should use `action_options` directly, so the weapon is shuffled in
+    among the rest rather than only being reached when everything declines.
+    """
+    for act in action_options(holder):
+        result = act(holder, target, fight)
+        if result is not None:
+            return result
+    return None
+
+
+def use_free_abilities(holder: Holder, fight: Fight, limit: int) -> list[str]:
+    """Fire up to `limit` no-roll abilities, returning the names that went off.
+
+    The limit is the spotlight budget from SIMULATION-RULES.md, standing in for
+    a player who doesn't hog the spotlight. Without it a PC would use every free
+    ability they could afford, every single spotlight.
+
+    Candidates are shuffled for the same reason as `action_options`: which
+    abilities get used must not depend on the order a loadout was written in.
+    """
+    _discover()
+    candidates = [
+        (name, _free_abilities[name])
+        for name in holder.named_features
+        if name in _free_abilities
+    ]
+    random.shuffle(candidates)
+
+    used: list[str] = []
+    for name, ability in candidates:
+        if len(used) >= limit:
+            break
+        if ability(holder, fight):
+            used.append(name)
+    return used
+
+
+DEFAULT_HOPE_DIE = 12
+
+
+def hope_die_for(holder: Holder, fight: Fight) -> int:
+    """The Hope Die this holder rolls right now - a d12 unless something swaps it.
+
+    Consulted once, immediately before an action roll is made. The first piece
+    of content that offers a die wins; candidates are shuffled so that which one
+    doesn't depend on the order a sheet was written in.
+    """
+    _discover()
+    candidates = [_hope_dice[name] for name in holder.named_features if name in _hope_dice]
+    random.shuffle(candidates)
+
+    for swap in candidates:
+        sides = swap(holder, fight)
+        if sides:
+            return sides
+    return DEFAULT_HOPE_DIE
+
+
+def total_roll_bonus(holder: Holder, target, fight: Fight) -> int:
+    """Everything that adds to this action roll, summed.
+
+    Consulted at the moment the roll is made, by whichever option was chosen -
+    so a card that declined never spends anything toward a roll it isn't making.
+    """
+    _discover()
+    total = 0
+    for name in holder.named_features:
+        contribute = _roll_bonuses.get(name)
+        if contribute is not None:
+            total += contribute(holder, target, fight)
+    return total
+
+
+def apply_on_roll(holder: Holder, roll, fight: Fight) -> None:
+    """Let content respond to how an action roll came out."""
+    _discover()
+    for name in holder.named_features:
+        respond = _on_rolls.get(name)
+        if respond is not None:
+            respond(holder, roll, fight)
+
+
+def total_damage_bonus(holder: Holder, target, fight: Fight) -> int:
+    """Everything in the loadout that adds to this attack's damage, summed."""
+    _discover()
+    total = 0
+    for name in holder.named_features:
+        contribute = _damage_bonuses.get(name)
+        if contribute is not None:
+            total += contribute(holder, target, fight)
+    return total
+
+
+def apply_on_hit(holder: Holder, target, result, fight: Fight) -> None:
+    """Let every on-hit ability in the loadout respond to a landed attack."""
+    _discover()
+    for name in holder.named_features:
+        respond = _on_hits.get(name)
+        if respond is not None:
+            respond(holder, target, result, fight)
+
+
+def soften_damage(character: Holder, amount: int, hp_to_mark: int) -> int:
+    """Let every damage-response in `character`'s loadout soften a hit.
+
+    Called once by PlayerCharacter.take_damage. Applied in loadout order, each
+    seeing what the previous one left, so two reductions stack.
+    """
+    _discover()
+    for name in character.domain_cards_loadout:
+        respond = _severity_responses.get(name)
+        if respond is not None:
+            hp_to_mark = respond(character, amount, hp_to_mark)
+    return hp_to_mark
+
+
+def find_shielder(target: Holder, party: list) -> Interception | None:
+    """An ally who steps in front of `target`, or None if nobody does.
+
+    Called once by the turn policy, before an adversary's attack is rolled. The
+    first willing ally goes: a party with two Guardians both shielding the same
+    PC is not worth the code it would take to arbitrate.
+
+    Whether stepping in is worthwhile is the content's business, not this
+    function's - it says no by returning False.
+    """
+    _discover()
+    for ally in party:
+        if ally is target:
+            continue
+        for name in ally.domain_cards_loadout:
+            steps_in = _guards.get(name)
+            if steps_in is not None and steps_in(ally, target):
+                return Interception(shielder=ally, card=name)
+    return None

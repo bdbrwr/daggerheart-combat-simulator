@@ -9,7 +9,8 @@ mismatch between the code and the rule is easy to spot while debugging. The
 verbatim text is in .reference/abilities.json.
 """
 
-from domain_cards.registry import Holder, severity_response
+from content.aoe import Range, targets_reached
+from content.registry import Fight, Holder, on_hit, severity_response
 
 
 @severity_response("Get Back Up")
@@ -41,6 +42,49 @@ def get_back_up(character: Holder, amount: int, hp_to_mark: int) -> int:
     if not character.spend_stress(1):
         return hp_to_mark
     return hp_to_mark - 1
+
+
+@on_hit(
+    "Whirlwind",
+    unmodelled=[
+        "'Within Very Close range' - no positions are tracked, so the area "
+        "rule in SIMULATION-RULES.md decides how many adversaries are caught",
+    ],
+)
+def whirlwind(attacker: Holder, target, result, fight: Fight) -> None:
+    """Whirlwind (Blade, level 1).
+
+    SRD: on a successful attack against a target within Very Close range, spend
+    a Hope to use the attack against all other targets within Very Close range.
+    Additional adversaries you succeed against take half damage.
+
+    The same attack roll is reused against each additional adversary's
+    Difficulty, which is what "you succeed against" means - one roll, several
+    targets. Half damage rounds down.
+
+    The Hope is only spent when there is somebody else to hit. At Very Close the
+    area rule reaches `n // 3` adversaries in total, and the original target is
+    one of them, so in a fight with fewer than six adversaries this correctly
+    does nothing and costs nothing.
+    """
+    others = [
+        adversary
+        for adversary in fight.living_adversaries
+        if adversary is not target
+    ]
+    reach = targets_reached(Range.VERY_CLOSE, len(fight.living_adversaries)) - 1
+    if reach <= 0 or not others:
+        return
+
+    if not attacker.can_spend_hope(1):
+        return
+    attacker.spend_hope(1)
+
+    splash = result.damage_roll.total // 2
+    for adversary in others[:reach]:
+        if result.attack_roll.total >= adversary.difficulty or result.attack_roll.is_critical:
+            adversary.take_damage(splash)
+            fight.note(f"Whirlwind catches {adversary.name} for {splash}")
 
 
 def _worth_a_stress(character: Holder, hp_to_mark: int) -> bool:

@@ -84,6 +84,16 @@ def test_a_run_prints_the_whole_report(capsys):
         assert heading in printed
 
 
+def test_a_run_reports_how_much_of_the_party_is_modelled(capsys):
+    """Coverage isn't behind a flag - it's context the win rate needs."""
+    main([ENCOUNTER, "--runs", "3", "--seed", "1"])
+
+    printed = capsys.readouterr().out
+    assert "COVERAGE" in printed
+    assert "Kael Ashgrove" in printed
+    assert "unimplemented" in printed
+
+
 def test_one_encounter_alone_gets_no_comparison_table(capsys):
     main([ENCOUNTER, "--runs", "3", "--seed", "1"])
 

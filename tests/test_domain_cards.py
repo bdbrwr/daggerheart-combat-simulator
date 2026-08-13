@@ -18,7 +18,7 @@ plus one case through combat/policy.py to prove that call site is wired up.
 from characters.player_character import PlayerCharacter
 from combat.policy import _shield
 from combat.state import FightState
-from domain_cards import find_guard, find_severity_response, find_shielder
+from content import find_guard, find_severity_response, find_shielder
 from domain_cards.blade import get_back_up
 from domain_cards.valor import i_am_your_shield
 

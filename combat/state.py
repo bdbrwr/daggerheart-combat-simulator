@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.common import Side
+from combat.rest import Rest
 
 # Per the SRD the GM can hold up to 12 Fear at once. Fear generated past the
 # cap is simply lost, which matters for balance: a party that rolls badly for
@@ -46,6 +47,16 @@ class FightState:
     # to remember who that was. Keyed by id() for the same reason.
     last_attacker_of: dict[int, PlayerCharacter] = field(default_factory=dict)
     last_pc_to_attack: PlayerCharacter | None = None
+
+    # What the party got before this fight, and what they've burned since.
+    # Keyed by (id(holder), ability name) because PlayerCharacter is unhashable.
+    rest: Rest = Rest.LONG
+    spent_per_rest: set[tuple[int, str]] = field(default_factory=set)
+
+    # Tokens content places on itself during a fight - Know the Tide's, and the
+    # several domain cards built the same way. Generic rather than per-feature,
+    # keyed by (id(holder), name) like the per-rest uses above.
+    tokens: dict[tuple[int, str], int] = field(default_factory=dict)
 
     logging: bool = False
     log: list[str] = field(default_factory=list)
@@ -96,6 +107,44 @@ class FightState:
         self.fear -= amount
         self.fear_spent += amount
         return True
+
+    def can_use_once_per_rest(self, holder, ability: str, long: bool = False) -> bool:
+        """Whether `holder` still has their per-rest use of `ability`.
+
+        `long` marks an ability limited to once per *long* rest - a short rest
+        doesn't give it back. Content asks this rather than assuming a fresh
+        slate, because an encounter can be set up as following straight on from
+        another with no rest at all.
+        """
+        refreshed = self.rest.refreshes_long if long else self.rest.refreshes_short
+        if not refreshed:
+            return False
+        return (id(holder), ability) not in self.spent_per_rest
+
+    def use_once_per_rest(self, holder, ability: str, long: bool = False) -> bool:
+        """Spend `holder`'s per-rest use of `ability`; return whether it was there."""
+        if not self.can_use_once_per_rest(holder, ability, long):
+            return False
+        self.spent_per_rest.add((id(holder), ability))
+        return True
+
+    def token_count(self, holder, name: str) -> int:
+        """How many `name` tokens `holder` is currently holding."""
+        return self.tokens.get((id(holder), name), 0)
+
+    def add_token(self, holder, name: str, cap: int) -> bool:
+        """Place one token, up to `cap`. Returns whether there was room for it."""
+        if self.token_count(holder, name) >= cap:
+            return False
+        self.tokens[(id(holder), name)] = self.token_count(holder, name) + 1
+        return True
+
+    def spend_tokens(self, holder, name: str, amount: int) -> int:
+        """Spend up to `amount` tokens; return how many were actually spent."""
+        spent = min(amount, self.token_count(holder, name))
+        if spent > 0:
+            self.tokens[(id(holder), name)] = self.token_count(holder, name) - spent
+        return spent
 
     def note(self, message: str) -> None:
         """Record a line of play-by-play, if this run asked for one."""

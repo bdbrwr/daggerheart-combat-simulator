@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from characters.player_character import PlayerCharacter
@@ -50,6 +51,52 @@ def test_from_json_loads_example_character():
     assert character.armor_item == "Gambeson Armor"
     assert character.domain_cards_loadout == ["I Am Your Shield", "Get Back Up"]
     assert character.domain_cards_vault == []
+
+
+def test_a_spellcast_trait_is_lowercased_to_match_the_trait_keys(tmp_path):
+    """Sheets write "Agility"; traits are keyed "agility".
+
+    A mismatch wouldn't raise - it would just make every Spellcast Roll decline
+    and the PC's whole loadout quietly do nothing, so it's worth pinning.
+    """
+    sheet = json.loads(EXAMPLE_CHARACTER_PATH.read_text())
+    sheet["spellcast_trait"] = "Agility"
+    written = tmp_path / "capitalised.json"
+    written.write_text(json.dumps(sheet))
+
+    loaded = PlayerCharacter.from_json(written)
+
+    assert loaded.spellcast_trait == "agility"
+    assert loaded.spellcast_trait in loaded.traits
+
+
+def test_campaign_is_read_off_the_sheet():
+    """Organisational only - the fight loop never looks at it."""
+    assert PlayerCharacter.from_json(EXAMPLE_CHARACTER_PATH).campaign == "Test Campaign"
+
+
+def test_an_absent_optional_field_defaults_rather_than_failing():
+    """A sheet that says nothing about what to ignore still has to load."""
+    assert PlayerCharacter.from_json(EXAMPLE_CHARACTER_PATH).not_modelled == {}
+
+
+def test_optional_fields_default_when_a_sheet_has_neither():
+    """Constructed directly, with no JSON at all behind it."""
+    character = _make_character()
+
+    assert character.campaign == ""
+    assert character.not_modelled == {}
+
+
+def test_a_sheet_can_say_what_the_simulator_should_ignore():
+    """The per-character half of coverage - homebrew gear, mostly."""
+    character = _make_character(
+        campaign="Immareth",
+        not_modelled={"Wyrmscale Halfplate": "Homebrew; thresholds already resolved."},
+    )
+
+    assert character.campaign == "Immareth"
+    assert "Wyrmscale Halfplate" in character.not_modelled
 
 
 def test_mark_hp_clamps_to_max():

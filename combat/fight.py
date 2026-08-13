@@ -25,6 +25,7 @@ from combat.common import FightOutcome, Side
 from combat.policy import take_adversary_turn, take_pc_turn
 from combat.report import FightResult
 from combat.state import FightState
+from content import apply_on_roll
 from dice.duality import DualityOutcome
 
 # Safety net for a matchup that can't resolve - PCs who can't beat a
@@ -51,6 +52,7 @@ def run_fight(encounter, logging: bool = False) -> FightResult:
         adversaries=adversaries,
         spotlight=encounter.starting_spotlight,
         fear=encounter.starting_fear,
+        rest=encounter.rest,
         logging=logging,
     )
     state.note(
@@ -165,6 +167,11 @@ def _apply_duality_outcome(pc, roll, state: FightState) -> None:
     and both Fear outcomes give the GM a Fear on the same terms. A critical
     additionally clears a Stress.
     """
+    # Content keyed on how the roll came out - a token for rolling with Fear,
+    # and anything else built that way - gets its say before the Hope and Fear
+    # are handed out.
+    apply_on_roll(pc, roll, state)
+
     if roll.outcome is DualityOutcome.CRIT:
         pc.gain_hope(1)
         pc.clear_stress(1)

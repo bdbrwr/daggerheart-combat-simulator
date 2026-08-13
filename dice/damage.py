@@ -33,21 +33,46 @@ class DamageRollResult:
     die_results: list[list[int]]  # one inner list per dice_groups entry, same order
     modifier: int
     is_critical: bool = False
+    drop_lowest: int = 0
+
+    @property
+    def dropped(self) -> list[int]:
+        """The individual dice discarded by drop_lowest, lowest first.
+
+        Weapon features like Massive and Powerful read "roll an additional
+        damage die and discard the lowest result" - the caller rolls the extra
+        die by raising the group's count, and this takes the lowest back off.
+        Dropping is across the whole roll rather than per group, which is what
+        "the lowest result" means when a formula has more than one group.
+        """
+        if self.drop_lowest <= 0:
+            return []
+        every_die = sorted(die for group in self.die_results for die in group)
+        return every_die[: self.drop_lowest]
 
     @property
     def rolled_total(self) -> int:
-        """Sum of every rolled die, before modifier or critical bonus."""
-        return sum(sum(group_results) for group_results in self.die_results)
+        """Sum of every rolled die that counts, before modifier or critical bonus."""
+        rolled = sum(sum(group_results) for group_results in self.die_results)
+        return rolled - sum(self.dropped)
 
     @property
     def critical_bonus(self) -> int:
         """Max possible value of the damage dice, added on a critical hit.
 
         A Crit adds the maximum possible result of the damage dice on top of the normal roll. 0 when is_critical is False.
+
+        Discarded dice don't contribute: the bonus is the maximum of the dice
+        that actually counted, so a dropped die isn't paid for twice. The SRD
+        doesn't spell out how a crit and a discard interact - see
+        SIMULATION-RULES.md.
         """
         if not self.is_critical:
             return 0
-        return sum(group.count * group.sides for group in self.dice_groups)
+        every_side = sorted(
+            group.sides for group in self.dice_groups for _ in range(group.count)
+        )
+        return sum(every_side[self.drop_lowest :])
 
     @property
     def total(self) -> int:
@@ -60,6 +85,8 @@ class DamageRollResult:
             for group, results in zip(self.dice_groups, self.die_results)
         )
         parts = [groups if groups else "(no dice)"]
+        if self.dropped:
+            parts.append(f"dropped={self.dropped}")
         if self.modifier:
             parts.append(f"mod={self.modifier:+d}")
         if self.is_critical:
@@ -72,12 +99,14 @@ def roll_damage(
     dice_groups: list[DiceGroup],
     modifier: int = 0,
     is_critical: bool = False,
+    drop_lowest: int = 0,
 ) -> DamageRollResult:
     """Roll one or more dice groups and resolve modifier/critical damage.
 
     Args:
         dice_groups: The dice pools to roll, e.g. [DiceGroup(2, 8), DiceGroup(1, 4)] for "2d8 + 1d4". A group with count=0 rolls no dice for that group (e.g. a Spellcast trait of +0 or lower) but is still kept in the result for record-keeping.        modifier: Flat modifier added to the total, unaffected by dice counts.
         is_critical: Whether the preceding attack roll was a critical success - if True, the maximum possible dice result is added on top of the normal roll.
+        drop_lowest: How many of the lowest individual dice to discard, for weapon features like Massive and Powerful. The caller is responsible for rolling the extra die (by raising a group's count); this only takes the lowest back off. Every die rolled stays in the result for record-keeping.
     Returns:
         A DamageRollResult with every raw die roll recorded.
     """
@@ -91,4 +120,5 @@ def roll_damage(
         die_results=die_results,
         modifier=modifier,
         is_critical=is_critical,
+        drop_lowest=drop_lowest,
     )

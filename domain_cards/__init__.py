@@ -1,21 +1,6 @@
-from .registry import (
-    Interception,
-    all_guards,
-    all_severity_responses,
-    find_guard,
-    find_severity_response,
-    find_shielder,
-    refresh,
-    soften_damage,
-)
+"""Domain cards, one module per domain.
 
-__all__ = [
-    "Interception",
-    "all_guards",
-    "all_severity_responses",
-    "find_guard",
-    "find_severity_response",
-    "find_shielder",
-    "refresh",
-    "soften_damage",
-]
+Definitions only - the registry, the hook decorators and the dispatch the rest
+of the codebase calls all live in content/registry.py, which discovers this
+package. Import the machinery from `content`, not from here.
+"""
