@@ -12,6 +12,7 @@ from combat.results import AttackResult
 from dice.common import AdvantageState
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import roll_duality
+from items.registry import weapon
 
 
 class Target(Protocol):
@@ -22,16 +23,23 @@ class Target(Protocol):
     def take_damage(self, amount: int) -> int: ...
 
 
+@weapon("Broadsword")
 def broadsword_attack(
     attacker: PlayerCharacter,
     target: Target,
     advantage_state: AdvantageState = AdvantageState.NONE,
+    bonus: int = 0,
 ) -> AttackResult:
     """Broadsword: Agility, melee, one-handed, d8 physical.
     Reliable: +1 to attack rolls.
+
+    `bonus` is a flat add to the attack roll from outside the weapon - an
+    Experience the PC spent Hope on, mostly. It's a parameter rather than
+    something the weapon works out for itself because whether an Experience
+    applies is a decision made by the acting character, not by the sword.
     """
     attack_roll = roll_duality(
-        modifier=attacker.traits["agility"] + 1,  # +1 from Reliable
+        modifier=attacker.traits["agility"] + 1 + bonus,  # +1 from Reliable
         difficulty=target.difficulty,
         advantage_state=advantage_state,
     )

@@ -5,8 +5,10 @@ Each consumable is a callable, not a data record, for the same reason as items/w
 
 from characters.player_character import PlayerCharacter
 from dice.damage import DiceGroup, roll_damage
+from items.registry import consumable
 
 
+@consumable("Minor Healing Potion")
 def minor_healing_potion(character: PlayerCharacter) -> int:
     """Minor Health Potion: clear 1d4 HP. Returns the amount cleared."""
     roll = roll_damage(dice_groups=[DiceGroup(count=1, sides=4)])

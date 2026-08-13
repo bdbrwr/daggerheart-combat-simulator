@@ -2,10 +2,21 @@
 
 Unlike the roll-result dataclasses in dice/, PlayerCharacter is NOT frozen:HP, Stress, Hope, and Armor Slots all change turn to turn during combat, and an instance of this class is where that state lives for the length of a fight. The values loaded from JSON are just the starting point.
 
-Death/downfall (unconsciousness, death moves) is deliberately not modeled here yet - marking the last HP slot triggers SRD rules this module doesn't implement, so don't infer death from hp_marked == hp_max until that's beenlooked up and built on purpose.
+Marking the last HP slot now triggers a death move. Simulated PCs always take
+Avoid Death - it's the safest choice and the only one that leaves a fight
+recoverable - so `take_damage` applies it automatically rather than asking a
+policy which move to make. Blaze of Glory and Risk It All are not modeled.
+
+An unconscious PC can't act and can't be targeted, and per the SRD only comes
+back when an ally clears one of their marked HP. Nothing in the simulator
+heals a downed PC yet, so in practice going unconscious removes a PC for the
+rest of the fight; `clear_hp` deliberately does NOT wake them, because the
+decision to spend a turn reviving someone isn't modeled and inferring it from
+a stray heal would quietly change fight outcomes.
 """
 
 import json
+import random
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,6 +58,11 @@ class PlayerCharacter:
     stress_marked: int = 0
     hope_marked: int = 0
     armor_marked: int = 0
+
+    # Set by a death move rather than loaded from JSON: a character sheet
+    # describes a PC walking into a fight, not one already down in it.
+    unconscious: bool = False
+    scars: int = 0
 
     @classmethod
     def from_json(cls, path: str | Path) -> "PlayerCharacter":
@@ -105,24 +121,82 @@ class PlayerCharacter:
     def spend_hope(self, amount: int) -> None:
         self.hope_marked = max(self.hope_marked - amount, 0)
 
+    @property
+    def is_conscious(self) -> bool:
+        """False once a death move has put this PC down.
+
+        Unconscious PCs neither act nor can be targeted, so both the spotlight
+        and adversary targeting filter on this.
+        """
+        return not self.unconscious
+
+    @property
+    def is_vulnerable(self) -> bool:
+        """True once the last Stress is marked - all rolls against them have Advantage."""
+        return self.stress_marked >= self.stress_max
+
+    @property
+    def hp_remaining(self) -> int:
+        return self.hp_max - self.hp_marked
+
+    def should_mark_armor_slot(self) -> bool:
+        """Whether to spend an Armor Slot against incoming damage.
+
+        Marking armor is reactive - it happens as damage lands, never as a
+        turn's action - so the decision lives here rather than in a PC's
+        action policy.
+
+        The rule is unconditional: if a slot is free, mark it and mark one
+        less HP. That includes a hit that would only have marked a single HP,
+        which then costs the PC nothing but the slot.
+        """
+        return self.armor_marked < self.armor_max
+
     def take_damage(self, amount: int) -> int:
         """Mark HP per the SRD's Damage Thresholds rule; return the HP marked.
 
-        <=0 damage: mark nothing. Below Major threshold: mark 1. At/above
-        Major: mark 2. At/above Severe: mark 3.
+        <=0 damage: mark nothing, and no slot is spent on a hit that wasn't
+        going to land anyway. Below Major threshold: mark 1. At/above Major:
+        mark 2. At/above Severe: mark 3. A free Armor Slot is then always
+        marked to drop that by one, to a floor of zero.
 
         Massive Damage (an SRD-optional rule: 2x Severe marks 4 instead of 3)
-        is NOT implemented here. Marking an Armor Slot to reduce severity is
-        a choice made by the caller before this runs, not handled here -
-        this function only does the threshold math.
+        and damage-type resistance are NOT implemented here.
+
+        Marking the last HP triggers Avoid Death.
         """
         if amount <= 0:
-            hp_to_mark = 0
-        elif amount >= self.severe_threshold:
+            return 0
+
+        if amount >= self.severe_threshold:
             hp_to_mark = 3
         elif amount >= self.major_threshold:
             hp_to_mark = 2
         else:
             hp_to_mark = 1
+
+        if self.should_mark_armor_slot():
+            self.mark_armor_slot(1)
+            hp_to_mark = max(hp_to_mark - 1, 0)
+
         self.mark_hp(hp_to_mark)
+        if self.hp_marked >= self.hp_max and not self.unconscious:
+            self.avoid_death()
         return hp_to_mark
+
+    def avoid_death(self) -> bool:
+        """Take the Avoid Death death move; return whether it left a scar.
+
+        Drops the PC unconscious, then rolls the Hope Die (a d12): on a result
+        at or below the PC's level they gain a scar, which permanently crosses
+        out a Hope slot. Scars barely bite inside a single fight - a level 1 PC
+        scars one time in twelve - but they're counted and reported, since how
+        often a party walks away marked is part of what an encounter costs.
+        """
+        self.unconscious = True
+        if random.randint(1, 12) > self.level:
+            return False
+        self.scars += 1
+        self.hope_max = max(self.hope_max - 1, 0)
+        self.hope_marked = min(self.hope_marked, self.hope_max)
+        return True

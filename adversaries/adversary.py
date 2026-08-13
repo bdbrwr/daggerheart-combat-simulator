@@ -17,9 +17,9 @@ Adversaries don't have Hope, Armor Slots, or Evasion (PC-only concepts) - the
 number PC attacks roll against is Difficulty instead (per the SRD: "attacks
 rolled against adversaries use the target's Difficulty instead of Evasion").
 
-Defeat (what happens when an adversary marks its last HP) is deliberately not
-modeled here yet, the same way PlayerCharacter doesn't infer death from
-hp_marked == hp_max - that hasn't been looked up and built on purpose.
+Defeat is simply `is_defeated` - all HP marked, and the fight loop drops them.
+Adversaries get none of the PC death-move machinery; that asymmetry is in the
+rules, not a shortcut.
 """
 
 from dataclasses import dataclass, field, replace
@@ -60,6 +60,15 @@ class Adversary:
 
     hp_marked: int = 0
     stress_marked: int = 0
+
+    @property
+    def is_defeated(self) -> bool:
+        """True once every HP is marked - adversaries just leave the fight.
+
+        No death move, no unconscious state: the SRD's death rules are a PC
+        thing, and for balance purposes an adversary that's out is out.
+        """
+        return self.hp_marked >= self.hp_max
 
     def spawn(self, **overrides) -> "Adversary":
         """An independent copy at starting state, with any stat overrides applied.

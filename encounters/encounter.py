@@ -22,6 +22,7 @@ from pathlib import Path
 from adversaries.adversary import Adversary
 from adversaries.registry import find_adversary
 from characters.player_character import PlayerCharacter
+from combat.common import Side
 
 CHARACTERS_DIR = Path(__file__).resolve().parent.parent / "characters"
 
@@ -62,11 +63,20 @@ class Group:
 
 @dataclass
 class Encounter:
-    """One side's adversaries against a party, ready to be run repeatedly."""
+    """One side's adversaries against a party, ready to be run repeatedly.
+
+    `starting_fear` and `starting_spotlight` are part of the setup rather than
+    the loop's business: a fight picked up mid-scene starts with the GM's pool
+    already filled, and an ambush starts with the GM acting. Both change how a
+    fight goes enough to be worth sweeping, so they sit here with the rest of
+    the tuning.
+    """
 
     name: str
     party: list[Path]
     groups: list[Group]
+    starting_fear: int = 0
+    starting_spotlight: Side = Side.PCS
 
     def spawn_party(self) -> list[PlayerCharacter]:
         """Load each PC fresh from its JSON, at whatever state that file describes."""

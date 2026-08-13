@@ -14,7 +14,7 @@ dependencies = []
 # package the source tree. That suits a flat layout with several top-level
 # packages (dice, characters, items, adversaries, combat, encounters), which a
 # single-module build backend wouldn't map onto cleanly anyway. pytest finds
-# them via pythonpath below.
+# them via pythonpath below. simulation/ joins them as the Monte Carlo layer.
 [tool.uv]
 package = false
 

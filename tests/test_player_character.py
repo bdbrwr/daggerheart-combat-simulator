@@ -90,32 +90,104 @@ def test_spend_hope_clamps_to_zero():
     assert character.hope_marked == 0
 
 
+# The threshold tests pin armor_max=0 so they measure the threshold math only.
+# With armor available a PC spends a slot to soften anything Major or worse,
+# which is what the armor tests further down cover.
+
+
 def test_take_damage_marks_nothing_below_zero_or_zero():
-    character = _make_character(major_threshold=6, severe_threshold=12)
+    character = _make_character(major_threshold=6, severe_threshold=12, armor_max=0)
     assert character.take_damage(0) == 0
     assert character.take_damage(-5) == 0
     assert character.hp_marked == 0
 
 
 def test_take_damage_below_major_marks_one():
-    character = _make_character(major_threshold=6, severe_threshold=12)
+    character = _make_character(major_threshold=6, severe_threshold=12, armor_max=0)
     assert character.take_damage(5) == 1
     assert character.hp_marked == 1
 
 
 def test_take_damage_at_major_marks_two():
-    character = _make_character(major_threshold=6, severe_threshold=12)
+    character = _make_character(major_threshold=6, severe_threshold=12, armor_max=0)
     assert character.take_damage(6) == 2
     assert character.hp_marked == 2
 
 
 def test_take_damage_at_severe_marks_three():
-    character = _make_character(major_threshold=6, severe_threshold=12)
+    character = _make_character(major_threshold=6, severe_threshold=12, armor_max=0)
     assert character.take_damage(12) == 3
     assert character.hp_marked == 3
 
 
 def test_take_damage_well_above_severe_still_marks_three():
-    character = _make_character(major_threshold=6, severe_threshold=12)
+    character = _make_character(major_threshold=6, severe_threshold=12, armor_max=0)
     assert character.take_damage(100) == 3
     assert character.hp_marked == 3
+
+
+def test_armor_slot_is_spent_to_soften_a_major_hit():
+    character = _make_character(major_threshold=6, severe_threshold=12, armor_max=3)
+    assert character.take_damage(6) == 1
+    assert character.armor_marked == 1
+
+
+def test_armor_slot_takes_a_minor_hit_down_to_nothing():
+    """A free slot is always spent, so a 1 HP hit costs the slot and no HP."""
+    character = _make_character(major_threshold=6, severe_threshold=12, armor_max=3)
+    assert character.take_damage(5) == 0
+    assert character.hp_marked == 0
+    assert character.armor_marked == 1
+
+
+def test_no_armor_slot_is_spent_on_damage_that_never_landed():
+    character = _make_character(major_threshold=6, severe_threshold=12, armor_max=3)
+    assert character.take_damage(0) == 0
+    assert character.armor_marked == 0
+
+
+def test_armor_slot_is_not_spent_once_they_are_all_marked():
+    character = _make_character(major_threshold=6, severe_threshold=12, armor_max=1)
+    character.armor_marked = 1
+    assert character.take_damage(12) == 3
+    assert character.armor_marked == 1
+
+
+def test_marking_the_last_hp_drops_the_pc_unconscious():
+    character = _make_character(hp_max=3, major_threshold=6, severe_threshold=12, armor_max=0)
+    character.take_damage(12)
+    assert character.hp_marked == 3
+    assert character.unconscious is True
+    assert character.is_conscious is False
+
+
+def test_a_pc_who_is_still_up_stays_conscious():
+    character = _make_character(hp_max=7, major_threshold=6, severe_threshold=12, armor_max=0)
+    character.take_damage(12)
+    assert character.is_conscious is True
+
+
+def test_avoid_death_scars_when_the_hope_die_is_at_or_under_level():
+    """The scar roll is a d12 against level, so the two ends of it are certain.
+
+    A level 12 PC can't roll above their level and always scars; a level 0 one
+    never can. No seeding needed - the outcome is fixed by construction.
+    """
+    scarring = _make_character(level=12, hope_max=6)
+    assert scarring.avoid_death() is True
+    assert scarring.scars == 1
+    assert scarring.hope_max == 5
+    assert scarring.unconscious is True
+
+    unscarred = _make_character(level=0, hope_max=6)
+    assert unscarred.avoid_death() is False
+    assert unscarred.scars == 0
+    assert unscarred.hope_max == 6
+    assert unscarred.unconscious is True
+
+
+def test_vulnerable_once_the_last_stress_is_marked():
+    character = _make_character(stress_max=2)
+    assert character.is_vulnerable is False
+    character.mark_stress(2)
+    assert character.is_vulnerable is True
