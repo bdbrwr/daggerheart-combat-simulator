@@ -7,11 +7,15 @@ adversary never means editing code. That's the whole point: this simulator
 exists to push those numbers around until an encounter lands on the balance
 profile we want, so they have to be reachable as values a run can vary.
 
-Individual adversaries are defined as module-level literals in this package
-(see jagged_knife.py) - one definition per adversary, named as the SRD names
-it, or by its given name if homebrewed. Per-encounter tweaks belong in
-encounters/, not here: `spawn()` copies a definition and applies overrides so
-the definition itself is never mutated by a simulated fight.
+Individual adversaries are **authored as JSON**, one file per publication (see
+srd.json), and read by catalogue.py - a stat block is data, and this is the side
+of the table homebrew is written for. What a stat block *does* beyond a standard
+attack is its named features, which are code in features/adversaries.py, exactly
+the way a character sheet names domain cards that live in domain_cards/.
+
+Per-encounter tweaks belong in encounters/, not in the catalogue: `spawn()`
+copies a definition and applies overrides so the definition itself is never
+mutated by a simulated fight.
 
 Adversaries don't have Hope, Armor Slots, or Evasion (PC-only concepts) - the
 number PC attacks roll against is Difficulty instead (per the SRD: "attacks
@@ -26,6 +30,7 @@ from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from combat.results import AttackResult
+from content.names import ADVERSARY, qualified
 from dice.common import AdvantageState
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
@@ -58,8 +63,30 @@ class Adversary:
     damage_dice: list[DiceGroup] = field(default_factory=list)
     damage_modifier: int = 0
 
+    # What this stat block does beyond a standard attack, by name. Implemented
+    # in features/adversaries.py, reached through the same dispatch a PC's
+    # domain cards use, and reported in the coverage block either way - so a
+    # feature nobody has written is visible rather than silently absent.
+    features: list[str] = field(default_factory=list)
+
+    # Which book this stat block was printed in, or where a homebrew one came
+    # from. Never read by the fight loop; it's how a reader tells an as-printed
+    # adversary from one of ours.
+    publication: str = ""
+
     hp_marked: int = 0
     stress_marked: int = 0
+
+    @property
+    def named_features(self) -> list[str]:
+        """This stat block's features, namespaced so dispatch can find them.
+
+        The same input the coverage report takes for a PC. Qualified because a
+        catalogue's feature names are not unique across kinds - see
+        content/names.py - and because "adversary:Relentless" is what a reader
+        of the coverage block needs to see to know which Relentless is missing.
+        """
+        return [qualified(ADVERSARY, name) for name in self.features]
 
     @property
     def is_defeated(self) -> bool:
@@ -80,6 +107,7 @@ class Adversary:
         """
         changes = {
             "damage_dice": list(self.damage_dice),
+            "features": list(self.features),
             "hp_marked": 0,
             "stress_marked": 0,
         }

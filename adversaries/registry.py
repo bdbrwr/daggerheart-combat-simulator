@@ -1,65 +1,69 @@
-"""Look an adversary up by name, wherever in this package it's defined.
+"""Look an adversary up by name, whichever catalogue in this package defines it.
 
 Encounters name adversaries the way the book does - "Jagged Knife Bandit" -
-rather than importing them from whichever module they happen to sit in. That
-keeps the filing (srd.py, homebrew.py, one module per purchased adventure) a
-decision we can revisit without editing a single encounter, and it means
-adding an adversary is just writing the literal: discovery is automatic, there
-is nothing to register by hand.
+rather than knowing which file they sit in. That keeps the filing (srd.json,
+homebrew.json, one file per purchased adventure) a decision we can revisit
+without editing a single encounter, and it means adding an adversary is just
+writing the entry: discovery is automatic, there is nothing to register by hand.
 
-Discovery is lazy and cached - the first lookup imports every module in this
-package and collects each Adversary it finds. Modules are imported for their
-side effect of defining adversaries, so a module that defines none is fine.
+## A broken file is never silent
+
+Isolation must not become silence, which is the failure this project cares most
+about - it's the same contract encounters/registry.py keeps, for the same reason.
+A catalogue that won't load is kept in `load_errors()` rather than dropped:
+`--list` prints them, and a lookup that misses reports them alongside the
+near-miss suggestions. An adversary that vanished because somebody left a
+trailing comma has to say so, because otherwise it looks exactly like an
+adversary nobody has written.
+
+Discovery is lazy and cached - the first lookup reads every catalogue in this
+package.
 """
 
-import importlib
-import pkgutil
 from difflib import get_close_matches
+from pathlib import Path
 
 from adversaries.adversary import Adversary
+from adversaries.catalogue import read_catalogue
 from content.names import canonical
 
-# Modules that hold machinery rather than adversary definitions. Importing them
-# would be harmless (they define no Adversary literals), but skipping them makes
-# the intent obvious and avoids importing this module from inside itself.
-_NON_DEFINITION_MODULES = frozenset({"adversary", "registry"})
+_DEFINITIONS_DIR = Path(__file__).resolve().parent
 
 _catalogue: dict[str, Adversary] | None = None
+_failures: dict[str, str] = {}
 
 
 def _discover() -> dict[str, Adversary]:
-    """Import every definition module and collect its adversaries by name.
+    """Read every catalogue in this package, keeping the failures.
 
-    Raises ValueError if two different adversaries claim the same name - that
-    would make a lookup ambiguous, and silently picking one would quietly
-    simulate the wrong fight. The same object showing up in two modules (a
-    re-export) is fine and collapses to one entry.
+    Raises ValueError if two entries claim the same name - that would make a
+    lookup ambiguous, and silently picking one would quietly simulate the wrong
+    fight. Names differing only in capitalisation are the same name here, since
+    an encounter naming one is typed by hand.
     """
-    package = importlib.import_module(__package__)
     found: dict[str, Adversary] = {}
-    # Keyed canonically for the uniqueness check only - two stat blocks differing
-    # just in capitalisation are the same name to an encounter naming one.
-    claimed: dict[str, Adversary] = {}
+    claimed: dict[str, str] = {}
+    _failures.clear()
 
-    for module_info in pkgutil.iter_modules(package.__path__):
-        if module_info.name in _NON_DEFINITION_MODULES:
+    for path in sorted(_DEFINITIONS_DIR.glob("*.json")):
+        try:
+            defined = read_catalogue(path)
+        except Exception as error:  # a bad file is one bad catalogue, not a crash
+            _failures[path.name] = f"{type(error).__name__}: {error}"
             continue
-        module = importlib.import_module(f"{__package__}.{module_info.name}")
 
-        for value in vars(module).values():
-            if not isinstance(value, Adversary):
-                continue
-            existing = claimed.get(canonical(value.name))
-            if existing is None:
-                found[value.name] = value
-                claimed[canonical(value.name)] = value
-            elif existing is not value:
+        for adversary in defined:
+            claimed_by = claimed.get(canonical(adversary.name))
+            if claimed_by is not None:
                 raise ValueError(
-                    f"Two different adversaries are both named {value.name!r}. "
-                    "Names have to be unique across this package - an encounter "
-                    "has nothing else to go on. To vary a published stat block, "
-                    "override it in the encounter instead of redefining it."
+                    f"Two adversaries are both named {adversary.name!r} "
+                    f"({claimed_by} and {path.name}). Names have to be unique "
+                    "across this package - an encounter has nothing else to go "
+                    "on. To vary a published stat block, override it in the "
+                    "encounter instead of redefining it."
                 )
+            found[adversary.name] = adversary
+            claimed[canonical(adversary.name)] = path.name
 
     return found
 
@@ -72,13 +76,19 @@ def _load() -> dict[str, Adversary]:
 
 
 def refresh() -> None:
-    """Drop the cache so the next lookup re-imports. For tests, mostly."""
+    """Drop the cache so the next lookup re-reads the files. For tests, mostly."""
     global _catalogue
     _catalogue = None
 
 
+def load_errors() -> dict[str, str]:
+    """Catalogues in this package that didn't load, by filename, with the reason."""
+    _load()
+    return dict(_failures)
+
+
 def find_adversary(name: str) -> Adversary:
-    """The adversary definition published under `name`.
+    """The adversary defined under `name`.
 
     Returns the shared definition, not a copy - spawn() it (or let a Group do
     that) before anything marks HP on it.
@@ -92,14 +102,12 @@ def find_adversary(name: str) -> Adversary:
         if canonical(defined) == wanted:
             return adversary
 
-    try:
-        return catalogue[name]
-    except KeyError:
-        suggestions = get_close_matches(name, catalogue, n=3)
-        hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
-        raise KeyError(
-            f"No adversary named {name!r} is defined in this package.{hint}"
-        ) from None
+    suggestions = get_close_matches(name, catalogue, n=3)
+    hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+    if _failures:
+        broken = ", ".join(sorted(_failures))
+        hint += f" (These files didn't load, and may hold the one you wanted: {broken}.)"
+    raise KeyError(f"No adversary named {name!r} is defined in this package.{hint}")
 
 
 def all_adversaries() -> dict[str, Adversary]:

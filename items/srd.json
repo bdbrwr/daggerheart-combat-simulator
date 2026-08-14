@@ -1,0 +1,73 @@
+{
+  "publication": "Daggerheart SRD",
+  "notes": "Gear as printed in the SRD. Only what the current sheets equip is here - the full weapon and armor tables get ported once the machinery around them is settled.",
+
+  "weapons": [
+    {
+      "name": "Broadsword",
+      "trait": "agility",
+      "range": "Melee",
+      "burden": "One-Handed",
+      "damage_die": 8,
+      "damage_type": "physical",
+      "tier": 1,
+      "features": ["Reliable"]
+    },
+
+    {
+      "name": "Shortbow",
+      "trait": "agility",
+      "range": "Far",
+      "burden": "Two-Handed",
+      "damage_die": 6,
+      "damage_modifier": 3,
+      "damage_type": "physical",
+      "tier": 1,
+      "features": []
+    },
+
+    {
+      "name": "Greatsword",
+      "trait": "strength",
+      "range": "Melee",
+      "burden": "Two-Handed",
+      "damage_die": 10,
+      "damage_modifier": 3,
+      "damage_type": "physical",
+      "tier": 1,
+      "features": ["Massive"]
+    },
+
+    {
+      "name": "Greatstaff",
+      "trait": "knowledge",
+      "range": "Very Far",
+      "burden": "Two-Handed",
+      "damage_die": 6,
+      "damage_type": "magic",
+      "tier": 1,
+      "features": ["Powerful"]
+    }
+  ],
+
+  "armor": [
+    {
+      "name": "Gambeson Armor",
+      "tier": 1,
+      "base_score": 3,
+      "major_threshold": 5,
+      "severe_threshold": 11,
+      "features": ["Flexible"],
+      "notes": "Score and thresholds are provenance only - a sheet carries them already resolved."
+    },
+
+    {
+      "name": "Irontree Breastplate Armor",
+      "tier": 2,
+      "base_score": 4,
+      "major_threshold": 9,
+      "severe_threshold": 20,
+      "features": ["Reinforced"]
+    }
+  ]
+}

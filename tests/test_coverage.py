@@ -11,6 +11,7 @@ where the test is about the real content.
 
 import pytest
 
+from adversaries.registry import find_adversary
 from characters.player_character import PlayerCharacter
 from content.registry import (
     Status,
@@ -154,13 +155,15 @@ NOWHERE = dict(
 
 
 def test_the_block_counts_each_state_for_each_character():
+    """Counts include equipped gear: the default sheet carries a Broadsword
+    (Reliable, modelled) and Gambeson Armor (Flexible, ruled sheet-resolved)."""
     party = [_make_character(name="Kael", domain_cards_loadout=["Get Back Up"], **NOWHERE)]
 
     block = format_coverage(party)
 
     assert "Kael" in block
-    assert "1 modelled" in block  # Get Back Up
-    assert "1 no effect" in block  # Wildborne, ruled out
+    assert "2 modelled" in block  # Get Back Up, weapon:Reliable
+    assert "2 no effect" in block  # Wildborne, armor:Flexible
     assert "3 unimplemented" in block  # the three invented names
 
 
@@ -199,7 +202,8 @@ def test_a_fully_covered_party_carries_no_warning():
     block = format_coverage([bare])
 
     assert "work not done" not in block
-    assert "4 no effect" in block
+    # The four invented names, plus Gambeson Armor's Flexible.
+    assert "5 no effect" in block
 
 
 def test_the_block_repeats_what_a_sheet_asked_to_ignore():
@@ -217,11 +221,53 @@ def test_the_block_repeats_what_a_sheet_asked_to_ignore():
     assert "Wyrmscale Halfplate" in block
 
 
-def test_a_party_of_nobody_is_not_an_error():
-    assert "no party" in format_coverage([])
+def test_a_fight_with_nobody_in_it_is_not_an_error():
+    assert "nobody in the fight" in format_coverage([])
 
 
-def test_every_named_feature_on_a_sheet_is_assessed():
+# --- The other side ----------------------------------------------------------
+#
+# An unimplemented domain card makes the party weaker than it is at a table, so
+# the encounter reads as harder. An unimplemented adversary feature makes the
+# opposition weaker, so it reads as easier. The two errors point in opposite
+# directions and a reader who can only see one can't tell which way a number is
+# wrong - which is why both sides are printed.
+
+
+def test_the_block_covers_the_opposition_too():
+    bandit = find_adversary("Jagged Knife Bandit")
+
+    block = format_coverage([_make_character(name="Kael")], [bandit])
+
+    assert "opposition" in block
+    assert "Jagged Knife Bandit" in block
+    assert "adversary:Climber" in block
+
+
+def test_copies_of_one_stat_block_are_reported_once():
+    """Three bandits are three copies of one definition, not three findings."""
+    bandit = find_adversary("Jagged Knife Bandit")
+
+    block = format_coverage([], [bandit.spawn(), bandit.spawn(), bandit.spawn()])
+
+    assert block.count("Jagged Knife Bandit") == 1
+
+
+def test_an_opposition_only_fight_still_reports():
+    block = format_coverage([], [find_adversary("Jagged Knife Sniper")])
+
+    assert "Jagged Knife Sniper" in block
+    assert "(nobody)" in block
+
+
+def test_a_party_only_fight_is_unchanged():
+    """Callers that never had an opposition to pass still get their block."""
+    assert "Kael" in format_coverage([_make_character(name="Kael")])
+
+
+def test_named_features_are_what_applies_to_the_character():
+    """Dispatch scans this: content the PC carries, which now includes their
+    armor's features, because those apply to anything that happens to them."""
     character = _make_character(domain_cards_loadout=["Get Back Up", "I Am Your Shield"])
 
     assert character.named_features == [
@@ -231,4 +277,25 @@ def test_every_named_feature_on_a_sheet_is_assessed():
         "Stalwart",
         "Get Back Up",
         "I Am Your Shield",
+        "armor:Flexible",
     ]
+
+
+def test_a_weapons_features_are_assessed_but_not_dispatched_holder_wide():
+    """The distinction the two properties exist for. Reliable is the
+    Broadsword's, so it must not join everything its holder does - but it is
+    still part of how much of this character the simulator runs."""
+    character = _make_character(domain_cards_loadout=[])
+
+    assert "weapon:Reliable" not in character.named_features
+    assert "weapon:Reliable" in character.assessed_features
+    assert "armor:Flexible" in character.assessed_features
+
+
+def test_an_uncatalogued_armor_reports_under_its_own_name():
+    """Never silently absent: unknown gear shows as unimplemented rather than
+    contributing nothing quietly."""
+    character = _make_character(armor_item="Wyrmscale Halfplate")
+
+    assert "Wyrmscale Halfplate" in character.named_features
+    assert "Wyrmscale Halfplate" in format_coverage([character])

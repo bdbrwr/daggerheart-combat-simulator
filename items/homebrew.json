@@ -1,0 +1,20 @@
+{
+  "publication": "Immareth homebrew",
+  "notes": "Campaign gear that isn't in the SRD. Armor Score and thresholds are provenance only - a sheet carries them already resolved - so what matters here is the feature names.",
+
+  "armor": [
+    {
+      "name": "Devouring Robes",
+      "tier": 2,
+      "features": ["Homebrew Flavour Only"],
+      "notes": "Aeloria's. Score and thresholds are already resolved onto her sheet."
+    },
+
+    {
+      "name": "Infiltrator Leather",
+      "tier": 2,
+      "features": ["Homebrew Flavour Only"],
+      "notes": "Luma's. Score and thresholds are already resolved onto her sheet."
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "publication": "Daggerheart SRD",
+  "notes": "Adversaries as printed in the SRD. Numbers here match the book exactly - per-encounter tuning belongs in encounters/, so these stay checkable against the printed page.",
+
+  "adversaries": [
+    {
+      "name": "Jagged Knife Bandit",
+      "tier": 1,
+      "difficulty": 12,
+      "major_threshold": 8,
+      "severe_threshold": 14,
+      "hp_max": 5,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "damage_dice": "1d8",
+      "damage_modifier": 1,
+      "features": ["Climber", "From Above"],
+      "notes": "Tier 1 Standard. Daggers: melee, 1d8+1 physical."
+    },
+
+    {
+      "name": "Jagged Knife Sniper",
+      "tier": 1,
+      "difficulty": 13,
+      "major_threshold": 4,
+      "severe_threshold": 7,
+      "hp_max": 3,
+      "stress_max": 2,
+      "attack_modifier": -1,
+      "damage_dice": "1d10",
+      "damage_modifier": 2,
+      "features": ["Unseen Strike"],
+      "notes": "Tier 1 Ranged. Shortbow: far range, 1d10+2 physical."
+    }
+  ]
+}

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from content import soften_damage
+from items.registry import find_armor, find_weapon
 
 
 @dataclass
@@ -198,17 +199,50 @@ class PlayerCharacter:
         self.hope_marked = max(self.hope_marked - amount, 0)
 
     @property
+    def armor_features(self) -> list[str]:
+        """The features of the armor this PC is wearing, namespaced.
+
+        Scoped to the wearer, so these belong in `named_features` and dispatch
+        finds them exactly the way it finds a domain card's - Fortified changes
+        what any hit costs, Painful charges for any slot marked. Contrast
+        `weapon_features`, which are scoped to the weapon instead.
+
+        An armor nobody has catalogued reports under its own name rather than
+        being skipped, so it shows up as *unimplemented* instead of silently
+        contributing nothing. A sheet carries its Armor Score and thresholds
+        already resolved, so an uncatalogued armor costs a fight nothing - but
+        "costs nothing" and "nobody has looked at it" are exactly the two things
+        this project refuses to let look alike.
+        """
+        armor = find_armor(self.armor_item) if self.armor_item else None
+        if armor is None:
+            return [self.armor_item] if self.armor_item else []
+        return armor.named_features
+
+    @property
+    def weapon_features(self) -> list[str]:
+        """The features of the weapon this PC carries, namespaced.
+
+        Deliberately *not* part of `named_features`. A weapon's feature applies
+        to attacks made with that weapon, not to everything its holder does, so
+        letting dispatch scan it holder-wide would quietly add a Broadsword's
+        Reliable to a Grimoire spell. items/weapons.py passes these to dispatch
+        itself, scoped to the swing being made.
+
+        They still reach the coverage report through `assessed_features`,
+        because a weapon feature nobody has written is a real gap and has to be
+        visible.
+        """
+        return find_weapon(self.primary_weapon).named_features if self.primary_weapon else []
+
+    @property
     def named_features(self) -> list[str]:
-        """Everything this sheet names that game content could implement.
+        """Everything this PC carries that applies to whatever they do.
 
-        The input to the coverage report: each of these is either modelled,
-        assessed as having no combat effect, or unimplemented, and a reader of a
-        win rate deserves to know which.
-
-        Ancestry, community, class and subclass go in as single names, which is
-        coarse - a class is really a bundle of features - but it's honest, since
-        an undeclared class name reports as unimplemented until someone splits
-        it up and declares the parts.
+        The list dispatch scans. Ancestry, community, class and subclass go in as
+        single names, which is coarse - a class is really a bundle of features -
+        but it's honest, since an undeclared class name reports as unimplemented
+        until someone splits it up and declares the parts.
         """
         return [
             self.ancestry,
@@ -216,7 +250,21 @@ class PlayerCharacter:
             self.character_class,
             self.subclass,
             *self.domain_cards_loadout,
+            *self.armor_features,
         ]
+
+    @property
+    def assessed_features(self) -> list[str]:
+        """Everything about this PC the coverage report should account for.
+
+        A superset of `named_features`, because coverage and dispatch are asking
+        different questions. Dispatch asks "what applies to this character?" -
+        which a weapon's feature does not, since it belongs to the weapon.
+        Coverage asks "how much of this character does the simulator run?", and a
+        weapon feature nobody has implemented is missing from the fight whether
+        or not it is holder-scoped.
+        """
+        return [*self.named_features, *self.weapon_features]
 
     @property
     def is_conscious(self) -> bool:

@@ -90,6 +90,7 @@ class Holder(Protocol):
 
     name: str
     proficiency: int
+    major_threshold: int
     severe_threshold: int
     hp_marked: int
     hp_unmarked: int
@@ -126,6 +127,21 @@ class Interception(NamedTuple):
 
     shielder: Holder
     card: str
+
+
+class DamagePool(NamedTuple):
+    """The dice an attack is about to roll, before anything rolls them.
+
+    Passed to `damage_pool` content so a weapon feature can change the shape of
+    the roll rather than only its total - which is the one thing none of the
+    other hooks can express. `extra_damage` can add dice but never take one
+    away, and Massive and Powerful do both at once: roll an extra die, then
+    discard the lowest of the pool.
+    """
+
+    dice_groups: list
+    drop_lowest: int = 0
+    modifier: int = 0
 
 
 class Fight(Protocol):
@@ -179,6 +195,7 @@ _on_hits: dict[str, Callable] = {}
 _severity_responses: dict[str, Callable] = {}
 _guards: dict[str, Callable] = {}
 _immunities: dict[str, Callable] = {}
+_damage_pools: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -307,6 +324,32 @@ def extra_damage(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_extra_damage, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def damage_pool(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that reshapes the dice an attack is about to roll.
+
+    Signature: `(holder, weapon, pool, fight) -> DamagePool` - the pool as it
+    should now be, or the pool it was given to decline.
+
+    This is the hook for Massive and Powerful: "roll an additional damage die
+    and discard the lowest result". `extra_damage` can add dice but has no way
+    to take one back off, and `damage_bonus` only moves the total, so neither
+    can say it. Fires after the attack has landed and before the damage is
+    rolled, so everything it changes is measured against the target's
+    thresholds exactly once.
+
+    Weapon features are the expected caller, which is why `weapon` is in the
+    signature - a feature belongs to the thing that has it, and needs to see
+    the die it is adding one of.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_damage_pools, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -640,19 +683,43 @@ def hope_die_for(holder: Holder, fight: Fight) -> int:
     return DEFAULT_HOPE_DIE
 
 
-def total_roll_bonus(holder: Holder, target, fight: Fight) -> int:
+def total_roll_bonus(holder: Holder, target, fight: Fight, names=None) -> int:
     """Everything that adds to this action roll, summed.
 
     Consulted at the moment the roll is made, by whichever option was chosen -
     so a card that declined never spends anything toward a roll it isn't making.
+
+    `names` narrows the scope, and exists for gear. Content a *holder* carries -
+    a domain card, a class feature, an armor feature - applies to everything
+    they do, which is what the default does by scanning `named_features`. A
+    *weapon's* feature does not: a Broadsword's Reliable is "+1 to attack rolls"
+    with the Broadsword, and summing it holder-wide would quietly add it to a
+    Wizard's spell attacks too. So an attack passes the weapon's own feature
+    names here, and calls this twice - once holder-wide, once for the weapon.
     """
     _discover()
     total = 0
-    for name in holder.named_features:
+    for name in holder.named_features if names is None else names:
         contribute = _roll_bonuses.get(canonical(name))
         if contribute is not None:
             total += contribute(holder, target, fight)
     return total
+
+
+def adjust_damage_pool(holder: Holder, weapon, pool: DamagePool, fight=None, names=None):
+    """Let content reshape the dice an attack is about to roll.
+
+    Each piece of content sees what the previous one left, so two adjustments
+    compose. `names` scopes the lookup the same way `total_roll_bonus` does, and
+    for gear it is the caller's job to pass the weapon's own feature names -
+    Massive belongs to the Greatsword, not to the Guardian holding it.
+    """
+    _discover()
+    for name in holder.named_features if names is None else names:
+        adjust = _damage_pools.get(canonical(name))
+        if adjust is not None:
+            pool = adjust(holder, weapon, pool, fight)
+    return pool
 
 
 def apply_on_roll(holder: Holder, roll, fight: Fight) -> None:

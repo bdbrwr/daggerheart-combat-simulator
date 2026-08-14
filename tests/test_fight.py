@@ -342,14 +342,30 @@ def test_party_hp_unmarked_totals_the_party():
 
 
 def test_gear_is_found_by_the_name_a_character_sheet_uses():
-    from items.registry import find_consumable, find_weapon
+    from items.registry import find_armor, find_consumable, find_weapon
 
-    assert find_weapon("Broadsword").__name__ == "broadsword_attack"
+    assert find_weapon("Broadsword").name == "Broadsword"
+    assert find_armor("Gambeson Armor").name == "Gambeson Armor"
     assert find_consumable("Minor Healing Potion").__name__ == "minor_healing_potion"
 
 
-def test_an_unimplemented_item_fails_loudly_with_a_suggestion():
+def test_an_unimplemented_weapon_fails_loudly_with_a_suggestion():
+    """A PC whose weapon doesn't resolve can't attack, so this raises."""
     from items.registry import find_weapon
 
     with pytest.raises(KeyError, match="Broadsword"):
         find_weapon("Broadswrod")
+
+
+def test_an_uncatalogued_armor_is_a_miss_rather_than_an_error():
+    """A sheet carries its Armor Score and thresholds resolved, so unknown armor
+    costs a fight nothing - the PC surfaces it in coverage instead."""
+    from items.registry import find_armor
+
+    assert find_armor("Nobody's Breastplate") is None
+
+
+def test_the_gear_catalogues_all_load():
+    from items.registry import load_errors
+
+    assert load_errors() == {}

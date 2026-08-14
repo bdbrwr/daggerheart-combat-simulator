@@ -202,24 +202,35 @@ def _run_and_compare(experiments, runs: int, seed: int | None) -> str:
     the file boundary exists to prevent.
 
     Coverage follows the reports, unconditionally - it's the context a win rate
-    has to be read against, since a party half of whose features aren't
-    implemented makes any encounter look harder than it is. Printed once per
-    distinct party rather than once per variation, since variations usually
-    share one, but never skipped for a variation that overrides it.
+    has to be read against, since unimplemented content on the party's side makes
+    an encounter look harder than it is and unimplemented content on the
+    opposition's makes it look easier. Printed once per distinct pairing of party
+    and opposition rather than once per variation, since variations usually share
+    both, but never skipped for a variation that changes either.
     """
     blocks = []
     for experiment in experiments:
         summaries = []
-        parties_shown = set()
+        shown = set()
 
         for variation in experiment.variations:
             summaries.append(run_simulation(variation, runs=runs, seed=seed))
             blocks.append(format_report(summaries[-1]))
 
-            party = tuple(variation.party)
-            if party not in parties_shown:
-                parties_shown.add(party)
-                blocks.append(format_coverage(variation.spawn_party()))
+            # Keyed on both sides: two variations sharing a party but fielding
+            # different stat blocks have different coverage, and the opposition's
+            # is the half that says whether an encounter is easier than it reads.
+            fielded = (
+                tuple(variation.party),
+                tuple(group.adversary.name for group in variation.groups),
+            )
+            if fielded not in shown:
+                shown.add(fielded)
+                blocks.append(
+                    format_coverage(
+                        variation.spawn_party(), variation.spawn_adversaries()
+                    )
+                )
 
         if len(summaries) > 1:
             blocks.append(format_comparison(summaries, title=experiment.name))

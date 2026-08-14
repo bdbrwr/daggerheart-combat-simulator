@@ -3,13 +3,22 @@
 Reading an encounter file - inheritance, overrides, and the ways a bad file
 fails - is tests/test_encounters.py. These are about the objects a file produces,
 so they construct them in Python, which is also how a sweep or a test would.
+
+Stat blocks are looked up rather than imported: a definition lives in
+adversaries/srd.json, so there is no module-level literal to reach for. The
+lookups are made inside each test rather than once at import, because the
+registry's cache can be dropped by `refresh()` in another file - holding an
+object across that would make these pass or fail on test *order*.
 """
 
 import pytest
 
-from adversaries.srd import JAGGED_KNIFE_BANDIT, JAGGED_KNIFE_SNIPER
+from adversaries.registry import find_adversary
 from encounters.encounter import CHARACTERS_DIR, Encounter, Group
 from encounters.registry import find_experiment
+
+BANDIT = "Jagged Knife Bandit"
+SNIPER = "Jagged Knife Sniper"
 
 
 def _encounter(**overrides) -> Encounter:
@@ -18,8 +27,8 @@ def _encounter(**overrides) -> Encounter:
         name="Test",
         party=[CHARACTERS_DIR / "example_character.json"],
         groups=[
-            Group(JAGGED_KNIFE_BANDIT, count=3),
-            Group(JAGGED_KNIFE_SNIPER, count=1),
+            Group(find_adversary(BANDIT), count=3),
+            Group(find_adversary(SNIPER), count=1),
         ],
     )
     defaults.update(overrides)
@@ -27,15 +36,15 @@ def _encounter(**overrides) -> Encounter:
 
 
 def test_group_spawns_requested_count():
-    group = Group(JAGGED_KNIFE_BANDIT, count=3)
+    group = Group(find_adversary(BANDIT), count=3)
     spawned = group.spawn()
     assert len(spawned) == 3
-    assert all(adversary.name == "Jagged Knife Bandit" for adversary in spawned)
+    assert all(adversary.name == BANDIT for adversary in spawned)
 
 
 def test_group_accepts_an_adversary_by_name():
-    group = Group("Jagged Knife Bandit", count=2)
-    assert group.adversary is JAGGED_KNIFE_BANDIT
+    group = Group(BANDIT, count=2)
+    assert group.adversary is find_adversary(BANDIT)
     assert len(group.spawn()) == 2
 
 
@@ -45,36 +54,48 @@ def test_group_rejects_an_unknown_name_at_construction():
 
 
 def test_group_spawns_independent_copies():
-    first, second = Group(JAGGED_KNIFE_BANDIT, count=2).spawn()
+    first, second = Group(find_adversary(BANDIT), count=2).spawn()
     first.mark_hp(2)
     assert second.hp_marked == 0
-    assert JAGGED_KNIFE_BANDIT.hp_marked == 0
+    assert find_adversary(BANDIT).hp_marked == 0
 
 
 def test_group_overrides_apply_to_every_copy():
-    spawned = Group("Jagged Knife Sniper", count=2, hp_max=5, damage_modifier=4).spawn()
+    spawned = Group(SNIPER, count=2, hp_max=5, damage_modifier=4).spawn()
     assert [adversary.hp_max for adversary in spawned] == [5, 5]
     assert [adversary.damage_modifier for adversary in spawned] == [4, 4]
 
 
 def test_group_overrides_leave_the_definition_alone():
-    Group("Jagged Knife Sniper", count=1, hp_max=5).spawn()
-    assert JAGGED_KNIFE_SNIPER.hp_max == 3
+    Group(SNIPER, count=1, hp_max=5).spawn()
+    assert find_adversary(SNIPER).hp_max == 3
 
 
 def test_group_rejects_an_unknown_stat():
     with pytest.raises(TypeError):
-        Group(JAGGED_KNIFE_BANDIT, count=1, hp_maximum=9).spawn()
+        Group(find_adversary(BANDIT), count=1, hp_maximum=9).spawn()
+
+
+def test_a_spawned_copy_does_not_share_its_feature_list():
+    """Features are a list, so a copy has to get its own - an adversary that
+    gained one mid-fight must not write it back onto the definition."""
+    spawned = Group(find_adversary(BANDIT), count=1).spawn()[0]
+    spawned.features.append("Invented Mid-Fight")
+
+    assert find_adversary(BANDIT).features == ["Climber", "From Above"]
 
 
 def test_encounter_spawns_every_group_in_order():
     encounter = Encounter(
         name="Test",
         party=[],
-        groups=[Group(JAGGED_KNIFE_BANDIT, count=2), Group(JAGGED_KNIFE_SNIPER, count=1)],
+        groups=[
+            Group(find_adversary(BANDIT), count=2),
+            Group(find_adversary(SNIPER), count=1),
+        ],
     )
     names = [adversary.name for adversary in encounter.spawn_adversaries()]
-    assert names == ["Jagged Knife Bandit", "Jagged Knife Bandit", "Jagged Knife Sniper"]
+    assert names == [BANDIT, BANDIT, SNIPER]
 
 
 def test_encounter_adversary_count():
@@ -118,10 +139,10 @@ def test_the_shipped_example_tunes_a_stat_block_without_touching_the_definition(
     sniper = next(
         adversary
         for adversary in toughened.spawn_adversaries()
-        if adversary.name == "Jagged Knife Sniper"
+        if adversary.name == SNIPER
     )
 
     assert sniper.hp_max == 5
     assert sniper.damage_modifier == 4
-    assert JAGGED_KNIFE_SNIPER.hp_max == 3
-    assert JAGGED_KNIFE_SNIPER.damage_modifier == 2
+    assert find_adversary(SNIPER).hp_max == 3
+    assert find_adversary(SNIPER).damage_modifier == 2

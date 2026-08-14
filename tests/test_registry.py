@@ -1,12 +1,17 @@
 import pytest
 
 from adversaries.adversary import Adversary
-from adversaries.registry import all_adversaries, find_adversary, refresh
-from adversaries.srd import JAGGED_KNIFE_BANDIT
+from adversaries.registry import (
+    all_adversaries,
+    find_adversary,
+    load_errors,
+    refresh,
+)
 
 
-def test_find_adversary_returns_the_definition_itself():
-    assert find_adversary("Jagged Knife Bandit") is JAGGED_KNIFE_BANDIT
+def test_find_adversary_returns_the_shared_definition():
+    """The same object every time, so a Group can spawn copies off it."""
+    assert find_adversary("Jagged Knife Bandit") is find_adversary("jagged knife bandit")
 
 
 def test_find_adversary_works_without_knowing_the_module():
@@ -39,14 +44,36 @@ def test_all_adversaries_returns_a_copy():
     assert "Jagged Knife Bandit" in all_adversaries()
 
 
-def test_a_re_export_does_not_produce_a_duplicate_entry():
-    """The same definition seen in two modules collapses to one entry."""
-    catalogue = all_adversaries()
-    names = [name for name in catalogue if name == "Jagged Knife Bandit"]
-    assert len(names) == 1
+def test_a_stat_block_is_read_off_the_catalogue():
+    """The numbers come from srd.json, not from a Python literal."""
+    bandit = find_adversary("Jagged Knife Bandit")
+
+    assert bandit.hp_max == 5
+    assert bandit.stress_max == 3
+    assert bandit.damage_modifier == 1
+    assert [(g.count, g.sides) for g in bandit.damage_dice] == [(1, 8)]
+    assert bandit.publication == "Daggerheart SRD"
+
+
+def test_a_stat_blocks_features_are_namespaced_for_the_registry():
+    """Feature names are qualified, so an adversary's Heavy can't collide with a
+    weapon's - and so the coverage block says which one is missing."""
+    bandit = find_adversary("Jagged Knife Bandit")
+
+    assert bandit.features == ["Climber", "From Above"]
+    assert bandit.named_features == ["adversary:Climber", "adversary:From Above"]
 
 
 def test_refresh_rebuilds_the_catalogue():
+    """Re-read from disk, so the stats match even though the object is new."""
     before = find_adversary("Jagged Knife Bandit")
     refresh()
-    assert find_adversary("Jagged Knife Bandit") is before
+    after = find_adversary("Jagged Knife Bandit")
+
+    assert after is not before  # genuinely re-read, not handed back from cache
+    assert after == before
+
+
+def test_the_catalogues_all_load():
+    """Isolation mustn't become silence - a stat block that vanished says why."""
+    assert load_errors() == {}

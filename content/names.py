@@ -29,3 +29,35 @@ trade: punctuation is a typo worth catching, capitalisation isn't.
 def canonical(name: str) -> str:
     """The form a name is stored and looked up under."""
     return " ".join(name.split()).casefold()
+
+
+# --- Namespaces --------------------------------------------------------------
+#
+# Content named on a *character sheet* - domain cards, ancestries, communities,
+# classes, subclasses - shares one flat namespace, because those names really
+# are unique across the game. Content named in a *catalogue* is different: the
+# SRD gives a Warhammer the feature "Heavy" and Chainmail Armor the feature
+# "Heavy", and they are two separate pieces of content that happen to share a
+# word. In a flat namespace the second registration would collide with the
+# first, and the registry would refuse to load rather than let one shadow the
+# other.
+#
+# So a catalogue's features are registered, dispatched and reported under a
+# qualified name. Nobody types the prefix: the JSON author writes "Heavy" and
+# the loader qualifies it from the catalogue the entry came from.
+
+WEAPON = "weapon"
+ARMOR = "armor"
+ADVERSARY = "adversary"
+
+QUALIFIER = ":"
+
+
+def qualified(kind: str, name: str) -> str:
+    """`name` in `kind`'s namespace - `qualified(ARMOR, "Heavy")` is "armor:Heavy".
+
+    The separator is punctuation, which `canonical` deliberately leaves alone,
+    so a qualified name can never fold into an unqualified one and two kinds
+    can never fold into each other.
+    """
+    return f"{kind}{QUALIFIER}{name.strip()}"

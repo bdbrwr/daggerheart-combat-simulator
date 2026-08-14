@@ -18,6 +18,7 @@ from characters.player_character import PlayerCharacter
 from dice.common import AdvantageState
 from dice.damage import DamageRollResult, DiceGroup
 from items.registry import find_weapon
+from items.weapons import attack_with
 
 
 def _make_character(**overrides) -> PlayerCharacter:
@@ -144,7 +145,9 @@ def test_a_weapon_that_discards_rolls_one_extra_die():
     """Greatsword at Proficiency 2 rolls three d10s and keeps the best two."""
     random.seed(4)
 
-    result = find_weapon("Greatsword")(_make_character(proficiency=2), _make_adversary())
+    result = attack_with(
+        _make_character(proficiency=2), find_weapon("Greatsword"), _make_adversary()
+    )
 
     assert result.damage_roll.dice_groups == [DiceGroup(count=3, sides=10)]
     assert len(result.damage_roll.dropped) == 1
@@ -153,7 +156,9 @@ def test_a_weapon_that_discards_rolls_one_extra_die():
 def test_a_weapon_without_the_feature_rolls_proficiency_dice():
     random.seed(4)
 
-    result = find_weapon("Shortbow")(_make_character(proficiency=2), _make_adversary())
+    result = attack_with(
+        _make_character(proficiency=2), find_weapon("Shortbow"), _make_adversary()
+    )
 
     assert result.damage_roll.dice_groups == [DiceGroup(count=2, sides=6)]
     assert result.damage_roll.dropped == []
@@ -163,7 +168,7 @@ def test_a_weapon_without_the_feature_rolls_proficiency_dice():
 def test_the_greatstaff_has_no_flat_modifier():
     random.seed(4)
 
-    result = find_weapon("Greatstaff")(_make_character(), _make_adversary())
+    result = attack_with(_make_character(), find_weapon("Greatstaff"), _make_adversary())
 
     assert result.damage_roll.modifier == 0
 
@@ -173,8 +178,10 @@ def test_each_weapon_reads_the_trait_the_srd_gives_it():
     generous = {"agility": 0, "strength": 0, "finesse": 0, "instinct": 0, "presence": 0, "knowledge": 50}
     random.seed(1)
 
-    staff = find_weapon("Greatstaff")(
-        _make_character(traits=generous), _make_adversary(difficulty=40)
+    staff = attack_with(
+        _make_character(traits=generous),
+        find_weapon("Greatstaff"),
+        _make_adversary(difficulty=40),
     )
 
     assert staff.attack_roll.is_success is True
@@ -182,11 +189,17 @@ def test_each_weapon_reads_the_trait_the_srd_gives_it():
 
 def test_an_experience_bonus_reaches_the_attack_roll():
     random.seed(9)
-    unaided = find_weapon("Greatsword")(_make_character(), _make_adversary(difficulty=99))
+    unaided = attack_with(
+        _make_character(), find_weapon("Greatsword"), _make_adversary(difficulty=99)
+    )
 
     random.seed(9)
-    aided = find_weapon("Greatsword")(
-        _make_character(), _make_adversary(difficulty=99), AdvantageState.NONE, 50
+    aided = attack_with(
+        _make_character(),
+        find_weapon("Greatsword"),
+        _make_adversary(difficulty=99),
+        AdvantageState.NONE,
+        50,
     )
 
     assert unaided.attack_roll.total + 50 == aided.attack_roll.total

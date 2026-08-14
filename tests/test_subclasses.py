@@ -16,7 +16,8 @@ from dice.common import AdvantageState
 from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityOutcome, DualityRollResult
 from features.subclasses import FACE_YOUR_FEAR_DIE, face_your_fear
-from items.weapons import greatstaff_attack
+from items.registry import find_weapon
+from items.weapons import attack_with
 
 
 class FakeTarget:
@@ -147,7 +148,7 @@ def test_the_extra_die_joins_the_weapons_own_damage_roll():
         patch("items.weapons.roll_duality", return_value=SUCCESS_WITH_FEAR),
         patch("items.weapons.roll_damage", return_value=damage_roll) as mock_roll_damage,
     ):
-        greatstaff_attack(wizard, target)
+        attack_with(wizard, find_weapon("Greatstaff"), target)
 
     kwargs = mock_roll_damage.call_args.kwargs
     # Greatstaff is Powerful, so the weapon's own pool is Proficiency + 1 d6s,
@@ -172,6 +173,6 @@ def test_no_extra_die_reaches_the_damage_roll_on_a_success_with_hope():
         patch("items.weapons.roll_duality", return_value=SUCCESS_WITH_HOPE),
         patch("items.weapons.roll_damage", return_value=damage_roll) as mock_roll_damage,
     ):
-        greatstaff_attack(wizard, target)
+        attack_with(wizard, find_weapon("Greatstaff"), target)
 
     assert mock_roll_damage.call_args.kwargs["dice_groups"] == [DiceGroup(count=2, sides=6)]

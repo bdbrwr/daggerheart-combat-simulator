@@ -54,6 +54,7 @@ from content.conditions import VULNERABLE
 from content.names import canonical
 from dice.common import AdvantageState
 from items.registry import find_consumable, find_weapon
+from items.weapons import attack_with
 
 # A PC drinks at this much unmarked HP or less. Two is the point where the next
 # solid hit is plausibly the last one.
@@ -251,10 +252,15 @@ def _make_the_roll(
         The Experience is only paid for here, once the weapon is definitely
         taking the roll - content that makes its own roll doesn't receive the
         bonus, so spending the Hope before choosing would burn it for nothing.
+
+        The weapon is a record now rather than a callable, so the shared attack
+        shape takes it as an argument. What the weapon *does* beyond its numbers
+        is its own features, which items/weapons.py dispatches scoped to the
+        weapon - nothing here knows any of them.
         """
-        attack = find_weapon(attacker.primary_weapon)
-        return attack(
+        return attack_with(
             attacker,
+            find_weapon(attacker.primary_weapon),
             at,
             AdvantageState.NONE,
             _experience_bonus(attacker, fight) + total_roll_bonus(attacker, at, fight),
