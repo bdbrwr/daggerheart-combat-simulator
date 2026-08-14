@@ -11,6 +11,8 @@ Plain text on purpose: it goes in a terminal next to the numbers being tuned,
 and a run whose output needs a viewer is a run nobody looks at.
 """
 
+import textwrap
+
 from simulation.summary import NEAR_DEATH_HP_UNMARKED, SimulationSummary
 
 WIDTH = 78
@@ -45,14 +47,25 @@ def format_report(summary: SimulationSummary) -> str:
 
 
 def _heading(summary: SimulationSummary) -> list[str]:
+    """The encounter, and - if its file says - why it's set up this way.
+
+    The notes are printed rather than left in the file because a tuning decision
+    is only worth anything next to the numbers it produced. An encounter with
+    nothing to say prints nothing.
+    """
     seed = f"seed {summary.seed}" if summary.seed is not None else "unseeded"
-    return [
+    lines = [
         "=" * WIDTH,
         f"{summary.encounter_name} - {summary.runs:,} fights ({seed})",
         "=" * WIDTH,
         f"  Party        {', '.join(summary.party) or '(nobody)'}",
         f"  Opposition   {'; '.join(summary.opposition) or '(nothing)'}",
     ]
+
+    if summary.notes:
+        lines.append("")
+        lines += [f"  {line}" for line in textwrap.wrap(summary.notes, WIDTH - 2)]
+    return lines
 
 
 def _outcomes(summary: SimulationSummary) -> list[str]:
@@ -177,7 +190,7 @@ def _fear(summary: SimulationSummary) -> list[str]:
     ]
 
 
-def format_comparison(summaries: list[SimulationSummary]) -> str:
+def format_comparison(summaries: list[SimulationSummary], title: str = "") -> str:
     """Several runs side by side - the table tuning actually gets read off.
 
     One row per encounter, one column per headline number, so a variation can
@@ -199,18 +212,21 @@ def format_comparison(summaries: list[SimulationSummary]) -> str:
     seeds = {summary.seed for summary in summaries}
     described = f"seed {seeds.pop()}" if len(seeds) == 1 and None not in seeds else "unseeded"
 
+    described_as = f"COMPARISON: {title}" if title else "COMPARISON"
     lines = [
         "=" * WIDTH,
-        f"COMPARISON - {len(summaries)} encounters, {how_many} ({described})",
+        f"{described_as} - {len(summaries)} variations, {how_many} ({described})",
         "=" * WIDTH,
-        _comparison_row("encounter", "win rate", "PC rounds", "near death", "unmarked HP"),
+        _comparison_row("variation", "win rate", "PC rounds", "near death", "unmarked HP"),
     ]
 
     for summary in summaries:
         victories = summary.victories
         lines.append(
             _comparison_row(
-                summary.encounter_name,
+                # The short name: every row repeating the experiment would cost
+                # most of a column that's only 28 characters wide.
+                summary.variation or summary.encounter_name,
                 f"{summary.win_rate:.1%}",
                 f"{summary.distribution('pc_rounds').mean:.1f}",
                 f"{summary.near_death_rate:.1%}" if victories else "-",

@@ -157,7 +157,17 @@ ENV/
 env.bak/
 venv.bak/
 
-# Spyder project settings
+# Spyder projec=========================================================================================== FAILURES ===========================================================================================
+_____________________________________________________________ test_an_encounter_is_found_however_it_was_typed_at_the_command_line ______________________________________________________________
+
+    def test_an_encounter_is_found_however_it_was_typed_at_the_command_line():
+>       from encounters.registry import all_encounters, find_encounter
+E       ImportError: cannot import name 'all_encounters' from 'encounters.registry' (/home/bdbrwr/workspace/github.com/bdbrwr/daggerheart-combat-simulator/encounters/registry.py)
+
+tests/test_name_matching.py:136: ImportError
+=================================================================================== short test summary info ====================================================================================
+FAILED tests/test_name_matching.py::test_an_encounter_is_found_however_it_was_typed_at_the_command_line - ImportError: cannot import name 'all_encounters' from 'encounters.registry' (/home/bdbrwr/workspace/github.com/bdbrwr/daggerheart-combat-simulator/encounters/registry.py)
+1 failed, 441 passed in 0.59st settings
 .spyderproject
 .spyproject
 
@@ -224,6 +234,8 @@ CLAUDE.md
 
 characters/TPK*
 characters/TenStones*
+encounters/TPK*
+encounters/TenStones*
 
 # Saved simulation output (python -m simulation --save). Experiment records,
 # not sources of truth - the encounter definitions that produced them are in

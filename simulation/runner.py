@@ -32,11 +32,13 @@ def run_simulation(encounter, runs: int = DEFAULT_RUNS, seed: int | None = None)
     records = [FightRecord.of(run_fight(encounter)) for _ in range(runs)]
 
     return SimulationSummary(
-        encounter_name=encounter.name,
+        encounter_name=encounter.title,
+        variation=encounter.name,
         party=[pc.name for pc in encounter.spawn_party()],
         opposition=[describe_group(group) for group in encounter.groups],
         seed=seed,
         records=records,
+        notes=getattr(encounter, "notes", ""),
     )
 
 

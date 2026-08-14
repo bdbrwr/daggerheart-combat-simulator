@@ -1,0 +1,52 @@
+{
+  "name": "Roadside Ambush",
+
+  "notes": "A worked example of an encounter file - copy it to start a new one. Four adversaries against a single tier 1 PC is a losing fight by a wide margin, so the question is what softening it actually buys. The variations below move one knob each; run them together and read the comparison table.",
+
+  "party": ["example_character.json"],
+  "starting_fear": 0,
+  "starting_spotlight": "pcs",
+  "rest": "long",
+
+  "variations": [
+    {
+      "name": "As printed",
+      "notes": "Every stat block exactly as the book prints it. The Sniper has 3 HP and thresholds 4/7, so it folds to almost any hit.",
+      "groups": [
+        { "adversary": "Jagged Knife Bandit", "count": 3 },
+        { "adversary": "Jagged Knife Sniper", "count": 1 }
+      ]
+    },
+    {
+      "name": "Sniper toughened",
+      "notes": "The Sniper given enough HP to matter and enough damage to be worth fearing. Tuning it here rather than in adversaries/srd.py means the definition there still matches the book.",
+      "groups": [
+        { "adversary": "Jagged Knife Bandit", "count": 3 },
+        {
+          "adversary": "Jagged Knife Sniper",
+          "count": 1,
+          "overrides": { "hp_max": 5, "damage_modifier": 4 }
+        }
+      ]
+    },
+    {
+      "name": "One fewer bandit",
+      "notes": "The obvious first thing to try when a fight is too hard.",
+      "groups": [
+        { "adversary": "Jagged Knife Bandit", "count": 2 },
+        { "adversary": "Jagged Knife Sniper", "count": 1 }
+      ]
+    },
+    {
+      "name": "Ambushed, no rest",
+      "notes": "The same opposition, walked into cold: the GM opens with the spotlight and 3 Fear, and the party arrives with nothing refreshed. A variation can override any shared setting, which is what makes this one file rather than two.",
+      "starting_fear": 3,
+      "starting_spotlight": "gm",
+      "rest": "none",
+      "groups": [
+        { "adversary": "Jagged Knife Bandit", "count": 3 },
+        { "adversary": "Jagged Knife Sniper", "count": 1 }
+      ]
+    }
+  ]
+}

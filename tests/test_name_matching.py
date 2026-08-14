@@ -132,12 +132,12 @@ def test_an_adversary_is_found_however_an_encounter_capitalised_it():
     assert find_adversary("jagged knife bandit") is find_adversary("Jagged Knife Bandit")
 
 
-def test_an_encounter_is_found_however_it_was_typed_at_the_command_line():
-    from encounters.registry import all_encounters, find_encounter
+def test_an_experiment_is_found_however_it_was_typed_at_the_command_line():
+    from encounters.registry import all_experiments, find_experiment
 
-    defined = next(iter(all_encounters()), None)
-    assert defined is not None, "no encounters are defined to look up"
-    assert find_encounter(defined.upper()) is find_encounter(defined)
+    defined = next(iter(all_experiments()), None)
+    assert defined is not None, "no experiments are defined to look up"
+    assert find_experiment(defined.upper()) is find_experiment(defined)
 
 
 # --- Traits ------------------------------------------------------------------

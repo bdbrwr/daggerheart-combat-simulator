@@ -160,6 +160,18 @@ class SimulationSummary:
     seed: int | None
     records: list[FightRecord]
 
+    # The encounter file's own account of why it's set up this way. Carried here
+    # so the reasoning behind a knob and the numbers it produced are printed
+    # together rather than living in a file nobody opens.
+    notes: str = ""
+
+    # This run's variation name on its own ("Sniper toughened"), where
+    # `encounter_name` is the full title ("Roadside Ambush - Sniper toughened").
+    # A comparison table of one experiment's variations wants the short form:
+    # every row repeating the experiment name is noise, and the table is only
+    # 28 characters wide.
+    variation: str = ""
+
     @property
     def runs(self) -> int:
         return len(self.records)

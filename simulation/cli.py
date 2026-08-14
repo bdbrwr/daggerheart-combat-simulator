@@ -11,16 +11,23 @@ block of text.
     python -m simulation --all --runs 2000 --seed 7
     python -m simulation "Roadside Ambush" --play-by-play --seed 7
 
-Naming more than one encounter is the tuning workflow. Each is run in full and
-reported in full, then a comparison table underneath puts the headline numbers
-in rows so a variation can be judged against what it varies from. Crucially a
-single `--seed` seeds *every* encounter in the command, so each variation is
+What you name is an *encounter file* - one experiment, holding the variations
+that answer one question. Naming it runs every variation in it, reports each in
+full, and puts a comparison table underneath whose rows are the variations. That
+is the tuning workflow in a single command, and it's why variations belong in one
+file: they're only worth reading against each other.
+
+Crucially a single `--seed` seeds every run in the command, so each variation is
 fought against the same sequence of dice and a difference between two rows is a
 difference between the stat blocks rather than luck.
 
+Naming several files runs each experiment and prints its own table; the tables
+stay separate, because a row from one question doesn't belong beside a row from
+another.
+
 Encounters are named, not built here. A variation worth running is worth
-committing as a definition in encounters/, where its overrides sit next to the
-stat block they tune and a run from last week can be repeated exactly.
+committing to its file in encounters/, where its overrides sit next to the stat
+block they tune and a run from last week can be repeated exactly.
 
 `--play-by-play` is the other half of the job: a single seeded fight with the
 loop narrating itself. A win rate that looks wrong says a number is off but not
@@ -31,11 +38,12 @@ something odd, run one and read it.
 import argparse
 import random
 import re
+import textwrap
 from datetime import datetime
 from pathlib import Path
 
 from combat.fight import run_fight
-from encounters.registry import all_encounters, find_encounter
+from encounters.registry import all_experiments, find_experiment, load_errors
 from simulation.coverage import format_coverage
 from simulation.report import format_comparison, format_report
 from simulation.runner import DEFAULT_RUNS, describe_group, run_simulation
@@ -50,7 +58,7 @@ examples:
   python -m simulation --list
   python -m simulation "Roadside Ambush"
   python -m simulation "Roadside Ambush" --runs 1000 --seed 7
-  python -m simulation "Roadside Ambush" "Roadside Ambush (Softened)" --seed 7
+  python -m simulation "Roadside Ambush" "Cliffside Chase" --seed 7
   python -m simulation --all --runs 2000 --seed 7 --save
   python -m simulation "Roadside Ambush" --play-by-play --seed 7
 """
@@ -139,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         print(_format_catalogue())
         return 0
 
-    names = _chosen_encounters(parser, arguments)
+    names = _chosen_experiments(parser, arguments)
     if names is None:
         parser.print_help()
         return 2
@@ -148,16 +156,20 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--runs has to be at least 1")
 
     try:
-        encounters = [find_encounter(name) for name in names]
+        experiments = [find_experiment(name) for name in names]
     except KeyError as error:
         # The registry's message already carries the suggestions; KeyError
         # stringifies with quotes around it, so unwrap to the message itself.
         parser.exit(2, f"{error.args[0]}\n")
 
     if arguments.play_by_play:
-        output = "\n\n".join(_narrate(encounter, arguments.seed) for encounter in encounters)
+        output = "\n\n".join(
+            _narrate(variation, arguments.seed)
+            for experiment in experiments
+            for variation in experiment.variations
+        )
     else:
-        output = _run_and_compare(encounters, arguments.runs, arguments.seed)
+        output = _run_and_compare(experiments, arguments.runs, arguments.seed)
 
     print(output)
 
@@ -167,8 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _chosen_encounters(parser, arguments) -> list[str] | None:
-    """The encounter names to run, or None if the command named nothing.
+def _chosen_experiments(parser, arguments) -> list[str] | None:
+    """The experiment names to run, or None if the command named nothing.
 
     `--all` and a list of names are refused together rather than merged: one of
     them would have to silently win, and quietly running something other than
@@ -177,49 +189,98 @@ def _chosen_encounters(parser, arguments) -> list[str] | None:
     if arguments.all and arguments.encounters:
         parser.error("name encounters or pass --all, not both")
     if arguments.all:
-        return sorted(all_encounters())
+        return sorted(all_experiments())
     return list(arguments.encounters) or None
 
 
-def _run_and_compare(encounters, runs: int, seed: int | None) -> str:
-    """Every encounter's full report, with a comparison table when there's more than one.
+def _run_and_compare(experiments, runs: int, seed: int | None) -> str:
+    """Every variation's full report, with its experiment's comparison underneath.
 
-    Each report is followed by its party's coverage, unconditionally. It's the
-    context the win rate above it has to be read against - a party half of whose
-    features aren't implemented makes any encounter look harder than it is - so
-    it isn't behind a flag.
+    The comparison belongs to one experiment rather than to the whole command:
+    variations of one question are what's worth reading against each other, and
+    a table mixing two unrelated experiments would invite exactly the comparison
+    the file boundary exists to prevent.
+
+    Coverage follows the reports, unconditionally - it's the context a win rate
+    has to be read against, since a party half of whose features aren't
+    implemented makes any encounter look harder than it is. Printed once per
+    distinct party rather than once per variation, since variations usually
+    share one, but never skipped for a variation that overrides it.
     """
-    summaries, blocks = [], []
-    for encounter in encounters:
-        summary = run_simulation(encounter, runs=runs, seed=seed)
-        summaries.append(summary)
-        blocks.append(format_report(summary))
-        blocks.append(format_coverage(encounter.spawn_party()))
+    blocks = []
+    for experiment in experiments:
+        summaries = []
+        parties_shown = set()
 
-    if len(summaries) > 1:
-        blocks.append(format_comparison(summaries))
+        for variation in experiment.variations:
+            summaries.append(run_simulation(variation, runs=runs, seed=seed))
+            blocks.append(format_report(summaries[-1]))
+
+            party = tuple(variation.party)
+            if party not in parties_shown:
+                parties_shown.add(party)
+                blocks.append(format_coverage(variation.spawn_party()))
+
+        if len(summaries) > 1:
+            blocks.append(format_comparison(summaries, title=experiment.name))
+
     return "\n\n".join(blocks)
 
 
+LABEL_INDENT = " " * 17
+
+
 def _format_catalogue() -> str:
-    """Every defined encounter with its party and opposition.
+    """Every defined encounter with its party, opposition and notes.
 
     The party is loaded rather than listed by filename, so the names here match
     the ones a report prints. That does mean a definition pointing at a missing
     character file fails the listing - which is the right time to find out.
+
+    Files that wouldn't load are listed underneath rather than passed over. A
+    run that quietly isn't there is the whole reason this section exists.
     """
-    catalogue = all_encounters()
-    if not catalogue:
+    catalogue = all_experiments()
+    failures = load_errors()
+    if not catalogue and not failures:
         return "No encounters are defined in encounters/."
 
     lines = []
-    for name, encounter in sorted(catalogue.items()):
-        party = ", ".join(pc.name for pc in encounter.spawn_party()) or "(nobody)"
-        opposition = "; ".join(describe_group(group) for group in encounter.groups)
+    for name, experiment in sorted(catalogue.items()):
         lines.append(name)
-        lines.append(f"    party        {party}")
-        lines.append(f"    opposition   {opposition or '(nothing)'}")
+        if experiment.notes:
+            lines.append(
+                textwrap.fill(
+                    experiment.notes,
+                    width=78,
+                    initial_indent="    notes        ",
+                    subsequent_indent=LABEL_INDENT,
+                )
+            )
+
+        shared_party = experiment.variations[0].party
+        lines.append(f"    party        {_named_party(experiment.variations[0])}")
+        lines.append("    variations")
+        for variation in experiment.variations:
+            opposition = "; ".join(describe_group(group) for group in variation.groups)
+            lines.append(f"        {variation.name:<24}{opposition or '(nothing)'}")
+            # Only worth repeating when this variation swapped the party out.
+            if variation.party != shared_party:
+                lines.append(f"        {'':<24}party: {_named_party(variation)}")
+
+    if failures:
+        lines.append("")
+        lines.append("! These files in encounters/ did not load:")
+        for filename, reason in sorted(failures.items()):
+            lines.append(f"    {filename}")
+            lines.append(f"        {reason}")
+
     return "\n".join(lines)
+
+
+def _named_party(variation) -> str:
+    """The PC names a variation fields, loaded from their sheets."""
+    return ", ".join(pc.name for pc in variation.spawn_party()) or "(nobody)"
 
 
 def _narrate(encounter, seed: int | None) -> str:
@@ -236,7 +297,7 @@ def _narrate(encounter, seed: int | None) -> str:
     described = f"seed {seed}" if seed is not None else "unseeded"
     return "\n".join(
         [
-            f"{encounter.name} - one fight ({described})",
+            f"{encounter.title} - one fight ({described})",
             "-" * 78,
             *result.log,
             "-" * 78,

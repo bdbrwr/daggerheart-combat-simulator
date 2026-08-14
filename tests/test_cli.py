@@ -1,22 +1,63 @@
 """Tests for the command line.
 
-The CLI is deliberately thin, so these check the wiring rather than the
-numbers: that a flag reaches the runner, that a mistyped encounter name comes
-back as a message instead of a traceback, and that a seeded play-by-play is the
-same fight twice. Whether the statistics underneath are right is
-tests/test_simulation.py's job.
+The CLI is deliberately thin, so these check the wiring rather than the numbers:
+that a flag reaches the runner, that a mistyped name comes back as a message
+instead of a traceback, and that a seeded play-by-play is the same fight twice.
+Whether the statistics underneath are right is tests/test_simulation.py's job.
+
+What the command line names is an *experiment* - one encounter file, holding the
+variations run side by side. Tests that need more than one experiment point the
+registry at a temporary directory rather than shipping extra example files.
 
 The runs here are tiny on purpose - three fights is enough to prove the report
 was printed, and the default ten thousand would make the suite slow for nothing.
 """
 
+import json
+
 import pytest
 
+from encounters import registry
 from simulation.cli import DEFAULT_SAVE_DIR, build_parser, main
 from simulation.runner import DEFAULT_RUNS
 
 ENCOUNTER = "Roadside Ambush"
-VARIATION = "Roadside Ambush (Softened)"
+ANOTHER = "Cliffside Chase"
+
+
+def _variations_in(name: str) -> int:
+    return len(registry.find_experiment(name).variations)
+
+
+@pytest.fixture
+def experiments(tmp_path, monkeypatch):
+    """Point the registry at temporary encounter files, and put it back after."""
+
+    def build(names: list[str], variations: int = 1) -> None:
+        for name in names:
+            path = tmp_path / f"{name.lower().replace(' ', '_')}.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "name": name,
+                        "party": ["example_character.json"],
+                        "variations": [
+                            {
+                                "name": f"Variation {number}",
+                                "groups": [
+                                    {"adversary": "Jagged Knife Bandit", "count": 1}
+                                ],
+                            }
+                            for number in range(1, variations + 1)
+                        ],
+                    }
+                )
+            )
+        monkeypatch.setattr(registry, "_DEFINITIONS_DIR", tmp_path)
+        registry.refresh()
+
+    yield build
+    registry.refresh()
 
 
 # --- Arguments ---------------------------------------------------------------
@@ -45,9 +86,9 @@ def test_the_short_flags_mean_what_the_long_ones_mean():
 
 
 def test_several_encounters_are_taken_as_several():
-    arguments = build_parser().parse_args([ENCOUNTER, VARIATION])
+    arguments = build_parser().parse_args([ENCOUNTER, ANOTHER])
 
-    assert arguments.encounters == [ENCOUNTER, VARIATION]
+    assert arguments.encounters == [ENCOUNTER, ANOTHER]
 
 
 def test_saving_to_a_directory_does_not_swallow_the_encounter_name():
@@ -61,13 +102,13 @@ def test_saving_to_a_directory_does_not_swallow_the_encounter_name():
 # --- Listing -----------------------------------------------------------------
 
 
-def test_listing_names_each_encounter_its_party_and_its_tuning(capsys):
+def test_listing_names_each_experiment_its_party_and_its_variations(capsys):
     assert main(["--list"]) == 0
 
     listed = capsys.readouterr().out
     assert ENCOUNTER in listed
-    assert VARIATION in listed
     assert "Kael Ashgrove" in listed
+    assert "As printed" in listed  # a variation, by name
     assert "Jagged Knife Bandit x3" in listed
     assert "hp_max=5" in listed  # the Sniper's override must be visible
 
@@ -75,13 +116,22 @@ def test_listing_names_each_encounter_its_party_and_its_tuning(capsys):
 # --- Running -----------------------------------------------------------------
 
 
-def test_a_run_prints_the_whole_report(capsys):
+def test_a_run_prints_a_full_report_for_every_variation(capsys):
     assert main([ENCOUNTER, "--runs", "3", "--seed", "1"]) == 0
 
     printed = capsys.readouterr().out
-    assert ENCOUNTER in printed
+    assert printed.count("OUTCOMES") == _variations_in(ENCOUNTER)
     for heading in ("OUTCOMES", "FIGHT LENGTH", "COST TO THE PARTY", "FEAR"):
         assert heading in printed
+
+
+def test_a_run_compares_the_variations_in_the_file(capsys):
+    """One file is one question, so naming it is already a comparison."""
+    main([ENCOUNTER, "--runs", "3", "--seed", "1"])
+
+    printed = capsys.readouterr().out
+    assert printed.count("COMPARISON") == 1
+    assert ENCOUNTER in printed
 
 
 def test_a_run_reports_how_much_of_the_party_is_modelled(capsys):
@@ -94,27 +144,42 @@ def test_a_run_reports_how_much_of_the_party_is_modelled(capsys):
     assert "unimplemented" in printed
 
 
-def test_one_encounter_alone_gets_no_comparison_table(capsys):
+def test_coverage_is_not_repeated_for_every_variation_sharing_a_party(capsys):
+    main([ENCOUNTER, "--runs", "3", "--seed", "1"])
+
+    assert capsys.readouterr().out.count("COVERAGE") == 1
+
+
+def test_a_single_variation_gets_no_comparison_table(capsys, experiments):
+    """Nothing to compare it against."""
+    experiments([ENCOUNTER], variations=1)
+
     main([ENCOUNTER, "--runs", "3", "--seed", "1"])
 
     assert "COMPARISON" not in capsys.readouterr().out
 
 
-def test_several_encounters_are_reported_then_compared(capsys):
-    assert main([ENCOUNTER, VARIATION, "--runs", "3", "--seed", "1"]) == 0
+def test_each_experiment_gets_its_own_table(capsys, experiments):
+    """A row from one question mustn't sit beside a row from another."""
+    experiments([ENCOUNTER, ANOTHER], variations=2)
+
+    assert main([ENCOUNTER, ANOTHER, "--runs", "3", "--seed", "1"]) == 0
 
     printed = capsys.readouterr().out
-    assert printed.count("OUTCOMES") == 2  # a full report for each
-    assert "COMPARISON" in printed
-    assert VARIATION in printed
+    assert printed.count("OUTCOMES") == 4  # two experiments, two variations each
+    assert printed.count("COMPARISON") == 2
+    assert ENCOUNTER in printed
+    assert ANOTHER in printed
 
 
-def test_all_runs_every_defined_encounter(capsys):
+def test_all_runs_every_defined_experiment(capsys, experiments):
+    experiments([ENCOUNTER, ANOTHER], variations=1)
+
     assert main(["--all", "--runs", "3", "--seed", "1"]) == 0
 
     printed = capsys.readouterr().out
     assert ENCOUNTER in printed
-    assert VARIATION in printed
+    assert ANOTHER in printed
 
 
 def test_naming_encounters_and_asking_for_all_is_refused():
@@ -124,11 +189,11 @@ def test_naming_encounters_and_asking_for_all_is_refused():
     assert raised.value.code == 2
 
 
-def test_a_play_by_play_narrates_a_single_fight(capsys):
+def test_a_play_by_play_narrates_one_fight_per_variation(capsys):
     assert main([ENCOUNTER, "--play-by-play", "--seed", "1"]) == 0
 
     printed = capsys.readouterr().out
-    assert "one fight (seed 1)" in printed
+    assert printed.count("one fight (seed 1)") == _variations_in(ENCOUNTER)
     assert "Fight ends:" in printed
 
 
@@ -155,14 +220,16 @@ def test_saving_writes_exactly_what_was_printed(capsys, tmp_path):
     assert "OUTCOMES" in saved[0].read_text(encoding="utf-8")
 
 
-def test_a_saved_file_is_named_for_the_encounter(tmp_path):
+def test_a_saved_file_is_named_for_the_experiment(tmp_path):
     main([ENCOUNTER, "--runs", "2", "--seed", "1", "--save-dir", str(tmp_path)])
 
     assert "roadside-ambush" in list(tmp_path.glob("*.txt"))[0].name
 
 
-def test_saving_several_encounters_says_so_in_the_filename(tmp_path):
-    main([ENCOUNTER, VARIATION, "--runs", "2", "--seed", "1", "--save-dir", str(tmp_path)])
+def test_saving_several_experiments_says_so_in_the_filename(tmp_path, experiments):
+    experiments([ENCOUNTER, ANOTHER], variations=1)
+
+    main([ENCOUNTER, ANOTHER, "--runs", "2", "--seed", "1", "--save-dir", str(tmp_path)])
 
     assert "and-1-more" in list(tmp_path.glob("*.txt"))[0].name
 
@@ -182,7 +249,7 @@ def test_the_default_save_directory_is_the_gitignored_one():
 # --- Mistakes ----------------------------------------------------------------
 
 
-def test_a_mistyped_encounter_is_a_message_not_a_traceback(capsys):
+def test_a_mistyped_experiment_is_a_message_not_a_traceback(capsys):
     with pytest.raises(SystemExit) as raised:
         main(["Roadside Ambash"])
 

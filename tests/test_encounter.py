@@ -1,8 +1,29 @@
+"""Group and Encounter as classes, built directly rather than read from a file.
+
+Reading an encounter file - inheritance, overrides, and the ways a bad file
+fails - is tests/test_encounters.py. These are about the objects a file produces,
+so they construct them in Python, which is also how a sweep or a test would.
+"""
+
 import pytest
 
 from adversaries.srd import JAGGED_KNIFE_BANDIT, JAGGED_KNIFE_SNIPER
 from encounters.encounter import CHARACTERS_DIR, Encounter, Group
-from encounters.roadside_ambush import ROADSIDE_AMBUSH
+from encounters.registry import find_experiment
+
+
+def _encounter(**overrides) -> Encounter:
+    """Three Bandits and a Sniper against the example PC."""
+    defaults = dict(
+        name="Test",
+        party=[CHARACTERS_DIR / "example_character.json"],
+        groups=[
+            Group(JAGGED_KNIFE_BANDIT, count=3),
+            Group(JAGGED_KNIFE_SNIPER, count=1),
+        ],
+    )
+    defaults.update(overrides)
+    return Encounter(**defaults)
 
 
 def test_group_spawns_requested_count():
@@ -57,30 +78,49 @@ def test_encounter_spawns_every_group_in_order():
 
 
 def test_encounter_adversary_count():
-    assert ROADSIDE_AMBUSH.adversary_count == 4
+    assert _encounter().adversary_count == 4
 
 
 def test_encounter_loads_the_party_from_json():
-    party = ROADSIDE_AMBUSH.spawn_party()
+    party = _encounter().spawn_party()
+
     assert len(party) == 1
     assert party[0].name
 
 
 def test_encounter_spawn_returns_both_sides():
-    party, adversaries = ROADSIDE_AMBUSH.spawn()
+    party, adversaries = _encounter().spawn()
+
     assert len(party) == 1
     assert len(adversaries) == 4
 
 
 def test_encounter_party_paths_exist():
-    for path in ROADSIDE_AMBUSH.party:
+    for path in _encounter().party:
         assert path.is_file()
     assert CHARACTERS_DIR.is_dir()
 
 
-def test_roadside_ambush_sniper_is_tuned_not_as_printed():
-    _, adversaries = ROADSIDE_AMBUSH.spawn()
-    sniper = next(a for a in adversaries if a.name == "Jagged Knife Sniper")
+def test_an_encounter_built_in_python_is_titled_by_its_own_name():
+    """No experiment behind it, so there's nothing to prefix."""
+    assert _encounter().title == "Test"
+
+
+def test_the_shipped_example_tunes_a_stat_block_without_touching_the_definition():
+    """The whole reason overrides live in the encounter file and not in adversaries/."""
+    experiment = find_experiment("Roadside Ambush")
+    toughened = next(
+        variation
+        for variation in experiment.variations
+        if "toughened" in variation.name.lower()
+    )
+
+    sniper = next(
+        adversary
+        for adversary in toughened.spawn_adversaries()
+        if adversary.name == "Jagged Knife Sniper"
+    )
+
     assert sniper.hp_max == 5
     assert sniper.damage_modifier == 4
     assert JAGGED_KNIFE_SNIPER.hp_max == 3
