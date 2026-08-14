@@ -16,10 +16,18 @@ class DiceGroup:
     """One group of like-sized dice within a damage formula - the "2d8" in "2d8 + 1d4 + 3".
 
     A count of 0 is valid and rolls no dice for that group - e.g. a Spellcast trait of +0 or lower per the SRD.
+
+    `discardable` says whether a Massive/Powerful discard is allowed to throw one
+    of these dice away. It's False for dice a *feature* adds to somebody else's
+    roll - School of War's Face Your Fear, say - because those aren't dice rolled
+    for the weapon, and the weapon's feature is what the discard belongs to. They
+    still join the same roll and the same total, so the damage is checked against
+    the target's thresholds once.
     """
 
     count: int
     sides: int
+    discardable: bool = True
 
 
 @dataclass(frozen=True)
@@ -36,19 +44,32 @@ class DamageRollResult:
     drop_lowest: int = 0
 
     @property
+    def _discardable_dice(self) -> list[int]:
+        """Every die the discard is allowed to touch, lowest first."""
+        return sorted(
+            die
+            for group, results in zip(self.dice_groups, self.die_results)
+            if group.discardable
+            for die in results
+        )
+
+    @property
     def dropped(self) -> list[int]:
         """The individual dice discarded by drop_lowest, lowest first.
 
         Weapon features like Massive and Powerful read "roll an additional
         damage die and discard the lowest result" - the caller rolls the extra
         die by raising the group's count, and this takes the lowest back off.
+
         Dropping is across the whole roll rather than per group, which is what
-        "the lowest result" means when a formula has more than one group.
+        "the lowest result" means when a *formula* has more than one group - but
+        only across the groups the weapon itself rolled. Dice another feature
+        added are marked `discardable=False` and are out of reach, since the
+        feature doing the discarding is the weapon's.
         """
         if self.drop_lowest <= 0:
             return []
-        every_die = sorted(die for group in self.die_results for die in group)
-        return every_die[: self.drop_lowest]
+        return self._discardable_dice[: self.drop_lowest]
 
     @property
     def rolled_total(self) -> int:
@@ -66,13 +87,25 @@ class DamageRollResult:
         that actually counted, so a dropped die isn't paid for twice. The SRD
         doesn't spell out how a crit and a discard interact - see
         SIMULATION-RULES.md.
+
+        Dice a feature added are counted in full, for the same reason they can't
+        be discarded: the discard never reaches them, so nothing is taken off.
         """
         if not self.is_critical:
             return 0
-        every_side = sorted(
-            group.sides for group in self.dice_groups for _ in range(group.count)
+
+        discardable = sorted(
+            group.sides
+            for group in self.dice_groups
+            if group.discardable
+            for _ in range(group.count)
         )
-        return sum(every_side[self.drop_lowest :])
+        protected = sum(
+            group.sides * group.count
+            for group in self.dice_groups
+            if not group.discardable
+        )
+        return sum(discardable[self.drop_lowest :]) + protected
 
     @property
     def total(self) -> int:
@@ -106,7 +139,7 @@ def roll_damage(
     Args:
         dice_groups: The dice pools to roll, e.g. [DiceGroup(2, 8), DiceGroup(1, 4)] for "2d8 + 1d4". A group with count=0 rolls no dice for that group (e.g. a Spellcast trait of +0 or lower) but is still kept in the result for record-keeping.        modifier: Flat modifier added to the total, unaffected by dice counts.
         is_critical: Whether the preceding attack roll was a critical success - if True, the maximum possible dice result is added on top of the normal roll.
-        drop_lowest: How many of the lowest individual dice to discard, for weapon features like Massive and Powerful. The caller is responsible for rolling the extra die (by raising a group's count); this only takes the lowest back off. Every die rolled stays in the result for record-keeping.
+        drop_lowest: How many of the lowest individual dice to discard, for weapon features like Massive and Powerful. The caller is responsible for rolling the extra die (by raising a group's count); this only takes the lowest back off, and only from groups marked `discardable`. Every die rolled stays in the result for record-keeping.
     Returns:
         A DamageRollResult with every raw die roll recorded.
     """

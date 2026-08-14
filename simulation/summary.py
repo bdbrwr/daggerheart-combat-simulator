@@ -19,7 +19,7 @@ from combat.report import FightResult
 
 # A PC this close to going down counts the fight as a near thing, however it
 # ended. Two HP is roughly one solid hit from unconsciousness for a tier 1 PC.
-NEAR_DEATH_HP_REMAINING = 2
+NEAR_DEATH_HP_UNMARKED = 2
 
 
 @dataclass(frozen=True)
@@ -31,8 +31,8 @@ class FightRecord:
     pc_actions: int
     adversary_activations: int
     gm_turns: int
-    party_hp_remaining: int
-    lowest_hp_remaining: int
+    party_hp_unmarked: int
+    lowest_hp_unmarked: int
     unconscious_pcs: int
     surviving_adversaries: int
     fear_gained: int
@@ -48,8 +48,8 @@ class FightRecord:
             pc_actions=result.pc_actions,
             adversary_activations=result.adversary_activations,
             gm_turns=result.gm_turns,
-            party_hp_remaining=result.party_hp_remaining,
-            lowest_hp_remaining=result.lowest_hp_remaining,
+            party_hp_unmarked=result.party_hp_unmarked,
+            lowest_hp_unmarked=result.lowest_hp_unmarked,
             unconscious_pcs=result.unconscious_pcs,
             surviving_adversaries=result.surviving_adversaries,
             fear_gained=result.fear_gained,
@@ -91,7 +91,7 @@ class FightRecord:
         definition: a party is beaten when nobody is left standing, and an
         unconscious PC has every HP marked.
         """
-        return self.lowest_hp_remaining <= NEAR_DEATH_HP_REMAINING
+        return self.lowest_hp_unmarked <= NEAR_DEATH_HP_UNMARKED
 
 
 @dataclass(frozen=True)

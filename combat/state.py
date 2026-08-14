@@ -139,6 +139,17 @@ class FightState:
         self.tokens[(id(holder), name)] = self.token_count(holder, name) + 1
         return True
 
+    def set_token(self, holder, name: str, value: int) -> None:
+        """Set a token to an exact value, rather than counting up to a cap.
+
+        Some content doesn't hold a *count* of anything - it remembers a single
+        number for the length of a fight. Strange Patterns remembers which face
+        the Wizard is watching for; Ranger's Focus remembers which adversary is
+        marked, as the `id()` of that adversary. Both are one value that gets
+        overwritten rather than incremented, which `add_token` can't express.
+        """
+        self.tokens[(id(holder), name)] = value
+
     def spend_tokens(self, holder, name: str, amount: int) -> int:
         """Spend up to `amount` tokens; return how many were actually spent."""
         spent = min(amount, self.token_count(holder, name))

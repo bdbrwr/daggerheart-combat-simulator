@@ -11,7 +11,7 @@ Plain text on purpose: it goes in a terminal next to the numbers being tuned,
 and a run whose output needs a viewer is a run nobody looks at.
 """
 
-from simulation.summary import NEAR_DEATH_HP_REMAINING, SimulationSummary
+from simulation.summary import NEAR_DEATH_HP_UNMARKED, SimulationSummary
 
 WIDTH = 78
 
@@ -111,13 +111,13 @@ def _cost(summary: SimulationSummary) -> list[str]:
         ),
         _row(
             "Unmarked HP, lowest",
-            _spread(summary.distribution("lowest_hp_remaining", victories)),
-            _spread(summary.distribution("lowest_hp_remaining", defeats)),
+            _spread(summary.distribution("lowest_hp_unmarked", victories)),
+            _spread(summary.distribution("lowest_hp_unmarked", defeats)),
         ),
         _row(
             "Unmarked HP, party",
-            _spread(summary.distribution("party_hp_remaining", victories)),
-            _spread(summary.distribution("party_hp_remaining", defeats)),
+            _spread(summary.distribution("party_hp_unmarked", victories)),
+            _spread(summary.distribution("party_hp_unmarked", defeats)),
         ),
         _row(
             "PCs still standing",
@@ -135,7 +135,7 @@ def _cost(summary: SimulationSummary) -> list[str]:
             _spread(summary.distribution("surviving_adversaries", defeats)),
         ),
         _row("Scars", _total_scars(victories), _total_scars(defeats)),
-        f"  (near death = a PC finished on {NEAR_DEATH_HP_REMAINING} unmarked HP or less)",
+        f"  (near death = a PC finished on {NEAR_DEATH_HP_UNMARKED} unmarked HP or less)",
     ]
 
 
@@ -214,7 +214,7 @@ def format_comparison(summaries: list[SimulationSummary]) -> str:
                 f"{summary.win_rate:.1%}",
                 f"{summary.distribution('pc_rounds').mean:.1f}",
                 f"{summary.near_death_rate:.1%}" if victories else "-",
-                f"{summary.distribution('lowest_hp_remaining', victories).mean:.1f}"
+                f"{summary.distribution('lowest_hp_unmarked', victories).mean:.1f}"
                 if victories
                 else "-",
             )

@@ -15,3 +15,19 @@ def minor_healing_potion(character: PlayerCharacter) -> int:
     amount = roll.total
     character.clear_hp(amount)
     return amount
+
+
+@consumable("Minor Stamina Potion")
+def minor_stamina_potion(character: PlayerCharacter) -> int:
+    """Minor Stamina Potion: clear 1d4 Stress. Returns the amount cleared.
+
+    The other half of the pair a PC starts with, and it matters more here than
+    it looks. Stress is what several cards are paid for - Get Back Up, I Am Your
+    Shield, the beetles - and marking the last of it makes a PC Vulnerable, so
+    every roll against them has Advantage. Clearing Stress mid-fight buys both
+    of those back.
+    """
+    roll = roll_damage(dice_groups=[DiceGroup(count=1, sides=4)])
+    amount = roll.total
+    character.clear_stress(amount)
+    return amount

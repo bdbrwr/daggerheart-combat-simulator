@@ -15,7 +15,7 @@ from encounters.encounter import Encounter, Group
 from simulation.report import format_comparison, format_report
 from simulation.runner import describe_group, run_simulation
 from simulation.summary import (
-    NEAR_DEATH_HP_REMAINING,
+    NEAR_DEATH_HP_UNMARKED,
     Distribution,
     FightRecord,
     SimulationSummary,
@@ -47,8 +47,8 @@ def _make_record(**overrides) -> FightRecord:
         pc_actions=4,
         adversary_activations=3,
         gm_turns=3,
-        party_hp_remaining=5,
-        lowest_hp_remaining=5,
+        party_hp_unmarked=5,
+        lowest_hp_unmarked=5,
         unconscious_pcs=0,
         surviving_adversaries=0,
         fear_gained=2,
@@ -114,9 +114,9 @@ def test_rounds_are_actions_per_party_member():
 
 
 def test_near_death_is_measured_on_whoever_came_closest():
-    assert _make_record(lowest_hp_remaining=NEAR_DEATH_HP_REMAINING).near_death is True
-    assert _make_record(lowest_hp_remaining=NEAR_DEATH_HP_REMAINING + 1).near_death is False
-    assert _make_record(lowest_hp_remaining=0).near_death is True
+    assert _make_record(lowest_hp_unmarked=NEAR_DEATH_HP_UNMARKED).near_death is True
+    assert _make_record(lowest_hp_unmarked=NEAR_DEATH_HP_UNMARKED + 1).near_death is False
+    assert _make_record(lowest_hp_unmarked=0).near_death is True
 
 
 def test_an_unresolved_fight_is_neither_won_nor_resolved():
@@ -163,9 +163,9 @@ def test_near_death_rate_is_scoped_to_wins():
     """Everyone is down in a defeat, so counting those would restate the loss rate."""
     summary = _make_summary(
         [
-            _make_record(outcome=FightOutcome.PARTY_VICTORY, lowest_hp_remaining=1),
-            _make_record(outcome=FightOutcome.PARTY_VICTORY, lowest_hp_remaining=6),
-            _make_record(outcome=FightOutcome.PARTY_DEFEAT, lowest_hp_remaining=0),
+            _make_record(outcome=FightOutcome.PARTY_VICTORY, lowest_hp_unmarked=1),
+            _make_record(outcome=FightOutcome.PARTY_VICTORY, lowest_hp_unmarked=6),
+            _make_record(outcome=FightOutcome.PARTY_DEFEAT, lowest_hp_unmarked=0),
         ]
     )
 
@@ -285,11 +285,11 @@ def test_a_clean_run_carries_no_warning():
 def test_the_cost_section_puts_victories_beside_defeats():
     summary = _make_summary(
         [
-            _make_record(outcome=FightOutcome.PARTY_VICTORY, lowest_hp_remaining=1),
+            _make_record(outcome=FightOutcome.PARTY_VICTORY, lowest_hp_unmarked=1),
             _make_record(
                 outcome=FightOutcome.PARTY_DEFEAT,
-                lowest_hp_remaining=0,
-                party_hp_remaining=0,
+                lowest_hp_unmarked=0,
+                party_hp_unmarked=0,
                 unconscious_pcs=1,
                 surviving_adversaries=2,
             ),

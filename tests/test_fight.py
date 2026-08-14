@@ -330,12 +330,12 @@ def test_round_metrics_survive_an_empty_party():
     assert result.gm_rounds == 0.0
 
 
-def test_party_hp_remaining_totals_the_party():
+def test_party_hp_unmarked_totals_the_party():
     hurt = _make_character(hp_max=7)
     hurt.mark_hp(4)
     result = _make_result(party=[hurt, _make_character(hp_max=7)])
 
-    assert result.party_hp_remaining == 10
+    assert result.party_hp_unmarked == 10
 
 
 # --- Item registry -----------------------------------------------------------

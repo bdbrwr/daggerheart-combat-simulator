@@ -45,6 +45,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Iterable, NamedTuple, Protocol
 
+from content.names import canonical
+
 # Packages holding content definitions. Adding a content type is adding a line
 # here plus the package; nothing else in the codebase changes.
 _DEFINITION_PACKAGES = ("domain_cards", "features")
@@ -89,7 +91,8 @@ class Holder(Protocol):
     name: str
     proficiency: int
     severe_threshold: int
-    hp_remaining: int
+    hp_marked: int
+    hp_unmarked: int
     stress_marked: int
     stress_max: int
     hope_marked: int
@@ -97,6 +100,7 @@ class Holder(Protocol):
     armor_max: int
     traits: dict[str, int]
     spellcast_trait: str
+    experiences: list[dict]
 
     # Everything the sheet names - domain cards, ancestry, community, class,
     # subclass. Dispatch scans all of it, not just the loadout: a community
@@ -108,9 +112,12 @@ class Holder(Protocol):
 
     def spend_stress(self, amount: int = 1) -> bool: ...
     def can_spend_stress(self, amount: int = 1) -> bool: ...
+    def clear_stress(self, amount: int) -> None: ...
+    def gain_hope(self, amount: int) -> None: ...
     def can_spend_hope(self, amount: int = 1) -> bool: ...
     def spend_hope(self, amount: int) -> None: ...
     def clear_hp(self, amount: int) -> None: ...
+    def mark_armor_slot(self, amount: int) -> None: ...
     def clear_armor_slot(self, amount: int) -> None: ...
 
 
@@ -134,6 +141,7 @@ class Fight(Protocol):
     def note(self, message: str) -> None: ...
     def token_count(self, holder, name: str) -> int: ...
     def add_token(self, holder, name: str, cap: int) -> bool: ...
+    def set_token(self, holder, name: str, value: int) -> None: ...
     def spend_tokens(self, holder, name: str, amount: int) -> int: ...
     def spend_fear(self, amount: int = 1) -> bool: ...
     def can_use_once_per_rest(self, holder, ability: str, long: bool = False) -> bool: ...
@@ -166,9 +174,11 @@ _roll_bonuses: dict[str, Callable] = {}
 _on_rolls: dict[str, Callable] = {}
 _free_abilities: dict[str, Callable] = {}
 _damage_bonuses: dict[str, Callable] = {}
+_extra_damage: dict[str, Callable] = {}
 _on_hits: dict[str, Callable] = {}
 _severity_responses: dict[str, Callable] = {}
 _guards: dict[str, Callable] = {}
+_immunities: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -178,10 +188,36 @@ _discovering = False
 
 
 def severity_response(name: str, unmodelled: Iterable[str] = ()):
-    """Register content that changes the HP an incoming hit marks."""
+    """Register content that changes the HP an incoming hit marks.
+
+    Signature: `(holder, amount, hp_to_mark, fight) -> int` - the HP the hit
+    should now mark. `amount` is the raw damage, so content can key on the
+    number rolled rather than on what other reductions have left.
+
+    `fight` may be None: damage can be resolved outside a fight (in a test, say),
+    and content that needs per-fight state has to cope with not having it rather
+    than assume it's there.
+    """
 
     def register(function: Callable) -> Callable:
         _claim(_severity_responses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def immunity(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that makes its holder immune to a condition.
+
+    Signature: `(holder, condition, fight) -> bool`. The condition is passed by
+    name (see `content/conditions.py`) so that one piece of content can answer
+    for several - Unstoppable turns off both Restrained and Vulnerable - without
+    the caller learning anything about which content is involved.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_immunities, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -241,6 +277,36 @@ def damage_bonus(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_damage_bonuses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def extra_damage(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that adds dice to a damage roll that is about to happen.
+
+    Signature: `(holder, target, roll, fight) -> list[DiceGroup]` - the extra
+    dice, or an empty list to decline.
+
+    This is the hook for "on a success with Fear, deal an extra 1d10", and it
+    exists because neither neighbour can express that. `damage_bonus` is
+    consulted before the attack is rolled, so it can't know how the roll came
+    out; `on_hit` fires after the damage has already been applied, so anything
+    it adds arrives as a second, separate hit and is measured against the
+    target's thresholds all over again - which can mark an HP the rules never
+    intended.
+
+    Firing here instead means the extra dice are part of the same damage roll,
+    so they're counted once, before thresholds, exactly as a bigger weapon die
+    would be. Flat bonuses that don't depend on the roll belong on
+    `damage_bonus`; this is for dice conditional on the outcome.
+
+    `fight` may be None, as with `severity_response`.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_extra_damage, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -336,14 +402,18 @@ def _calling_module() -> str:
 
 
 def _claim(table: dict[str, Callable], name: str, function: Callable) -> None:
-    """Take a name in `table`, refusing to let two pieces of content share one."""
-    existing = table.get(name)
+    """Take a name in `table`, refusing to let two pieces of content share one.
+
+    Claimed under the canonical form, so two registrations differing only in
+    capitalisation are correctly treated as the same name and collide.
+    """
+    existing = table.get(canonical(name))
     if existing is not None and existing is not function:
         raise ValueError(
             f"Two different pieces of content are both registered as {name!r}. "
             "Names have to be unique - a character sheet has nothing else to go on."
         )
-    table[name] = function
+    table[canonical(name)] = function
 
 
 def _assess(
@@ -360,7 +430,7 @@ def _assess(
     their gaps rather than colliding. Declaring the same name both modelled and
     without combat effect is a contradiction and raises.
     """
-    existing = _assessments.get(name)
+    existing = _assessments.get(canonical(name))
     if existing is not None and existing.status is not status:
         raise ValueError(
             f"{name!r} is declared both {existing.status.value!r} (in "
@@ -373,7 +443,9 @@ def _assess(
         reason = reason or existing.reason
         source = existing.source
 
-    _assessments[name] = Assessment(
+    # Keyed canonically, but the Assessment keeps the spelling it was declared
+    # with - that's what a reader of the coverage report should see.
+    _assessments[canonical(name)] = Assessment(
         name=name,
         status=status,
         source=source,
@@ -421,9 +493,16 @@ def refresh() -> None:
 
 
 def assess(name: str) -> Assessment:
-    """What the simulator does with `name` - UNIMPLEMENTED if nobody has said."""
+    """What the simulator does with `name` - UNIMPLEMENTED if nobody has said.
+
+    Matched regardless of capitalisation, so a sheet writing "i am your shield"
+    finds the card. An unimplemented result carries the name *as the sheet wrote
+    it*, since that's the string somebody has to go and look for.
+    """
     _discover()
-    return _assessments.get(name) or Assessment(name=name, status=Status.UNIMPLEMENTED)
+    return _assessments.get(canonical(name)) or Assessment(
+        name=name, status=Status.UNIMPLEMENTED
+    )
 
 
 def assess_all(names: Iterable[str]) -> list[Assessment]:
@@ -432,9 +511,13 @@ def assess_all(names: Iterable[str]) -> list[Assessment]:
 
 
 def all_assessments() -> dict[str, Assessment]:
-    """Everything declared anywhere - a copy, so callers can't corrupt the cache."""
+    """Everything declared anywhere - a copy, so callers can't corrupt the cache.
+
+    Keyed by the name each piece of content was declared with, not the canonical
+    form, so this reads as a catalogue rather than as internal bookkeeping.
+    """
     _discover()
-    return dict(_assessments)
+    return {assessment.name: assessment for assessment in _assessments.values()}
 
 
 # --- Lookup ------------------------------------------------------------------
@@ -449,13 +532,13 @@ def find_severity_response(name: str) -> Callable | None:
     means a PC who can't attack at all, which is worth failing loudly over.
     """
     _discover()
-    return _severity_responses.get(name)
+    return _severity_responses.get(canonical(name))
 
 
 def find_guard(name: str) -> Callable | None:
     """The guard behaviour for `name`, or None if it isn't modelled."""
     _discover()
-    return _guards.get(name)
+    return _guards.get(canonical(name))
 
 
 # --- Dispatch ----------------------------------------------------------------
@@ -481,7 +564,9 @@ def action_options(holder: Holder) -> list[Callable]:
     """
     _discover()
     options = [
-        _actions[name] for name in holder.named_features if name in _actions
+        _actions[canonical(name)]
+        for name in holder.named_features
+        if canonical(name) in _actions
     ]
     random.shuffle(options)
     return options
@@ -512,10 +597,12 @@ def use_free_abilities(holder: Holder, fight: Fight, limit: int) -> list[str]:
     abilities get used must not depend on the order a loadout was written in.
     """
     _discover()
+    # The sheet's own spelling is carried along for the report; only the lookup
+    # is canonical.
     candidates = [
-        (name, _free_abilities[name])
+        (name, _free_abilities[canonical(name)])
         for name in holder.named_features
-        if name in _free_abilities
+        if canonical(name) in _free_abilities
     ]
     random.shuffle(candidates)
 
@@ -539,7 +626,11 @@ def hope_die_for(holder: Holder, fight: Fight) -> int:
     doesn't depend on the order a sheet was written in.
     """
     _discover()
-    candidates = [_hope_dice[name] for name in holder.named_features if name in _hope_dice]
+    candidates = [
+        _hope_dice[canonical(name)]
+        for name in holder.named_features
+        if canonical(name) in _hope_dice
+    ]
     random.shuffle(candidates)
 
     for swap in candidates:
@@ -558,7 +649,7 @@ def total_roll_bonus(holder: Holder, target, fight: Fight) -> int:
     _discover()
     total = 0
     for name in holder.named_features:
-        contribute = _roll_bonuses.get(name)
+        contribute = _roll_bonuses.get(canonical(name))
         if contribute is not None:
             total += contribute(holder, target, fight)
     return total
@@ -568,7 +659,7 @@ def apply_on_roll(holder: Holder, roll, fight: Fight) -> None:
     """Let content respond to how an action roll came out."""
     _discover()
     for name in holder.named_features:
-        respond = _on_rolls.get(name)
+        respond = _on_rolls.get(canonical(name))
         if respond is not None:
             respond(holder, roll, fight)
 
@@ -578,33 +669,72 @@ def total_damage_bonus(holder: Holder, target, fight: Fight) -> int:
     _discover()
     total = 0
     for name in holder.named_features:
-        contribute = _damage_bonuses.get(name)
+        contribute = _damage_bonuses.get(canonical(name))
         if contribute is not None:
             total += contribute(holder, target, fight)
     return total
+
+
+def total_extra_damage(holder: Holder, target, roll, fight=None) -> list:
+    """Every extra damage die this holder's content adds to the roll just made.
+
+    Consulted between the attack roll and the damage roll, with the attack roll
+    in hand so content can key on how it came out. Returns dice groups to fold
+    into the same `roll_damage` call, so they land before thresholds.
+
+    Anything that rolls its own attack damage is expected to call this, the same
+    way it already calls `total_roll_bonus` for the attack itself. That's the
+    contract for content that rolls damage rather than swinging a weapon.
+    """
+    _discover()
+    groups: list = []
+    for name in holder.named_features:
+        contribute = _extra_damage.get(canonical(name))
+        if contribute is not None:
+            groups.extend(contribute(holder, target, roll, fight))
+    return groups
 
 
 def apply_on_hit(holder: Holder, target, result, fight: Fight) -> None:
     """Let every on-hit ability in the loadout respond to a landed attack."""
     _discover()
     for name in holder.named_features:
-        respond = _on_hits.get(name)
+        respond = _on_hits.get(canonical(name))
         if respond is not None:
             respond(holder, target, result, fight)
 
 
-def soften_damage(character: Holder, amount: int, hp_to_mark: int) -> int:
-    """Let every damage-response in `character`'s loadout soften a hit.
+def soften_damage(character: Holder, amount: int, hp_to_mark: int, fight=None) -> int:
+    """Let every damage-response this character carries soften a hit.
 
-    Called once by PlayerCharacter.take_damage. Applied in loadout order, each
-    seeing what the previous one left, so two reductions stack.
+    Called once by PlayerCharacter.take_damage. Each response sees what the
+    previous one left, so two reductions stack.
+
+    Scans everything the sheet names rather than only the domain-card loadout: a
+    class feature softens a hit exactly the way a card does (Unstoppable reduces
+    the severity of every hit while it's running), and nothing about this hook
+    cares which kind of content registered it.
     """
     _discover()
-    for name in character.domain_cards_loadout:
-        respond = _severity_responses.get(name)
+    for name in character.named_features:
+        respond = _severity_responses.get(canonical(name))
         if respond is not None:
-            hp_to_mark = respond(character, amount, hp_to_mark)
+            hp_to_mark = respond(character, amount, hp_to_mark, fight)
     return hp_to_mark
+
+
+def is_immune_to(holder: Holder, condition: str, fight=None) -> bool:
+    """Whether anything this holder carries turns `condition` off right now.
+
+    One call site per condition the simulator tracks. Content answers for itself;
+    nothing here knows which feature grants what.
+    """
+    _discover()
+    for name in holder.named_features:
+        grants = _immunities.get(canonical(name))
+        if grants is not None and grants(holder, condition, fight):
+            return True
+    return False
 
 
 def find_shielder(target: Holder, party: list) -> Interception | None:
@@ -621,8 +751,8 @@ def find_shielder(target: Holder, party: list) -> Interception | None:
     for ally in party:
         if ally is target:
             continue
-        for name in ally.domain_cards_loadout:
-            steps_in = _guards.get(name)
+        for name in ally.named_features:
+            steps_in = _guards.get(canonical(name))
             if steps_in is not None and steps_in(ally, target):
                 return Interception(shielder=ally, card=name)
     return None

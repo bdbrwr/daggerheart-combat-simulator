@@ -16,6 +16,7 @@ import importlib
 import pkgutil
 from difflib import get_close_matches
 
+from content.names import canonical
 from encounters.encounter import Encounter
 
 # Modules that hold machinery rather than encounter definitions. Importing them
@@ -35,6 +36,9 @@ def _discover() -> dict[str, Encounter]:
     """
     package = importlib.import_module(__package__)
     found: dict[str, Encounter] = {}
+    # Keyed canonically for the uniqueness check only - two encounters differing
+    # just in capitalisation are the same name to anyone typing one.
+    claimed: dict[str, Encounter] = {}
 
     for module_info in pkgutil.iter_modules(package.__path__):
         if module_info.name in _NON_DEFINITION_MODULES:
@@ -44,9 +48,10 @@ def _discover() -> dict[str, Encounter]:
         for value in vars(module).values():
             if not isinstance(value, Encounter):
                 continue
-            existing = found.get(value.name)
+            existing = claimed.get(canonical(value.name))
             if existing is None:
                 found[value.name] = value
+                claimed[canonical(value.name)] = value
             elif existing is not value:
                 raise ValueError(
                     f"Two different encounters are both named {value.name!r}. "
@@ -76,8 +81,16 @@ def find_encounter(name: str) -> Encounter:
     Returns the shared definition, which is safe to hand straight to a run -
     an Encounter is a recipe, and `spawn()` is what produces the combatants a
     fight actually marks HP on.
+
+    Matched regardless of capitalisation, so `"roadside ambush"` typed at the
+    command line finds "Roadside Ambush".
     """
     catalogue = _load()
+    wanted = canonical(name)
+    for defined, encounter in catalogue.items():
+        if canonical(defined) == wanted:
+            return encounter
+
     try:
         return catalogue[name]
     except KeyError:

@@ -80,9 +80,9 @@ def _worth_shielding(shielder: Holder, ally: Holder) -> bool:
     card is moving a hit onto whoever can afford it, and a shielder who would
     drop from the hit themselves gains the party nothing by taking it.
     """
-    if ally.hp_remaining >= shielder.hp_remaining:
+    if ally.hp_unmarked >= shielder.hp_unmarked:
         return False
-    return shielder.hp_remaining > 1
+    return shielder.hp_unmarked > 1
 
 
 no_combat_effect(

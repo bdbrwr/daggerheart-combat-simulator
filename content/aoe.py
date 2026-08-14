@@ -29,6 +29,45 @@ class Range(Enum):
     FAR = "Far"
 
 
+def targets_in_area(band: Range, adversaries: list) -> list:
+    """Which adversaries an area effect at `band` catches, most wounded first.
+
+    Most wounded first is the focus-fire policy applied to an area, and it also
+    keeps the choice off the order an encounter happened to spawn its
+    adversaries in - order that carries no meaning must never decide an outcome.
+    """
+    reach = targets_reached(band, len(adversaries))
+    return sorted(adversaries, key=lambda adversary: adversary.hp_marked, reverse=True)[
+        :reach
+    ]
+
+
+def area_difficulty(targets: list) -> int:
+    """The Difficulty a roll made against a whole area is measured against.
+
+    An attack "against all adversaries within Close range" is one roll resolved
+    separately against each target, so it has no single Difficulty of its own -
+    and yet the spotlight rules need to know whether the roll *succeeded*. The
+    lowest Difficulty in the area answers that: you either beat somebody or you
+    beat nobody. See SIMULATION-RULES.md.
+    """
+    return min((target.difficulty for target in targets), default=0)
+
+
+def targets_beaten(roll, targets: list) -> list:
+    """The targets in an area that the roll actually beat.
+
+    Each is checked against its own Difficulty, which is what "targets you
+    succeeded against" means when one roll faces several. A critical beats all
+    of them, since a critical succeeds regardless of Difficulty.
+    """
+    return [
+        target
+        for target in targets
+        if roll.is_critical or roll.total >= target.difficulty
+    ]
+
+
 def targets_reached(band: Range, adversaries: int) -> int:
     """How many of `adversaries` an area effect at `band` catches.
 

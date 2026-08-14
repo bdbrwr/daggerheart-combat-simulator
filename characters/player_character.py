@@ -100,7 +100,11 @@ class PlayerCharacter:
             subclass=data["subclass"],
             ancestry=data["ancestry"],
             community=data["community"],
-            traits=data["traits"],
+            # Trait keys are lowercased for the same reason spellcast_trait is:
+            # a sheet writing "Agility" would otherwise miss every lookup, and
+            # content that can't find its trait declines silently rather than
+            # failing.
+            traits={trait.strip().lower(): value for trait, value in data["traits"].items()},
             evasion=data["evasion"],
             proficiency=data["proficiency"],
             major_threshold=data["thresholds"]["major"],
@@ -229,7 +233,14 @@ class PlayerCharacter:
         return self.stress_marked >= self.stress_max
 
     @property
-    def hp_remaining(self) -> int:
+    def hp_unmarked(self) -> int:
+        """HP not yet marked - the exact inverse of `hp_marked`.
+
+        Named for the SRD's own vocabulary: damage *marks* HP, so "unmarked" is
+        the unambiguous term and "remaining" was ours. Both directions are kept
+        because content asks in both - "have I been hit at all?" reads off
+        `hp_marked`, "would this drop me?" off this one.
+        """
         return self.hp_max - self.hp_marked
 
     def should_mark_armor_slot(self) -> bool:
@@ -259,7 +270,7 @@ class PlayerCharacter:
             return 2
         return 1
 
-    def take_damage(self, amount: int) -> int:
+    def take_damage(self, amount: int, fight=None) -> int:
         """Mark HP per the SRD's Damage Thresholds rule; return the HP marked.
 
         <=0 damage: mark nothing, and no slot is spent on a hit that wasn't
@@ -270,6 +281,11 @@ class PlayerCharacter:
 
         Armor goes first so a card is never asked to spend a resource on a hit
         the free slot already absorbed.
+
+        `fight` is passed straight through to the damage responses, which is the
+        only way content whose effect lasts a single fight (Unstoppable) can
+        tell whether it's currently running. It's optional: damage resolves the
+        same way without one, with such content simply declining.
 
         Marking the last HP triggers Avoid Death.
         """
@@ -282,7 +298,7 @@ class PlayerCharacter:
             self.mark_armor_slot(1)
             hp_to_mark = max(hp_to_mark - 1, 0)
 
-        hp_to_mark = soften_damage(self, amount, hp_to_mark)
+        hp_to_mark = soften_damage(self, amount, hp_to_mark, fight)
 
         self._mark_hp_with_death_check(hp_to_mark)
         return hp_to_mark

@@ -70,8 +70,8 @@ def _who_needs_it(caster: Holder, fight: Fight):
     allies = [
         pc
         for pc in fight.conscious_party
-        if pc is not caster and pc.hp_remaining <= HURT_ENOUGH_TO_HEAL
+        if pc is not caster and pc.hp_unmarked <= HURT_ENOUGH_TO_HEAL
     ]
     if not allies:
         return None
-    return min(allies, key=lambda pc: pc.hp_remaining)
+    return min(allies, key=lambda pc: pc.hp_unmarked)

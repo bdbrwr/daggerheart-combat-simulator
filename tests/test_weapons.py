@@ -4,7 +4,7 @@ from characters.player_character import PlayerCharacter
 from dice.common import AdvantageState
 from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityRollResult
-from items.weapons import broadsword_attack
+from items.weapons import broadsword_attack, greatstaff_attack, greatsword_attack
 
 
 class FakeTarget:
@@ -79,6 +79,86 @@ def test_broadsword_attack_hit_rolls_and_applies_damage():
     assert target.damage_taken == [7]
     # Reliable: +1 to attack rolls, on top of the Agility trait
     assert mock_roll_duality.call_args.kwargs["modifier"] == attacker.traits["agility"] + 1
+
+
+def _damage_pool_asked_for(attack, attacker, hope: int = 10, fear: int = 5):
+    """Run `attack` on a hit and hand back the kwargs it passed to roll_damage.
+
+    Both dice are mocked, so nothing here depends on what the RNG does - the
+    question is only which pool the weapon asks for.
+    """
+    target = FakeTarget(difficulty=10)
+    hit_roll = _duality_result(hope=hope, fear=fear, modifier=0, difficulty=10)
+    damage_roll = DamageRollResult(
+        dice_groups=[DiceGroup(count=1, sides=8)], die_results=[[5]], modifier=0
+    )
+
+    with (
+        patch("items.weapons.roll_duality", return_value=hit_roll),
+        patch("items.weapons.roll_damage", return_value=damage_roll) as mock_roll_damage,
+    ):
+        attack(attacker, target)
+
+    return mock_roll_damage.call_args.kwargs
+
+
+def test_massive_rolls_one_more_die_than_proficiency_and_discards_the_lowest():
+    """Greatsword's Massive at Proficiency 2: three d10s, keep the best two.
+
+    The extra die is rolled by raising the pool, and dice/damage.py takes the
+    lowest back off - so the count has to be Proficiency + 1, not Proficiency.
+    """
+    kwargs = _damage_pool_asked_for(greatsword_attack, _make_attacker(proficiency=2))
+
+    assert kwargs["dice_groups"] == [DiceGroup(count=3, sides=10)]
+    assert kwargs["drop_lowest"] == 1
+    assert kwargs["modifier"] == 3
+
+
+def test_massive_scales_the_extra_die_with_proficiency():
+    """The +1 is on top of Proficiency at every level, not a fixed pool size."""
+    for proficiency in (1, 3, 5):
+        kwargs = _damage_pool_asked_for(
+            greatsword_attack, _make_attacker(proficiency=proficiency)
+        )
+        assert kwargs["dice_groups"] == [DiceGroup(count=proficiency + 1, sides=10)]
+        assert kwargs["drop_lowest"] == 1
+
+
+def test_powerful_rolls_one_more_die_than_proficiency():
+    """Greatstaff's Powerful is the same rule on a d6 with no flat modifier."""
+    kwargs = _damage_pool_asked_for(greatstaff_attack, _make_attacker(proficiency=2))
+
+    assert kwargs["dice_groups"] == [DiceGroup(count=3, sides=6)]
+    assert kwargs["drop_lowest"] == 1
+    assert kwargs["modifier"] == 0
+
+
+def test_a_weapon_without_the_feature_rolls_exactly_proficiency_dice():
+    """The control: no Massive or Powerful means no extra die and no discard."""
+    kwargs = _damage_pool_asked_for(broadsword_attack, _make_attacker(proficiency=2))
+
+    assert kwargs["dice_groups"] == [DiceGroup(count=2, sides=8)]
+    assert kwargs["drop_lowest"] == 0
+
+
+def test_a_hit_reports_the_hp_it_marked():
+    """Content that fires on a landed attack keys on HP marked, not damage dealt."""
+    attacker = _make_attacker()
+    target = FakeTarget(difficulty=10)
+    hit_roll = _duality_result(hope=10, fear=5, modifier=5, difficulty=10)
+    damage_roll = DamageRollResult(
+        dice_groups=[DiceGroup(count=1, sides=8)], die_results=[[7]], modifier=0
+    )
+
+    with (
+        patch("items.weapons.roll_duality", return_value=hit_roll),
+        patch("items.weapons.roll_damage", return_value=damage_roll),
+    ):
+        result = broadsword_attack(attacker, target)
+
+    # FakeTarget.take_damage hands back the damage it was given.
+    assert result.hp_marked == 7
 
 
 def test_broadsword_attack_miss_deals_no_damage():

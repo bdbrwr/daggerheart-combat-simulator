@@ -80,20 +80,20 @@ class FightResult:
         return sum(1 for adversary in self.adversaries if not adversary.is_defeated)
 
     @property
-    def party_hp_remaining(self) -> int:
-        """HP left across the whole party - the near-death signal, in aggregate."""
-        return sum(pc.hp_remaining for pc in self.party)
+    def party_hp_unmarked(self) -> int:
+        """Unmarked HP across the whole party - the near-death signal, in aggregate."""
+        return sum(pc.hp_unmarked for pc in self.party)
 
     @property
-    def lowest_hp_remaining(self) -> int:
-        """HP left on whoever came closest to going down.
+    def lowest_hp_unmarked(self) -> int:
+        """Unmarked HP on whoever came closest to going down.
 
         The honest near-death signal: a party total hides one PC on their last
         HP behind three who are untouched.
         """
         if not self.party:
             return 0
-        return min(pc.hp_remaining for pc in self.party)
+        return min(pc.hp_unmarked for pc in self.party)
 
     def __repr__(self) -> str:
         parts = [

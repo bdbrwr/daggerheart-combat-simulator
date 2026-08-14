@@ -30,8 +30,13 @@ def _make_character(**overrides) -> PlayerCharacter:
     defaults = dict(
         name="Test PC",
         level=1,
-        character_class="Guardian",
-        subclass="Stalwart",
+        # Names nothing has implemented, on purpose. A class or subclass with
+        # damage responses of its own (Stalwart's Iron Will marks a second Armor
+        # Slot; Unstoppable softens every hit) would stack with the card these
+        # tests are measuring, and the card's own arithmetic would stop being
+        # what came out. Invented names keep each case about one card.
+        character_class="Unwritten Class",
+        subclass="Unwritten Subclass",
         ancestry="Human",
         community="Wanderborne",
         traits={"agility": 0, "strength": 2, "finesse": 0, "instinct": 1, "presence": 1, "knowledge": -1},

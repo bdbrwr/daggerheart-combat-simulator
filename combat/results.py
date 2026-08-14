@@ -21,6 +21,13 @@ class AttackResult:
     attack_roll: DualityRollResult | D20RollResult
     damage_roll: DamageRollResult | None
 
+    # How many HP the hit actually marked, once thresholds, an Armor Slot and
+    # any damage response had their say. Not derivable from `damage_roll`: only
+    # the target knows its own thresholds. Content that fires on a landed attack
+    # needs the distinction - Unstoppable grows only on a hit that marked 1 or
+    # more HP, which is not the same as a hit that dealt damage.
+    hp_marked: int = 0
+
     @property
     def hit(self) -> bool:
         return bool(self.attack_roll.is_success)

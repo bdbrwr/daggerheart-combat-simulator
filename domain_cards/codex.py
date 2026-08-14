@@ -15,6 +15,7 @@ from content.registry import (
     Holder,
     hope_die_for,
     no_combat_effect,
+    total_extra_damage,
     total_roll_bonus,
 )
 from dice.damage import DiceGroup, roll_damage
@@ -79,13 +80,16 @@ def power_push(caster: Holder, target, fight: Fight) -> AttackResult | None:
         return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
     damage_roll = roll_damage(
-        dice_groups=[DiceGroup(count=caster.proficiency, sides=10)],
+        dice_groups=[DiceGroup(count=caster.proficiency, sides=10)]
+        + total_extra_damage(caster, target, attack_roll, fight),
         modifier=2,
         is_critical=attack_roll.is_critical,
     )
-    target.take_damage(damage_roll.total)
+    marked = target.take_damage(damage_roll.total)
     fight.note(f"{caster.name} casts Power Push at {target.name}")
-    return AttackResult(attack_roll=attack_roll, damage_roll=damage_roll)
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
 
 
 @AVA.action(
@@ -114,12 +118,15 @@ def ice_spike(caster: Holder, target, fight: Fight) -> AttackResult | None:
         return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
     damage_roll = roll_damage(
-        dice_groups=[DiceGroup(count=caster.proficiency, sides=6)],
+        dice_groups=[DiceGroup(count=caster.proficiency, sides=6)]
+        + total_extra_damage(caster, target, attack_roll, fight),
         is_critical=attack_roll.is_critical,
     )
-    target.take_damage(damage_roll.total)
+    marked = target.take_damage(damage_roll.total)
     fight.note(f"{caster.name} strikes {target.name} with an Ice Spike")
-    return AttackResult(attack_roll=attack_roll, damage_roll=damage_roll)
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
 
 
 @AVA.free(

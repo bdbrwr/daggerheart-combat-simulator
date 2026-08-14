@@ -30,7 +30,9 @@ class FakeTarget:
         self.evasion = evasion
         self.damage_taken: list[int] = []
 
-    def take_damage(self, amount: int) -> int:
+    def take_damage(self, amount: int, fight=None) -> int:
+        """`fight` is part of the protocol so a PC's damage responses can reach
+        per-fight state; a fake has none, and records only the damage."""
         self.damage_taken.append(amount)
         return amount
 

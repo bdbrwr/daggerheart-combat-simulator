@@ -17,6 +17,7 @@ import pkgutil
 from difflib import get_close_matches
 
 from adversaries.adversary import Adversary
+from content.names import canonical
 
 # Modules that hold machinery rather than adversary definitions. Importing them
 # would be harmless (they define no Adversary literals), but skipping them makes
@@ -36,6 +37,9 @@ def _discover() -> dict[str, Adversary]:
     """
     package = importlib.import_module(__package__)
     found: dict[str, Adversary] = {}
+    # Keyed canonically for the uniqueness check only - two stat blocks differing
+    # just in capitalisation are the same name to an encounter naming one.
+    claimed: dict[str, Adversary] = {}
 
     for module_info in pkgutil.iter_modules(package.__path__):
         if module_info.name in _NON_DEFINITION_MODULES:
@@ -45,9 +49,10 @@ def _discover() -> dict[str, Adversary]:
         for value in vars(module).values():
             if not isinstance(value, Adversary):
                 continue
-            existing = found.get(value.name)
+            existing = claimed.get(canonical(value.name))
             if existing is None:
                 found[value.name] = value
+                claimed[canonical(value.name)] = value
             elif existing is not value:
                 raise ValueError(
                     f"Two different adversaries are both named {value.name!r}. "
@@ -77,8 +82,16 @@ def find_adversary(name: str) -> Adversary:
 
     Returns the shared definition, not a copy - spawn() it (or let a Group do
     that) before anything marks HP on it.
+
+    Matched regardless of capitalisation, the same way a character sheet's names
+    are - an encounter is typed by hand too.
     """
     catalogue = _load()
+    wanted = canonical(name)
+    for defined, adversary in catalogue.items():
+        if canonical(defined) == wanted:
+            return adversary
+
     try:
         return catalogue[name]
     except KeyError:

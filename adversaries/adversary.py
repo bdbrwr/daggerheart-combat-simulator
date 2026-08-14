@@ -36,7 +36,7 @@ class Target(Protocol):
 
     evasion: int
 
-    def take_damage(self, amount: int) -> int: ...
+    def take_damage(self, amount: int, fight=None) -> int: ...
 
 
 @dataclass
@@ -90,6 +90,7 @@ class Adversary:
         self,
         target: Target,
         advantage_state: AdvantageState = AdvantageState.NONE,
+        fight=None,
     ) -> AttackResult:
         """Standard attack: d20 + attack_modifier against the target's Evasion.
 
@@ -97,6 +98,11 @@ class Adversary:
         applies the total to the target. Adversaries whose attack does something
         a plain roll can't express need their own function alongside their
         definition; nothing does yet.
+
+        `fight` is handed to the target rather than used here: a PC's damage
+        responses can depend on state that only lives for the length of a fight
+        (Unstoppable's die), and the target has no other way to reach it. It
+        stays optional so a damage calculation can still be tested on its own.
         """
         attack_roll = roll_d20(
             modifier=self.attack_modifier,
@@ -112,8 +118,10 @@ class Adversary:
             modifier=self.damage_modifier,
             is_critical=attack_roll.is_critical,
         )
-        target.take_damage(damage_roll.total)
-        return AttackResult(attack_roll=attack_roll, damage_roll=damage_roll)
+        marked = target.take_damage(damage_roll.total, fight)
+        return AttackResult(
+            attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+        )
 
     def mark_hp(self, amount: int) -> None:
         self.hp_marked = min(self.hp_marked + amount, self.hp_max)
@@ -127,7 +135,7 @@ class Adversary:
     def clear_stress(self, amount: int) -> None:
         self.stress_marked = max(self.stress_marked - amount, 0)
 
-    def take_damage(self, amount: int) -> int:
+    def take_damage(self, amount: int, fight=None) -> int:
         """Mark HP per the SRD's Damage Thresholds rule; return the HP marked.
 
         Same rule, and same threshold-to-HP-marked math, as
@@ -135,6 +143,10 @@ class Adversary:
         damage resolution is shared by PCs and adversaries alike. Duplicated
         here rather than factored into a shared base class for now; revisit
         if a third caller needs the same logic.
+
+        `fight` is accepted and ignored, so that both sides satisfy the same
+        Target protocol. Adversaries carry no content, so nothing on this side
+        has a damage response to consult.
         """
         if amount <= 0:
             hp_to_mark = 0

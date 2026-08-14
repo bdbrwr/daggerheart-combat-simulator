@@ -105,7 +105,7 @@ def test_assess_all_keeps_the_order_it_was_given():
 
 def test_the_same_name_cannot_be_both_modelled_and_dismissed():
     @severity_response("Contradictory Card")
-    def _card(character, amount, hp_to_mark):
+    def _card(character, amount, hp_to_mark, fight=None):
         return hp_to_mark
 
     with pytest.raises(ValueError, match="can only"):
@@ -116,7 +116,7 @@ def test_two_hooks_on_one_name_merge_their_gaps():
     """Content can do more than one thing; that isn't a name collision."""
 
     @severity_response("Two Hook Card", unmodelled=["softening gap"])
-    def _softens(character, amount, hp_to_mark):
+    def _softens(character, amount, hp_to_mark, fight=None):
         return hp_to_mark
 
     @guard("Two Hook Card", unmodelled=["guarding gap"])
@@ -128,13 +128,13 @@ def test_two_hooks_on_one_name_merge_their_gaps():
 
 def test_two_different_functions_cannot_claim_one_name():
     @severity_response("Contested Card")
-    def _first(character, amount, hp_to_mark):
+    def _first(character, amount, hp_to_mark, fight=None):
         return hp_to_mark
 
     with pytest.raises(ValueError, match="Names have to be unique"):
 
         @severity_response("Contested Card")
-        def _second(character, amount, hp_to_mark):
+        def _second(character, amount, hp_to_mark, fight=None):
             return hp_to_mark
 
 

@@ -14,7 +14,7 @@ from content.registry import Fight, Holder, on_hit, severity_response
 
 
 @severity_response("Get Back Up")
-def get_back_up(character: Holder, amount: int, hp_to_mark: int) -> int:
+def get_back_up(character: Holder, amount: int, hp_to_mark: int, fight=None) -> int:
     """Get Back Up (Blade, level 1). Returns the HP the hit should now mark.
 
     SRD: when you take Severe damage, you can mark a Stress to reduce the
@@ -97,6 +97,6 @@ def _worth_a_stress(character: Holder, hp_to_mark: int) -> bool:
     marking the last Stress hands every adversary Advantage on every roll
     against them - a cost that outlives the single HP it just saved.
     """
-    if hp_to_mark >= character.hp_remaining:
+    if hp_to_mark >= character.hp_unmarked:
         return True
     return character.stress_marked + 1 < character.stress_max

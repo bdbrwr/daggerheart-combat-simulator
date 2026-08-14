@@ -12,16 +12,18 @@ rather than "pick an action".
 
 Priority order for a PC, most preferred first:
 
-  1. Heal, if hurt and carrying something that heals.
+  1. Drink a consumable, if hurt or nearly out of Stress and carrying one.
   2. Use a Hope feature, if affordable and worth it.
   3. Use a class feature, if worth it.
   4. Help an ally, or spend Hope on an Experience, if Hope is plentiful.
   5. Attack.
 
-Only (1), (4)'s Experience half, and (5) exist yet - the Guardian's class
-features aren't implemented, so their steps are marked and skipped rather than
-faked. Each entry carries its own "does this make sense now?" test; the
-ordering here is the only global policy.
+Steps (2) and (3) aren't a list of features here: anything that needs no roll -
+a Hope feature, a class feature, a domain card - is reached through the single
+`use_free_abilities` call, and decides for itself whether it's worth using.
+Helping an ally, the other half of (4), still doesn't exist. Each entry carries
+its own "does this make sense now?" test; the ordering here is the only global
+policy.
 
 Note that domain cards are NOT absent from a fight just because they're absent
 from that list. The two implemented so far are damage responses rather than turn
@@ -43,26 +45,38 @@ from content import (
     apply_on_hit,
     find_shielder,
     hope_die_for,
+    is_immune_to,
     total_damage_bonus,
     total_roll_bonus,
     use_free_abilities,
 )
+from content.conditions import VULNERABLE
+from content.names import canonical
 from dice.common import AdvantageState
 from items.registry import find_consumable, find_weapon
 
-# A PC drinks at this much HP left or less. Two is the point where the next
+# A PC drinks at this much unmarked HP or less. Two is the point where the next
 # solid hit is plausibly the last one.
-LOW_HP_REMAINING = 2
+LOW_HP_UNMARKED = 2
 
 # Spending Hope on an Experience is the cheapest use of a big Hope pool, but
 # Hope is also what the unimplemented features want, so the floor is set high
 # enough that spending it never starves them once they exist.
 EXPERIENCE_HOPE_FLOOR = 5
 
-# Consumables that clear HP, by the name a character sheet writes them under.
-# Explicit rather than inferred: the registry maps a name to a callable, but
-# nothing about that callable says whether it heals.
-HEALING_CONSUMABLES = frozenset({"Minor Healing Potion"})
+# Consumables the policy knows how to want, by what they clear, and by the name
+# a character sheet writes them under - held canonically, so a sheet's
+# capitalisation can't stop a PC drinking. Explicit rather than inferred: the
+# registry maps a name to a callable, but nothing about that callable says what
+# it does.
+HEALING_CONSUMABLES = frozenset({canonical("Minor Healing Potion")})
+STAMINA_CONSUMABLES = frozenset({canonical("Minor Stamina Potion")})
+
+# A PC drinks a stamina potion at this many free Stress slots or fewer. Marking
+# the last Stress makes them Vulnerable - Advantage on every roll against them -
+# and a PC with no spare slot also can't pay for the cards that cost one, so the
+# potion buys back both at once.
+LOW_STRESS_SLOTS = 1
 
 # The spotlight budget - see SIMULATION-RULES.md. Consumables sit outside it,
 # and riders and damage responses don't spend from it either, since neither is
@@ -157,8 +171,11 @@ def _use_free_actions(
     SIMULATION-RULES.md: consumables are free, then either two no-roll actions,
     or one alongside the roll that ends the spotlight.
     """
+    # Consumables are outside the budget, so wanting both doesn't cost an action.
     if _should_heal(pc):
-        _heal(pc, state)  # consumables are outside the budget
+        _drink(pc, state, HEALING_CONSUMABLES, "HP")
+    if _should_clear_stress(pc):
+        _drink(pc, state, STAMINA_CONSUMABLES, "Stress")
 
     budget = FREE_BUDGET_BEFORE_A_ROLL if roll_to_follow else FREE_BUDGET_ALONE
     for name in use_free_abilities(pc, state, budget):
@@ -166,24 +183,41 @@ def _use_free_actions(
 
 
 def _should_heal(pc: PlayerCharacter) -> bool:
-    return pc.hp_remaining <= LOW_HP_REMAINING and _find_healing_item(pc) is not None
+    return pc.hp_unmarked <= LOW_HP_UNMARKED and bool(
+        _find_item(pc, HEALING_CONSUMABLES)
+    )
 
 
-def _find_healing_item(pc: PlayerCharacter) -> dict | None:
-    """The first healing consumable the PC still has one of, if any."""
+def _should_clear_stress(pc: PlayerCharacter) -> bool:
+    """Whether to drink something that clears Stress.
+
+    SIMULATION RULE - policy. Held until the PC is nearly out of Stress rather
+    than drunk on the first mark, because Stress is only worth clearing once
+    there's a cost to being out of it - going Vulnerable, or being unable to pay
+    for a card. Drinking early would waste a 1d4 on slots that weren't scarce.
+    """
+    free_slots = pc.stress_max - pc.stress_marked
+    return free_slots <= LOW_STRESS_SLOTS and bool(_find_item(pc, STAMINA_CONSUMABLES))
+
+
+def _find_item(pc: PlayerCharacter, names: frozenset[str]) -> dict | None:
+    """The first consumable of any of `names` the PC still has one of, if any."""
     for entry in pc.consumables:
-        if entry["name"] in HEALING_CONSUMABLES and entry.get("quantity", 0) > 0:
+        if canonical(entry["name"]) in names and entry.get("quantity", 0) > 0:
             return entry
     return None
 
 
-def _heal(pc: PlayerCharacter, state: FightState) -> None:
-    entry = _find_healing_item(pc)
+def _drink(
+    pc: PlayerCharacter, state: FightState, names: frozenset[str], clears: str
+) -> None:
+    """Use one consumable from `names`. `clears` is only for the play-by-play."""
+    entry = _find_item(pc, names)
     if entry is None:
         return
     entry["quantity"] -= 1
     cleared = find_consumable(entry["name"])(pc)
-    state.note(f"{pc.name} drinks a {entry['name']}, clearing {cleared} HP")
+    state.note(f"{pc.name} drinks a {entry['name']}, clearing {cleared} {clears}")
 
 
 def _experience_bonus(pc: PlayerCharacter, state: FightState) -> int:
@@ -226,6 +260,7 @@ def _make_the_roll(
             _experience_bonus(attacker, fight) + total_roll_bonus(attacker, at, fight),
             total_damage_bonus(attacker, at, fight),
             hope_die_for(attacker, fight),
+            fight,
         )
 
     # The weapon is shuffled in among the cards rather than being a fallback:
@@ -261,8 +296,13 @@ def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult
     """Spotlight one adversary: pick a PC and swing at them.
 
     A Vulnerable PC (all Stress marked) is attacked with Advantage, per the
-    SRD's condition. Adversary Fear features aren't implemented, so an
-    activation is always a standard attack for now.
+    SRD's condition - unless something the PC carries turns the condition off,
+    which is asked generically rather than by name. Adversary Fear features
+    aren't implemented, so an activation is always a standard attack for now.
+
+    The fight is handed to the attack so it reaches the target's damage
+    responses: whether one applies can depend on state that only exists for the
+    length of this fight.
     """
     target = choose_adversary_target(adversary, state)
     if target is None:
@@ -270,10 +310,9 @@ def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult
 
     target = _shield(target, state)
 
-    advantage = (
-        AdvantageState.ADVANTAGE if target.is_vulnerable else AdvantageState.NONE
-    )
-    result = adversary.attack(target, advantage)
+    vulnerable = target.is_vulnerable and not is_immune_to(target, VULNERABLE, state)
+    advantage = AdvantageState.ADVANTAGE if vulnerable else AdvantageState.NONE
+    result = adversary.attack(target, advantage, state)
 
     if result.damage_roll is None:
         state.note(f"{adversary.name} misses {target.name} ({result.attack_roll})")
