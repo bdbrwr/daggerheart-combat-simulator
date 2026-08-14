@@ -166,12 +166,17 @@ in the coverage block.
 - **COVERAGE** — how much of each combatant the simulator actually ran, for
   both sides. Read this first.
 
-Coverage separates three states, and the difference between the last two is the
-whole point:
+Coverage separates four states, and the difference between the dismissals and the
+last one is the whole point:
 
 - **modelled** — code runs it (possibly with declared gaps)
-- **no combat effect** — assessed and dismissed, with the reason recorded
+- **no effect** — assessed and dismissed: it *cannot* change a fight
+- **insignificant** — assessed and dismissed: it could, but by too little to be
+  worth modelling, and the recorded reason says by how much
 - **unimplemented** — nobody has looked at it yet
+
+Only the last one is a gap. The two dismissals cost the results nothing, because
+somebody looked and wrote down what they found.
 
 Unimplemented content on the *party's* side makes an encounter look harder than
 it is. Unimplemented content on the *opposition's* side makes it look easier. The

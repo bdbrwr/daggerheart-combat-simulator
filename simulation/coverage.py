@@ -11,21 +11,27 @@ makes an encounter look easier rather than harder. Both sides are printed for
 that reason: the two errors point in opposite directions, and a reader who can
 only see one has no idea which way a number is wrong.
 
-Three states per named thing, from content/registry.py:
+Four states per named thing, from content/registry.py:
 
   * modelled          - code runs it (possibly with declared gaps)
-  * no combat effect  - assessed and dismissed, with a reason
+  * no effect         - assessed and dismissed: it cannot change a fight
+  * insignificant     - assessed and dismissed: it could, by too little to model
   * unimplemented     - nobody has looked at it yet
 
-The distinction the report exists to make is between the last two. "No combat
-effect" costs the results nothing. "Unimplemented" costs them something nobody
-has measured.
+The distinction the report exists to make is between the dismissals and the last
+one. A dismissal costs the results nothing, because somebody looked and said so.
+"Unimplemented" costs them something nobody has measured, which is why it is the
+only state that prints a warning.
+
+The two dismissals are kept apart because they are different claims - "this
+cannot matter" versus "this matters by about a point of damage" - and a reader
+deciding how far to trust a win rate should be able to see which was made.
 """
 
 from content.registry import Status, assess_all
 
 WIDTH = 78
-NAME_WIDTH = 20
+NAME_WIDTH = 18
 LABEL_WIDTH = 16
 INDENT = " " * 6
 
@@ -90,15 +96,22 @@ def _for_combatant(name, assessments, excluded) -> list[str]:
     """One combatant's tally, then the detail worth naming."""
     modelled = _with_status(assessments, Status.MODELLED)
     dismissed = _with_status(assessments, Status.NO_COMBAT_EFFECT)
+    minor = _with_status(assessments, Status.INSIGNIFICANT_COMBAT_EFFECT)
     missing = _with_status(assessments, Status.UNIMPLEMENTED)
 
     lines = [
-        f"    {name:<{NAME_WIDTH}}{len(modelled)} modelled   "
-        f"{len(dismissed)} no effect   {len(missing)} unimplemented"
+        f"    {name:<{NAME_WIDTH}}{len(modelled)} modelled  "
+        f"{len(dismissed)} no effect  {len(minor)} insignificant  "
+        f"{len(missing)} unimplemented"
     ]
 
     if missing:
         lines.append(_detail("unimplemented", ", ".join(a.name for a in missing)))
+
+    # Named as well as counted: a dismissal is only worth anything if a reader
+    # can see what was dismissed and go and check the reasoning.
+    if minor:
+        lines.append(_detail("insignificant", ", ".join(a.name for a in minor)))
 
     for assessment in modelled:
         for gap in assessment.unmodelled:

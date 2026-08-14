@@ -54,13 +54,18 @@ def get_back_up(character: Holder, amount: int, hp_to_mark: int, fight=None) -> 
 def whirlwind(attacker: Holder, target, result, fight: Fight) -> None:
     """Whirlwind (Blade, level 1).
 
-    SRD: on a successful attack against a target within Very Close range, spend
-    a Hope to use the attack against all other targets within Very Close range.
-    Additional adversaries you succeed against take half damage.
+    SRD: "When you make a successful attack against a target within Very Close
+    range, you can spend a Hope to use the attack against all other targets
+    within Very Close range. All additional adversaries you succeed against with
+    this ability take half damage."
 
-    The same attack roll is reused against each additional adversary's
-    Difficulty, which is what "you succeed against" means - one roll, several
-    targets. Half damage rounds down.
+    SIMULATION RULE - rules interpretation. Once the attack against the primary
+    target has succeeded, every additional adversary caught is **hit
+    automatically** and takes half damage; the roll is not re-checked against
+    each one's Difficulty. "All additional adversaries you succeed against" can
+    be read as a per-target check, and was implemented that way at first - but
+    the trigger is a single successful attack being *used* against the others,
+    and this is the reading the table plays. Half damage rounds down.
 
     The Hope is only spent when there is somebody else to hit. At Very Close the
     area rule reaches `n // 3` adversaries in total, and the original target is
@@ -82,9 +87,8 @@ def whirlwind(attacker: Holder, target, result, fight: Fight) -> None:
 
     splash = result.damage_roll.total // 2
     for adversary in others[:reach]:
-        if result.attack_roll.total >= adversary.difficulty or result.attack_roll.is_critical:
-            adversary.take_damage(splash)
-            fight.note(f"Whirlwind catches {adversary.name} for {splash}")
+        adversary.take_damage(splash)
+        fight.note(f"Whirlwind catches {adversary.name} for {splash}")
 
 
 def _worth_a_stress(character: Holder, hp_to_mark: int) -> bool:

@@ -35,14 +35,17 @@ from content.registry import (
     Fight,
     Holder,
     action,
+    apply_on_roll,
     extra_damage,
     hope_die_for,
     no_combat_effect,
     roll_bonus,
     severity_response,
+    total_damage_bonus,
     total_extra_damage,
     total_roll_bonus,
 )
+from dice.common import AdvantageState
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import DualityOutcome, roll_duality
 
@@ -157,6 +160,8 @@ BEASTBOUND_GAPS = [
     "which one applies is a fiction call, and no Hope is spent on them here",
     "Companion: every level-up option (Intelligent, Vicious, Resilient, "
     "Armored, Bonded and the rest) - the companion is run at its level 1 sheet",
+    "Companion: the follow-up swing after a success with Hope doesn't spend a "
+    "Hope on an Experience, where an ordinary weapon attack would",
     "Expert Training and Battle-Bonded (specialization, level 5) and Advanced "
     "Training and Loyal Friend (mastery, level 8)",
 ]
@@ -180,6 +185,12 @@ def companion(ranger: Holder, target, fight: Fight) -> AttackResult | None:
     the point is that commanding the companion is one of the things a Beastbound
     Ranger can spend their roll on, and the simulator picks at random among the
     options a PC can actually use rather than scoring them.
+
+    SIMULATION RULE - policy. The companion sheet also says: "On a success with
+    Hope, if your next action builds on their success, you gain advantage on the
+    roll." Whether the next action builds on it is a fiction call, so here it
+    always does, and the Ranger takes it **immediately** as a weapon swing with
+    Advantage rather than waiting for a later spotlight. See `_press_the_advantage`.
     """
     trait = getattr(ranger, "spellcast_trait", "")
     if not trait or trait not in ranger.traits:
@@ -197,6 +208,8 @@ def companion(ranger: Holder, target, fight: Fight) -> AttackResult | None:
         fight.note(f"{ranger.name}'s companion misses {target.name}")
         return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
+    # "On a success, their damage roll uses your Proficiency and their damage
+    # die" - the count is the Ranger's, the die is the companion's.
     damage_roll = roll_damage(
         dice_groups=[DiceGroup(count=ranger.proficiency, sides=COMPANION_DAMAGE_DIE)]
         + total_extra_damage(ranger, target, attack_roll, fight),
@@ -206,8 +219,55 @@ def companion(ranger: Holder, target, fight: Fight) -> AttackResult | None:
     fight.note(
         f"{ranger.name}'s companion mauls {target.name} for {damage_roll.total}"
     )
-    return AttackResult(
+    commanded = AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+    if attack_roll.outcome is not DualityOutcome.HOPE:
+        return commanded
+    return _press_the_advantage(ranger, target, fight, commanded)
+
+
+def _press_the_advantage(
+    ranger: Holder, target, fight: Fight, commanded: AttackResult
+) -> AttackResult:
+    """The Ranger's own swing, with Advantage, straight after the companion's hit.
+
+    SIMULATION RULE - policy, and a compression of two spotlights into one. The
+    companion sheet grants advantage on your *next* action roll if it builds on
+    the companion's success; a success with Hope also keeps the spotlight with
+    the party. At a table that usually reads as the Ranger following up
+    themselves, but the loop hands the next spotlight to a random PC who hasn't
+    acted, so waiting would mean the advantage usually went to nobody. Taking it
+    immediately is the chosen simplification. It does mean a Beastbound Ranger
+    makes two action rolls in one spotlight, which no other PC can do.
+
+    A critical is deliberately not treated as "with Hope" - it's its own
+    outcome, the same reading `face_your_fear` above applies to "with Fear".
+
+    The companion's roll generated Hope that the spotlight loop will never see,
+    because only the returned roll reaches it - so it's paid out here. There is
+    no matching Fear case to worry about: this is only reached on Hope.
+    """
+    from items.registry import find_weapon
+    from items.weapons import attack_with
+
+    apply_on_roll(ranger, commanded.attack_roll, fight)
+    ranger.gain_hope(1)
+
+    if not getattr(ranger, "primary_weapon", ""):
+        return commanded
+
+    fight.note(f"{ranger.name} presses the companion's advantage")
+    return attack_with(
+        ranger,
+        find_weapon(ranger.primary_weapon),
+        target,
+        AdvantageState.ADVANTAGE,
+        total_roll_bonus(ranger, target, fight),
+        total_damage_bonus(ranger, target, fight),
+        hope_die_for(ranger, fight),
+        fight,
     )
 
 

@@ -241,7 +241,44 @@ def test_the_block_covers_the_opposition_too():
 
     assert "opposition" in block
     assert "Jagged Knife Bandit" in block
-    assert "adversary:Climber" in block
+
+
+def test_a_dismissal_that_is_too_small_to_model_is_not_the_same_as_one_that_cannot_matter():
+    """The fourth state. Both run no code; the claim recorded differs.
+
+    Climber cannot reach a fight at all. From Above genuinely swaps in a bigger
+    damage die and was measured as too small to bother with. Reporting them
+    identically would hide which of those two things was decided.
+    """
+    climber = assess("adversary:Climber")
+    from_above = assess("adversary:From Above")
+
+    assert climber.status is Status.NO_COMBAT_EFFECT
+    assert from_above.status is Status.INSIGNIFICANT_COMBAT_EFFECT
+    assert climber.status is not from_above.status
+    assert from_above.reason  # says how big the effect actually is
+
+
+def test_both_kinds_of_dismissal_count_as_assessed():
+    assert Status.NO_COMBAT_EFFECT.is_dismissed is True
+    assert Status.INSIGNIFICANT_COMBAT_EFFECT.is_dismissed is True
+    assert Status.UNIMPLEMENTED.is_dismissed is False
+    assert Status.MODELLED.is_dismissed is False
+
+
+def test_the_block_names_what_was_dismissed_as_insignificant():
+    """A dismissal is only worth anything if a reader can go and check it."""
+    block = format_coverage([], [find_adversary("Jagged Knife Bandit")])
+
+    assert "insignificant" in block
+    assert "adversary:From Above" in block
+
+
+def test_an_assessed_adversary_raises_no_unimplemented_warning():
+    """All three Jagged Knife passives are decided, so nothing is outstanding."""
+    block = format_coverage([], [find_adversary("Jagged Knife Bandit")])
+
+    assert "work not done" not in block
 
 
 def test_copies_of_one_stat_block_are_reported_once():

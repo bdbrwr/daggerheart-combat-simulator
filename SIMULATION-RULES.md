@@ -48,6 +48,7 @@ the balance numbers, and none of them is wrong in a rules sense.
 | **Healing Hands** always clears HP rather than Stress, and only fires for an ally at 2 or fewer unmarked HP | `domain_cards/splendor.py` | The card offers the choice; HP is taken because a downed PC is what ends a fight. |
 | **Unstoppable** is turned on once the Guardian has 1 or more HP marked, not on the first spotlight | `features/classes.py` → `UNSTOPPABLE_HP_MARKED_BEFORE_USE` | Nothing - the rules let a player flip it whenever they like. Going early runs the damage bonus for longer; going late keeps the damage reduction for the dangerous end of a fight. A knob. |
 | **Iron Will** marks its extra Armor Slot only when the hit would drop the Guardian, or would still mark 2+ HP after the free slot | `features/subclasses.py` → `IRON_WILL_WORTH_A_SLOT` | Marking the extra slot is a choice. Slots are finite, so spending one to save a single HP is usually the worse trade - but that is a judgement, not a rule. |
+| The Beastbound **Companion**'s "advantage on your next action roll" is taken **immediately**, as a weapon swing with Advantage in the same spotlight | `features/subclasses.py` → `_press_the_advantage` | The companion sheet grants it on a success with Hope "if your next action builds on their success" - a fiction call, assumed always true. A success with Hope also keeps the spotlight, but the loop hands it to a random PC who hasn't acted, so waiting would usually give the advantage to nobody. The cost is that a Beastbound Ranger makes two action rolls in one spotlight, which no other PC can do. The companion roll's Hope is paid out inside the feature, since only the returned roll reaches the loop. |
 | **Adept** fires only *below* the Hope floor, so a Wizard pays for an Experience with Hope while they have plenty and with Stress once they don't | `features/subclasses.py` → `adept` | The feature offers the choice on every Experience. Splitting the two by the Hope floor means the doubled modifier is never taken while Hope is plentiful, even though a player might take it. |
 
 ### Area of effect, standing in for range
@@ -141,6 +142,7 @@ the numbers.
 | **Unstoppable**'s "reduce the severity by one threshold" is one HP fewer marked, floored at zero | `features/classes.py` → `unstoppable_reduces_severity` | The SRD names the steps (Severe→Major, Major→Minor, Minor→None) rather than an amount. Each threshold is worth exactly one HP here, so the ladder and "one less HP" are the same thing - and "Minor to None" is what the floor at zero means. |
 | **Unstoppable**'s die grows on HP **marked**, so a hit an Armor Slot swallowed entirely doesn't advance it | `features/classes.py` → `unstoppable_grows` | SRD: "after you make a damage roll that deals 1 or more Hit Points to a target". Read as HP the target actually marked, not damage dealt - the other reading would advance the die off a hit that cost the target nothing. |
 | The Beastbound **Companion**'s Spellcast Roll *is* its attack roll, so commanding it costs the Ranger their one action roll and the companion never takes a spotlight of its own | `features/subclasses.py` → `companion` | The Ranger Companion sheet says to make a Spellcast Roll to command the companion, and separately that their damage roll uses your Proficiency "on a success" - without saying outright that the two are one roll. Reading them as separate would give a Beastbound Ranger two attacks per spotlight. |
+| **Whirlwind**'s additional adversaries are **hit automatically** and take half damage - the attack roll is not re-checked against each one's Difficulty | `domain_cards/blade.py` → `whirlwind` | "All additional adversaries you succeed against with this ability" can be read as a per-target success check, and was implemented that way at first. The trigger is a single successful attack being *used* against the others, which is the reading the table plays. Makes the card meaningfully stronger against high-Difficulty groups. |
 | **Hold Them Off** deals the *same damage roll in full* to each additional adversary | `features/classes.py` → `_hold_them_off` | Whirlwind says explicitly that additional targets take half damage; this card says nothing at all, so nothing is halved. |
 | **Ranger's Focus** spends its Hope on an attack that has already landed, rather than being declared before the roll | `features/classes.py` → `_rangers_focus` | The card reads "spend a Hope and make an attack". Spending afterwards means a missed Focus attempt costs nothing, which is slightly generous - but deciding beforehand would mean committing Hope without knowing whether the attack even happens. |
 | **Strange Patterns** fires once on a roll showing the number on **both** dice, not twice | `features/classes.py` → `strange_patterns` | The card is written as a trigger on the roll rather than on each die, and doubles are already a critical. |
@@ -156,20 +158,23 @@ the numbers.
 Real rules we knowingly skip. Listed so a result is never mistaken for a
 complete simulation of the game.
 
-> **Per-character content is tracked in code, not here.** Domain cards,
-> ancestries, communities, classes and subclasses each declare their own state
-> in `content/registry.py` — *modelled* (optionally with declared gaps),
-> *no combat effect* (with a reason), or *unimplemented*. Every run prints the
-> breakdown per character, so this section covers only the rules that apply to
+> **Per-combatant content is tracked in code, not here.** Domain cards,
+> ancestries, communities, classes, subclasses, gear features and adversary
+> features each declare their own state in `content/registry.py` — *modelled*
+> (optionally with declared gaps), *no combat effect*, *insignificant combat
+> effect* (both with a reason), or *unimplemented*. Every run prints the
+> breakdown per combatant, so this section covers only the rules that apply to
 > everyone. Never leave content silently absent when the answer is "it can't
-> matter": declare it, so a judgement never looks like a gap.
+> matter" or "it barely matters": declare it, so a judgement never looks like a
+> gap — and never park a decision in *unimplemented*, which reports it as work
+> nobody has done.
 
 - **Massive Damage** (SRD-optional: 2× Severe marks 4 HP instead of 3) — `characters/player_character.py`
 - **Damage-type resistance and immunity** — nowhere
 - **Range and positioning entirely.** Every range band ("Melee", "Very Close", "Far") is treated as always satisfied. This is why `I Am Your Shield` never checks distance, and why adversary features keyed to position are skipped.
 - **All conditions except Vulnerable.** Restrained, Hidden, On Fire, Stunned and the rest have no representation.
 - **Adversary Fear features** — no adversary does anything but a standard attack
-- **Adversary passive features** — Climber, From Above and Unseen Strike are now *named* in `adversaries/srd.json` rather than sitting in a code comment, so they report as **unimplemented** in the coverage block instead of being invisible. Still not modelled; the difference is that the gap is now visible under every run
+- **Adversary passive features** — named in `adversaries/srd.json` rather than sitting in a code comment, so they reach the coverage block. All three Jagged Knife passives are assessed in `features/adversaries.py`: *Climber* has no combat effect, and *From Above* (+1 expected damage) and *Unseen Strike* (+2) are declared **insignificant**, because damage reaches HP through threshold bands and a bump that size lands within a band far more often than across one. Neither is left *unimplemented* — that state is for work nobody has done, not for a decision
 - **Most of the SRD armor table.** Only what the current sheets equip is catalogued in `items/srd.json`. Fortified, Resilient, Shifting, Impenetrable, Painful, Hopeful, Burning and the rest are real mechanics with nothing behind them yet — an armor naming one reports as unimplemented the moment it's equipped
 - **Armor Score and armor thresholds are never read from the catalogue.** A sheet carries them already resolved (see the standing rule on sheet-resolved values), so `items/*.json` records them as provenance only. The consequence is that a sheet whose numbers don't match the armor it names will not be caught
 - **Subclass features above the foundation tier.** Specialization (level 5) and mastery (level 8) features are declared as gaps on each subclass rather than implemented, since the current party has neither tier

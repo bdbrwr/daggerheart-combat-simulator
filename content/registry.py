@@ -14,10 +14,26 @@ official Battle Points math, because it hides how much of a character the
 simulator is actually running.
 
   * MODELLED          - code runs it. Registered with a hook decorator.
-  * NO_COMBAT_EFFECT  - assessed and dismissed, with a reason. Declared with
-                        `no_combat_effect(name, reason)`.
+  * NO_COMBAT_EFFECT  - assessed and dismissed: it *cannot* change a fight.
+                        Declared with `no_combat_effect(name, reason)`.
+  * INSIGNIFICANT_COMBAT_EFFECT
+                      - assessed and dismissed: it could change a fight, but by
+                        too little to be worth modelling, and the reason says by
+                        how much. Declared with
+                        `insignificant_combat_effect(name, reason)`.
   * UNIMPLEMENTED     - not declared at all. Work not done, and it should be
                         visible in output rather than silently absent.
+
+The middle two both run no code; what differs is the judgement recorded. Keeping
+them apart matters because "this cannot matter" and "this matters by about one
+point of damage" are different claims, and a reader deciding whether to trust a
+win rate should be able to tell which was made. Neither is ever the assistant's
+call - dismissing content is a judgement about the game, and it belongs to the
+user.
+
+A fourth state also means a measured decision never has to be parked in
+UNIMPLEMENTED for want of anywhere better, which would misreport it as work
+nobody has done.
 
 A MODELLED thing can still be *partly* modelled. Hooks take an `unmodelled`
 list for the parts deliberately left out - "Restrained, because no movement is
@@ -57,7 +73,16 @@ class Status(Enum):
 
     MODELLED = "modelled"
     NO_COMBAT_EFFECT = "no combat effect"
+    INSIGNIFICANT_COMBAT_EFFECT = "insignificant combat effect"
     UNIMPLEMENTED = "unimplemented"
+
+    @property
+    def is_dismissed(self) -> bool:
+        """Assessed and knowingly not run. Nothing about the fight changes."""
+        return self in (
+            Status.NO_COMBAT_EFFECT,
+            Status.INSIGNIFICANT_COMBAT_EFFECT,
+        )
 
 
 @dataclass(frozen=True)
@@ -433,8 +458,36 @@ def no_combat_effect(name: str, reason: str) -> None:
     The point is the difference between this and silence. Silence means nobody
     has looked at it yet; this means someone did, and here's why it was left
     out. Both end up in the coverage report, labelled differently.
+
+    Use this only when the content genuinely *cannot* reach a fight. If it can
+    but the effect is too small to bother with, that's
+    `insignificant_combat_effect` - a different claim, recorded separately.
     """
     _assess(name, Status.NO_COMBAT_EFFECT, _calling_module(), reason=reason)
+
+
+def insignificant_combat_effect(name: str, reason: str) -> None:
+    """Declare that `name` could touch a fight, but by too little to model.
+
+    The difference from `no_combat_effect` is the judgement being recorded, not
+    the behaviour - both run no code. `no_combat_effect` says the content
+    *cannot* change a fight. This says it could in principle, somebody worked out
+    by how much, and the answer was small enough to leave out:
+
+        insignificant_combat_effect(
+            "adversary:From Above",
+            "Swaps 1d8+1 for 1d10+1, about +1 expected damage. Damage becomes HP
+             through threshold bands, so a point rarely changes what a hit marks.",
+        )
+
+    Record the size of the effect in the reason, because that is the whole
+    content of the claim. "Probably small" is not an assessment.
+
+    This exists so that a measured decision never has to be parked in
+    `UNIMPLEMENTED`, which reads as work nobody has done. Like every dismissal it
+    is the user's call to make, not the assistant's.
+    """
+    _assess(name, Status.INSIGNIFICANT_COMBAT_EFFECT, _calling_module(), reason=reason)
 
 
 def _calling_module() -> str:
