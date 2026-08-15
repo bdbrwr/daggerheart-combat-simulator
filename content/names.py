@@ -26,9 +26,52 @@ trade: punctuation is a typo worth catching, capitalisation isn't.
 """
 
 
+import re
+
+
 def canonical(name: str) -> str:
     """The form a name is stored and looked up under."""
     return " ".join(name.split()).casefold()
+
+
+# --- Parameterised names -----------------------------------------------------
+#
+# The SRD prints some adversary features with a number baked into the name:
+# `Relentless (3)`, `Minion (3)`, `Horde (1d4+1)`. That is one feature with an
+# argument, not three features - the Acid Burrower's `Relentless (3)` and the
+# Construct's `Relentless (2)` are the same rule with a different X.
+#
+# So a stat block writes the name as printed, and the registry looks the content
+# up under its **base** name. The argument isn't threaded through dispatch, which
+# would mean changing every hook signature for a handful of features. The feature
+# reads it off its own holder instead, via `content/registry.py`'s
+# `feature_parameter` - which is where a feature's own business belongs.
+#
+# Deliberately narrow: a *trailing* parenthesised group only, so a name that
+# merely contains a bracket somewhere isn't silently truncated.
+
+_PARAMETERISED = re.compile(r"^(?P<base>.+?)\s*\((?P<argument>[^()]+)\)$")
+
+
+def base_name(name: str) -> str:
+    """`name` without its trailing parameter - "Relentless (3)" -> "Relentless".
+
+    Returns the name unchanged when there is no parameter, so a caller can use
+    it unconditionally. Any namespace prefix survives, since the pattern only
+    ever strips from the end: "adversary:Relentless (3)" -> "adversary:Relentless".
+    """
+    matched = _PARAMETERISED.match(name.strip())
+    return matched.group("base") if matched else name.strip()
+
+
+def parameter(name: str) -> str | None:
+    """The argument in `name`, or None if it has none.
+
+    A string rather than an int, because not every parameter is one: `Horde
+    (1d4+1)` carries a damage expression. Parsing it is the feature's job.
+    """
+    matched = _PARAMETERISED.match(name.strip())
+    return matched.group("argument").strip() if matched else None
 
 
 # --- Namespaces --------------------------------------------------------------

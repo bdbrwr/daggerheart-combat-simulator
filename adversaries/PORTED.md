@@ -1,0 +1,279 @@
+# SRD adversaries: what's ported
+
+The SRD lists **129 adversaries**. This file tracks which of them are in
+`srd.json` and which are still outstanding, because an SRD update is expected
+(25 Aug) that will add more, and without a list there is no way to tell a new
+adversary from one we simply hadn't got to.
+
+## How porting works
+
+- **Batches of five**, so a change stays reviewable - a batch is usually five
+  stat blocks plus whatever features they need.
+- **Tier ascending**, and within a tier the book's own print order, which is what
+  `srd.json` is ordered by too.
+- **Social adversaries are skipped.** They aren't used in combat encounters, and
+  a simulator that only models combat has nothing to say about them.
+- Numbers are taken from the reference JSON in `.reference/` and **checked
+  against the printed page** in the SRD PDF before the batch lands.
+
+### Mechanics are implemented; usage policies are ruled on
+
+Implementing a feature is two jobs, and only the first is a coding job:
+
+- **The mechanics** — what the SRD says the feature does. Read them off the page
+  and write them.
+- **The usage policy** — when a GM would actually reach for it. This is a
+  judgement about the game and it belongs to the user, exactly like the decision
+  to dismiss content as having no combat effect.
+
+Batch 1 got this wrong: usage thresholds were invented, written into the code as
+though settled, and recorded in `SIMULATION-RULES.md` as policies nobody had
+chosen. The process that replaces it:
+
+1. **Hand over the batch's policy table first** — one row per feature that
+   involves a choice, naming the cost and the actual trade. Rulings come back
+   before the policies are written.
+2. **Until a ruling, the placeholder is "fires whenever its cost can be paid."**
+   The least inventive option. Never a threshold like "only when it reaches two
+   targets" — those are knobs, and a knob nobody set is worse than no knob.
+3. **A placeholder is labelled as one**, in the docstring (`USAGE POLICY -
+   awaiting a ruling`) and in the table above. Nothing reaches
+   `SIMULATION-RULES.md`'s policy list until it has been ruled on, because that
+   file is a record of decisions and an invented entry corrupts it.
+4. **Never policy a feature into never firing because of something the simulator
+   leaves out.** A feature being weaker *on damage* is a fact about damage; if
+   the thing that justifies it at a table is unmodelled, that is a gap of ours,
+   and the gap is declared where the feature is registered rather than smuggled
+   into a policy.
+
+## What a "ported" adversary is and isn't
+
+Porting a stat block gets its **numbers** into the simulator: Difficulty,
+thresholds, HP, Stress, attack modifier and standard-attack damage. Those work
+immediately, and for many adversaries that is most of what makes them dangerous.
+
+Its **features** are a separate job, and the standing rule is that the machinery
+for one gets built the first time a feature needs it. A feature with nothing
+behind it yet reports as *unimplemented* in the coverage block, which is honest -
+the report says so on every run - but don't mistake a ported adversary for a
+fully simulated one until its features are ticked off below.
+
+## Two things settled while porting
+
+- **Type carries no mechanics.** The SRD says only that "an adversary's type
+  represents the role they play in a conflict", with one descriptive line each.
+  Everything that sounds like a type rule is printed as a named feature instead -
+  `Minion (X)`, `Horde (X)`, `Relentless (X)`, `Slow`, `Arcane Form`,
+  `Armored Carapace` are all in the SRD's list of example passives. So `type` is
+  carried as data on `Adversary` and the fight loop never reads it.
+- **Feature names drop the category suffix.** The book prints
+  `Relentless (3) - Passive`; the catalogue writes `"Relentless (3)"`. The
+  suffix says which hook a feature belongs on, which the code expresses by
+  which decorator it registers with.
+
+---
+
+## Ported
+
+### Tier 1
+
+Feature states are the four in `CLAUDE.md`: **implemented**, **no combat
+effect** (nothing here for it to touch), **irrelevant** (represented, but too
+small to change an outcome), **not implemented** (work still to do).
+
+| Adversary | Type | Batch | Features |
+|---|---|---|---|
+| Acid Burrower | Solo | 1 | Relentless (3), Earth Eruption, Spit Acid, Acid Bath *implemented* |
+| Bear | Bruiser | 1 | Momentum, Bite *implemented* · Overwhelming Force *no combat effect* |
+| Cave Ogre | Solo | 1 | Bone Breaker, Ramp Up, Hail of Boulders, Rampaging Fury *implemented* |
+| Construct | Solo | 1 | Relentless (2), Weak Structure, Trample, Overload, Death Quake *implemented* |
+| Deeproot Defender | Bruiser | 1 | Ground Slam, Grab and Drag *implemented* |
+| Dire Wolf | Skulk | 2 | Pack Tactics, Hobbling Strike *not implemented* |
+| Giant Mosquitoes | Horde (5/HP) | 2 | Horde (1d4+1), Flying, Bloodsucker *not implemented* |
+| Giant Rat | Minion | 2 | Minion (3), Group Attack *not implemented* |
+| Giant Scorpion | Bruiser | 2 | Momentum *implemented* · Double Strike, Venomous Stinger *not implemented* |
+| Glass Snake | Standard | 2 | Armor-Shredding Shards, Spinning Serpent, Spitter *not implemented* |
+| Jagged Knife Bandit | Standard | earlier | Climber *no combat effect* · From Above *irrelevant* |
+| Jagged Knife Sniper | Ranged | earlier | Unseen Strike *irrelevant* |
+
+---
+
+## Outstanding
+
+### Tier 1, in print order
+
+Next batch starts at the top of this list. Types are confirmed against the
+printed page as each batch is read, so a blank one is unknown rather than
+unknown-to-be-blank - and a Social found there is skipped rather than ported.
+
+1. Courtier — **Social, skipped**
+2. Harrier — Standard
+3. Archer Guard — Ranged
+4. Bladed Guard — Standard
+5. Head Guard — Leader
+6. Jagged Knife Hexer — Support
+7. Jagged Knife Kneebreaker — Bruiser
+8. Jagged Knife Lackey — Minion
+9. Jagged Knife Lieutenant
+10. Jagged Knife Shadow
+11. Merchant
+12. Minor Chaos Elemental
+13. Minor Fire Elemental
+14. Minor Demon
+15. Minor Treant
+16. Green Ooze
+17. Tiny Green Ooze
+18. Red Ooze
+19. Tiny Red Ooze
+20. Petty Noble
+21. Pirate Captain
+22. Pirate Raiders
+23. Pirate Tough
+24. Sellsword
+25. Skeleton Archer
+26. Skeleton Dredge
+27. Skeleton Knight
+28. Skeleton Warrior
+29. Spellblade
+30. Swarm of Rats
+31. Sylvan Soldier
+32. Tangle Bramble Swarm
+33. Tangle Bramble
+34. Weaponmaster
+35. Young Dryad
+36. Brawny Zombie
+37. Patchwork Zombie Hulk
+38. Rotted Zombie
+39. Shambling Zombie
+40. Zombie Pack
+
+### Tiers 2-4
+
+Not started. The SRD lists them under TIER 2 (LEVELS 2-4), TIER 3 (LEVELS 5-7)
+and TIER 4 (LEVELS 8-10); they get enumerated here when tier 1 is done, so this
+file doesn't carry eighty rows nobody is working from yet.
+
+---
+
+## Settled
+
+- **A printed `Thresholds: None` is stored as 9999**, via
+  `catalogue.py`'s `NO_THRESHOLD`. Every case found so far is an adversary with
+  fewer HP than the threshold could ever matter for - a Minion is defeated by any
+  damage, the Tiny Green Ooze has 2 HP - so a threshold out of reach says exactly
+  the right thing and every hit lands in the lowest band. Both `null` and the
+  string `"None"` are accepted.
+- **A feature's name can carry a parameter.** `Relentless (3)` and
+  `Relentless (2)` are one feature with an argument, so it registers once as
+  `adversary:Relentless` and reads X off whichever stat block carries it. Same
+  machinery will serve `Minion (X)` and `Horde (X)`.
+- **`Relentless (X)` spends from the same activation budget as everyone else.**
+  Its extra spotlights count against the party size + 1 cap and each costs the
+  usual Fear. The cap is our simulation rule rather than a game rule - the SRD
+  puts no limit on activations at all - and a feature that reached around it
+  would defeat the point of having it.
+- **`harden_damage` is the counterpart to `soften_damage`**, for content that
+  makes a hit mark *more* HP. Both sides of the table run the pipeline, and
+  hardening is always asked second so "when you mark HP" is measured against
+  what the hit finally cost.
+
+- **Conditions are records with an end condition** — `content/conditions.py`.
+  Vulnerable is modelled; Restrained is ruled to have no combat effect here and
+  is declared as a gap on each feature that applies it.
+- **Direct damage** skips the Armor Slot and nothing else.
+- **Reaction Rolls** are Duality Dice plus a trait, with the Hope/Fear outcome
+  unread. A critical ignores the whole effect.
+
+## Batch 2 rules rulings
+
+Decided before any of batch 2's feature code was written. These are rules
+questions rather than usage policies — they change what a feature *is*, not when
+a GM reaches for it.
+
+- **`Minion (X)` overkill only defeats Minions of the same adversary name.** For
+  every X damage, an additional one of *that stat block* goes down. A useful
+  consequence: they all share a Difficulty, so there is no per-target check to
+  make — "the attack would succeed against" is answered once.
+- **`Horde (X)` replaces the standard attack's dice**, rather than penalising the
+  total. Needs a hook that swaps an adversary's attack dice; none exists yet.
+- **A Group Attack is one activation.** However many Minions it sweeps in, the
+  GM turn is charged once — the feature is one shared roll, so it costs one
+  spotlight. How many it reaches is the feature's own rule and the area rules.
+- **Poison is modelled**, and it is a *family* rather than one condition. The
+  Giant Scorpion's ends on a Knowledge Roll at Difficulty 16; the Druid
+  beastforms' poisons have different effects and take the default end (the GM
+  spending a Fear). This is the first real use of `Condition.effect` — the
+  Scorpion's is "roll a d6 before an action roll; on 4 or lower, mark a Stress".
+- **`Flying` is parameterised as `Flying (X)`**, X being the Difficulty bonus, so
+  it is authorable per adversary. The SRD prints the name bare; we write
+  `Flying (2)` for the Giant Mosquitoes. The "while flying" qualifier is treated
+  as always true for these — narratively right for the tier 1–2 fliers
+  (mosquitoes, bats), and a tier 4 dragon may well want a different number rather
+  than a different rule.
+- **Armor-Shredding Shards keys off the attacker's weapon range.** Every attacker
+  is assumed to have attacked from the greatest range their weapon allows, so a
+  Melee-only weapon triggers it and a Far one doesn't.
+- **The Spitter Die is a real per-fight die**, rolled at each of the Snake's
+  spotlights — including the extra one the feature grants — with a 2-in-6 chance
+  of a Far Reaction Roll for 1d4.
+- **Spitter's extra spotlight is granted once, on the turn the die is
+  introduced** — not every turn the die is active, and not for rolling 5 or
+  higher. Spending the Fear buys the die *and* one extra spotlight that turn;
+  every turn afterwards the die keeps rolling but buys no more spotlights.
+
+  So it is a one-off `grant_activation` (the `Overload` shape), not an
+  `activation_limit` (the `Relentless` shape). It stays inside the party size + 1
+  cap and the extra activation still costs the usual Fear.
+
+## Usage policies awaiting a ruling
+
+Implementing a feature is two jobs: the **mechanics**, which come from the SRD,
+and the **usage policy** - when a GM would actually reach for it. The second is a
+judgement about the game and belongs to the user, so every feature below runs on
+a placeholder rather than a decision.
+
+**The placeholder is "use it whenever its cost can be paid."** It is the least
+inventive option available. Where a real policy is wanted, it's a one-line change
+at the top of each function.
+
+| Feature | Cost | The choice a GM actually makes |
+|---|---|---|
+| Earth Eruption | 1 Stress | Deals no damage. Worth a Stress for the Vulnerable, or hold it for a Bite-style attack? |
+| Spit Acid | free | Free, so nothing to weigh - unless it should be held when it reaches only one PC, where 2d6 is worse than the Burrower's 1d12+2 |
+| Bite | 1 Stress | 3d4+10 against a standard 1d8+3, and only two Stress on the sheet |
+| Hail of Boulders | 1 Stress (+ the Ramp Up Fear already paid) | Far reaches everyone, so this is the Ogre's real area threat |
+| Trample | 1 Stress | 1d8 to two, against 1d20 to one |
+| Overload | 1 Stress | +10 damage and an extra spotlight; four Stress means four of them |
+| Ground Slam | free | Deals no damage; drains party Stress instead |
+| Grab and Drag | 1 Fear on a hit | 1d6+2 against a standard 1d8+3. Lower damage, but that is a fact about damage alone - the Restrain that justifies it at a table has no representation here, and that is a gap of ours rather than evidence about the game |
+
+### Batch 2 — ruled on before the code is written
+
+**No feature code exists for any of these yet.** The stat blocks are ported and
+their numbers work; the features below are `not implemented` until these are
+answered.
+
+| Feature | Cost | The choice |
+|---|---|---|
+| Hobbling Strike (Dire Wolf) | 1 Stress | 3d4+10 **direct** plus Vulnerable, against a standard 1d6+2. The Wolf's whole threat, and 3 Stress on the sheet |
+| Bloodsucker (Mosquitoes) | 1 Stress | After a hit that marked HP, force one more. Spend on every hit, or hold for one that would drop a PC? |
+| Group Attack (Giant Rat) | 1 Fear | One shared roll across every Rat within Close, 1 damage each combined. Worth more the more Rats are alive |
+| Double Strike (Scorpion) | 1 Stress | The standard 1d12+2 against **two** Melee targets. Nothing gained against a lone PC |
+| Venomous Stinger (Scorpion) | 1 Fear on a hit | 1d4+4 plus Poison, against a standard 1d12+2. Lower damage, and now that Poison is modelled the trade is real rather than notional |
+| Spinning Serpent (Glass Snake) | 1 Stress | Area at Very Close for 1d6+1, against a standard 1d8+2 |
+| Spitter (Glass Snake) | 1 Fear, once | Buys a die that then rolls every spotlight, and an extra spotlight each turn. Worth far more early in a fight than late |
+
+## Still open
+
+- **Adversary Experiences aren't modelled.** The SRD makes them optional and
+  GM-facing: "The GM can spend a Fear to add an adversary's relevant Experience
+  to raise their attack roll or increase the Difficulty of a roll made against
+  them." They're recorded in each entry's `notes` so the entry stays checkable
+  against the page, but there is no field and no mechanic behind them.
+- **Three PC cards still charge condition Fear the old way.** Slumber, Vicious
+  Entangle and Tava's Armor spend the GM's Fear at the moment they apply a
+  condition, rather than going through `Condition` and `when_the_gm_pays`. The
+  same rule is expressed twice until they migrate.
+- **Area attacks can't be force-rerolled.** `Not This Time` re-makes "an attack
+  roll", and one already measured against five different Evasions can't be
+  re-made without unwinding all of them. Declared as a gap on the card.

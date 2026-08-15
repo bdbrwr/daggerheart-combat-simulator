@@ -31,7 +31,9 @@ the balance numbers, and none of them is wrong in a rules sense.
 | A PC drinks a stamina consumable with 1 or fewer free Stress slots | `combat/policy.py` → `LOW_STRESS_SLOTS`, `_should_clear_stress` | Nothing. Held until being out of Stress actually costs something - going Vulnerable, or being unable to pay a card's cost - rather than drunk on the first mark. |
 | A PC spends Hope on an Experience only above 5 Hope, and we assume an Experience always applies | `combat/policy.py` → `EXPERIENCE_HOPE_FLOOR`, `_experience_bonus` | Whether an Experience applies is a fiction call. Assuming it always does is optimistic. |
 | Which PC acts is random among those who haven't acted this pass; everyone goes once before anyone goes twice | `combat/fight.py` → `_next_pc` | Daggerheart has no turn order at all. This stops one lucky PC acting forever. |
-| The GM spotlights at most **party size + 1** adversaries per turn | `combat/state.py` → `max_activations_per_gm_turn` | The SRD lets the GM spend Fear to spotlight **as many as they can afford**. Ours is a cap that a greedy simulator needs; a knob worth sweeping. |
+| The GM gets at most **party size + 1** activations per turn | `combat/state.py` → `max_activations_per_gm_turn` | The SRD lets the GM spend Fear to spotlight **as many as they can afford**. Ours is a cap that a greedy simulator needs; a knob worth sweeping. Activations, not adversaries: `Relentless (X)` lets one adversary take several and they all count against the cap. |
+| **`Relentless (X)` spends from the same activation budget as everyone else.** Its extra spotlights count against party size + 1, and each still costs the usual 1 Fear — no discount, no surcharge | `features/adversaries.py` → `relentless`; `combat/fight.py` → `_take_gm_turn` | The SRD puts **no cap** on activations at all: the GM spotlights as many adversaries as they can afford, and Relentless only says "spend Fear as usual". The cap is entirely ours, and so is the decision to make Relentless live inside it. The point of the cap is to hold a simulated fight to something a GM would actually run at a table, and a feature that could reach around it would defeat that. Consequence worth knowing: against a *small* field the feature now converts activations that previously went unused, so the GM spends more Fear than the same encounter used to — the Fear rule didn't change, the number of things worth spending it on did |
+| Everyone who can act goes before anyone goes again, and ties are broken **at random** | `combat/fight.py` → `_next_adversary` | Nothing; the GM chooses. Previously the first-listed living adversary went every time, which let the order an encounter spawned its adversaries in decide who acted - the same thing `_next_pc` already avoids on the party side. It matters more now that `Relentless` exists: taken greedily, a Relentless adversary would swallow the whole GM turn before anything else moved, where at a table the extra activation reads as the dangerous thing coming back round. |
 | The GM spends Fear greedily on extra activations and on nothing else | `combat/fight.py` → `_take_gm_turn` | Fear also pays for adversary Fear features and GM moves, neither implemented. |
 | PCs always take **Avoid Death** as their death move | `characters/player_character.py` → `take_damage`, `avoid_death` | Three death moves exist. Blaze of Glory and Risk It All are not modelled. |
 | An unconscious PC is never revived and takes no further part | `characters/player_character.py` → `clear_hp` | Per the SRD an ally can clear a downed PC's HP to revive them. Spending a turn on that isn't modelled. |
@@ -52,6 +54,8 @@ the balance numbers, and none of them is wrong in a rules sense.
 | **Adept** fires only *below* the Hope floor, so a Wizard pays for an Experience with Hope while they have plenty and with Stress once they don't | `features/subclasses.py` → `adept` | The feature offers the choice on every Experience. Splitting the two by the Hope floor means the doubled modifier is never taken while Hope is plentiful, even though a player might take it. |
 | **Not This Time** is spent on an adversary's **critical**, or on any hit against a PC who is **near death** (`NEAR_DEATH_HP_UNMARKED` unmarked HP or fewer) - and never on a miss | `features/classes.py` → `not_this_time` | The card can force a reroll of any attack roll. A natural 20 hits regardless of Evasion and doubles what the damage is worth, so it's both the worst roll the GM makes and the only one a reroll is certain to improve. A hit on a PC one blow from the floor is the other one worth three Hope, because what it's measured against is a PC leaving the fight rather than a number. On any other ordinary hit the same price buys much less, and rerolling a *miss* only gives the GM a second try. |
 | **Luckbender** rerolls only a **failed** roll, only at 6 Hope or above, and for an *ally's* roll only if a range check passes | `features/ancestries.py` → `luckbender`, `LUCKBENDER_HOPE_FLOOR` | The card triggers on any action roll, yours or a willing ally's within Close range. Rerolling a success buys nothing measurable; the Hope floor keeps a class Hope feature affordable afterwards, since those are generally the bigger swing. |
+| An adversary's spotlight is **one action feature or the standard attack**, chosen at random among those willing | `combat/policy.py` → `take_adversary_turn` | The SRD calls these Actions and says they're what an adversary does when the spotlight is on them, but nothing says which to pick. Same random-among-viable stand-in the party already uses, and for the same reason: the order a stat block lists its features in carries no meaning. |
+| **Every batch 1 adversary feature fires whenever its cost can be paid** — no other condition | `features/adversaries.py` | Nothing; using a feature is the GM's choice every time. **These are placeholder defaults awaiting a ruling, not decisions.** "Whenever it can be paid" is the least inventive option available, and it is written here as a placeholder rather than as a policy so that nobody later mistakes it for a judgement somebody made. The features are Earth Eruption, Spit Acid, Bite, Hail of Boulders, Trample, Overload, Ground Slam and Grab and Drag; the open list is in `adversaries/PORTED.md`. |
 | **Adaptability** is used only while 4 or fewer Stress are marked | `features/ancestries.py` → `ADAPTABILITY_MAX_STRESS_MARKED` | The card sets no limit. Marking the last Stress makes a PC Vulnerable for the rest of the fight, which costs far more than one rerolled attack is worth, so the last slots are held back. |
 
 ### Area of effect, standing in for range
@@ -145,21 +149,58 @@ hasn't acted this pass. That can't stall a fight in practice because free
 abilities cost Hope, Stress or a per-rest use and run out, but it is why the
 action cap in section 4 exists.
 
-### Temporary conditions, standing in for condition tracking
+### Temporary conditions
 
-Conditions other than Vulnerable aren't tracked. Rather than dropping an ability
-that applies one — which would understate it — **applying a temporary condition
-costs the GM 1 Fear**, floored at zero.
+A condition is a record on the `FightState` carrying its name and a predicate
+saying when it ends — `content/conditions.py` → `Condition`. The loop announces
+two moments and each condition decides whether that's its cue: a combatant taking
+the spotlight (`WHEN_THEY_ACT`), and the GM's turn coming round (`ON_A_GM_TURN`).
 
-This is a simplification, but a well-grounded one: several of these abilities are
-written to end when the GM spends a Fear to clear them (Slumber says exactly
-that), so draining the pool is close to what the condition actually costs the GM
-side. It also lands in the one currency the simulator already tracks carefully,
-which means the effect shows up in the Fear numbers rather than vanishing.
+**Vulnerable is the only condition modelled.** It hands every roll against its
+holder Advantage, which is a large and fully represented effect, so content that
+applies it has something to apply. `FightState.is_vulnerable` answers for both
+sources at once — a PC with every Stress marked, and anyone the condition was
+put on.
 
-Edge case worth remembering: a GM already at 0 Fear pays nothing, so the
-condition is free to them. That understates the effect, and it happens most in
-exactly the fights where Fear is scarce.
+**Restrained is ruled to have no combat effect here.** It stops a combatant
+moving and does nothing else, and no movement is modelled. A feature that
+Restrains is implemented for whatever else it does, with the Restrain declared
+as a gap where it's registered. That is a statement about the simulation: being
+held in place matters a great deal at a table.
+
+The rest — Hidden, On Fire, Stunned — have no representation and nothing applies
+one.
+
+**The GM pays to shake a condition off**, which is `when_the_gm_pays`: a
+condition the party put on an adversary ends when the GM spends 1 Fear on their
+next turn. Several are written to end exactly this way (Slumber says so
+outright), so draining the pool is close to what the condition costs the GM side,
+and it lands in a currency already tracked carefully. A GM who can't afford it
+doesn't clear it — which is the honest consequence, and better than the earlier
+version of this rule, which charged the Fear the moment the condition landed and
+so made conditions free whenever the pool was empty.
+
+> **Known duplication.** The three PC-side cards that apply conditions
+> (Slumber, Vicious Entangle, Tava's Armor) still charge that Fear at
+> application time from their own code, rather than going through `Condition`.
+> They should migrate to it; until they do, the same rule is expressed twice.
+
+### Reaction Rolls
+
+Duality Dice plus a trait, and nothing else: the **Hope/Fear outcome is not
+read**. Nobody gains a Hope, the GM gains no Fear, and the spotlight doesn't
+move — a Reaction Roll is not an action roll, and only an action roll does any of
+that. Features call `roll_duality` directly and read `is_success` and
+`is_critical`.
+
+**A critical ignores the whole effect**, not only the part a success avoids.
+Where a failure is "15 damage and Vulnerable" and a success is "5 damage", a
+critical is nothing at all.
+
+| Policy | Where | What the rules say |
+|---|---|---|
+| Where the SRD prints **no Difficulty** for a Reaction Roll, the adversary's own Difficulty is used | `features/adversaries.py` → `_reaction_roll` | The GM sets it. The stat block's Difficulty is the number already on the page and it scales with tier, which makes it the least invented option — but it is invented, and it's a knob. |
+| A Reaction Roll gets the **trait only** — no Experience, no Help, no Advantage | `features/adversaries.py` → `_reaction_roll` | The SRD would let a PC spend Hope on a relevant Experience here as on any roll. Not modelled. |
 
 ## 2. Rules interpretations
 
@@ -186,6 +227,9 @@ the numbers.
 | **Massive**/**Powerful** discard the lowest of the dice *the weapon* rolled. Dice a feature added are rolled alongside and added to the same total, out of the discard's reach - and the total is still checked against the thresholds once | `dice/damage.py` → `DiceGroup.discardable`, `dropped`, `critical_bonus` | "Roll an additional damage die and discard the lowest result" doesn't say whose dice. The feature belongs to the weapon, so its discard is read as reaching only the weapon's own pool; the other reading lets a Greatstaff throw away a Wizard's Face Your Fear die. |
 | **At most one reroll applies to any roll.** The first piece of content willing to re-make it wins, and nothing else is asked | `content/registry.py` → `remake_action_roll`, `force_adversary_reroll` | Nothing in the SRD forbids a party stacking Luckbender on top of Adaptability for a third attempt at one roll, but no card describes a chain off a single trigger, and allowing it would make a failed roll cheap. |
 | A reroll re-makes the **whole** roll, not only the Duality Dice — but re-rolls only the *dice*, never the decisions that fed them: bonuses, the Hope Die and any Experience are worked out once and reused | `items/weapons.py` → `attack_with`; the `_spellcast` helpers in `domain_cards/` | Luckbender and Adaptability both say to reroll the Duality Dice, which would leave an Advantage or Help die standing; re-making everything differs only on rolls that had one, and is declared as a gap on both. Holding the modifiers fixed is not optional — asking content for a roll bonus is the commitment, so several of them spend Hope or mark Stress on being asked, and re-asking would charge twice. |
+| An adversary's **area attack** is one roll checked against each target's Evasion, with one damage roll applied to everyone it beat | `adversaries/adversary.py` → `area_attack`; `content/aoe.py` → `targets_hit` | The mirror of the reading already used for a PC rolling against an area, and of `Hold Them Off` reusing one roll against several. The roll's own success is measured against the *lowest* Evasion present, for the same reason the PC side measures against the lowest Difficulty: it either beat somebody or it beat nobody. |
+| A feature keyed on "takes **Severe damage**" reads the number rolled; one keyed on "marks **2 or more HP**" reads what the hit cost | `features/adversaries.py` → `acid_bath`, `rampaging_fury`; `content/registry.py` → `on_damaged` | The SRD writes both kinds and means different things by them, so `on_damaged` is handed both figures and each feature reads the one its own text names. |
+| Content that **worsens** a hit is asked after content that softens it, and **Weak Structure** fires only on a hit that actually marked HP | `content/registry.py` → `harden_damage`, `severity_increase`; `features/adversaries.py` → `weak_structure` | "When the Construct marks HP … they must mark an additional HP" doesn't say whether that's the HP the damage started at or the HP it ended at. Reading it as the final amount means a hit an Armor Slot or a domain card absorbed entirely marked nothing, so there is nothing to add to - which is what the trigger says on its face. Fixing the order in the dispatch rather than in each feature keeps the answer the same however many features register |
 | A die discarded by **Massive**/**Powerful** doesn't count toward the critical bonus - a crit adds the maximum of the dice that were kept, not of every die rolled | `dice/damage.py` → `critical_bonus` | A crit "adds the maximum possible result of the damage dice"; the SRD doesn't say whether a discarded die is still one of "the damage dice". Counting it would pay for a die that was thrown away. |
 
 ## 3. Not implemented
@@ -207,8 +251,11 @@ complete simulation of the game.
 - **Massive Damage** (SRD-optional: 2× Severe marks 4 HP instead of 3) — `characters/player_character.py`
 - **Damage-type resistance and immunity** — nowhere
 - **Range and positioning entirely.** Every range band ("Melee", "Very Close", "Far") is treated as always satisfied. This is why `I Am Your Shield` never checks distance, and why adversary features keyed to position are skipped.
-- **All conditions except Vulnerable.** Restrained, Hidden, On Fire, Stunned and the rest have no representation.
-- **Adversary Fear features** — no adversary does anything but a standard attack
+- **All conditions except Vulnerable** — see the conditions section above. Restrained is *ruled* to have no combat effect here rather than merely absent; Hidden, On Fire and Stunned have no representation and nothing applies them.
+- **Direct damage bypasses the Armor Slot only.** `characters/player_character.py` → `take_damage(direct=True)`; `content/registry.py` → `direct_damage`, `deals_direct_damage`. Thresholds still decide how many HP it costs, and damage responses still get their say — the SRD's restriction is on armor. Against this party it's worth close to a whole HP per hit, since the policy otherwise marks a free slot against everything
+- **Adversary Fear features** — no adversary has one implemented yet. Note this is distinct from features that merely *cost* the GM Fear, several of which are modelled (Ramp Up charges to spotlight, Grab and Drag spends on a hit)
+- **Adversary Experiences.** The SRD gives adversaries optional Experiences the GM can spend a Fear on, "to raise their attack roll or increase the Difficulty of a roll made against them". There is no field for them and no mechanic behind them; they're recorded in each catalogue entry's `notes` so an entry stays checkable against the printed page
+- **Adversary `type` is data only.** The SRD gives a type no rules of its own — "an adversary's type represents the role they play in a conflict", then one descriptive line each. Everything mechanical that sounds like a type is printed as a named *feature* (`Minion (X)`, `Horde (X)`, `Relentless (X)`, `Slow`, `Arcane Form`, `Armored Carapace` are all SRD example passives), so the fight loop never reads `Adversary.type`. It is carried because it's on the printed page and because it's what "Social adversaries aren't ported" keys on — see `adversaries/PORTED.md`
 - **Adversary passive features** — named in `adversaries/srd.json` rather than sitting in a code comment, so they reach the coverage block. All three Jagged Knife passives are assessed in `features/adversaries.py`: *Climber* has no combat effect, and *From Above* (+1 expected damage) and *Unseen Strike* (+2) are declared **insignificant**, because damage reaches HP through threshold bands and a bump that size lands within a band far more often than across one. Neither is left *unimplemented* — that state is for work nobody has done, not for a decision
 - **Most of the SRD armor table.** Only what the current sheets equip is catalogued in `items/srd.json`. Fortified, Resilient, Shifting, Impenetrable, Painful, Hopeful, Burning and the rest are real mechanics with nothing behind them yet — an armor naming one reports as unimplemented the moment it's equipped
 - **Armor Score and armor thresholds are never read from the catalogue.** A sheet carries them already resolved (see the standing rule on sheet-resolved values), so `items/*.json` records them as provenance only. The consequence is that a sheet whose numbers don't match the armor it names will not be caught
@@ -245,3 +292,5 @@ Not game rules at all — machinery that exists because this is software.
 - **Unresolved fights are excluded** from every distribution, since the cap is not a fight length — `simulation/summary.py` → `SimulationSummary.resolved`
 - **"Near death" means 2 or fewer unmarked HP** on whoever came closest. Not a game concept — `characters/player_character.py` → `NEAR_DEATH_HP_UNMARKED`, `is_near_death`. It began as a reporting threshold and is now a trigger content keys on too (Not This Time), which is why it lives on the character rather than in `simulation/`: a report that called a fight a near thing on a different number from the one the party plays to would be describing two different edges
 - **One seed per command** seeds every encounter in it, so variations face the same dice — `simulation/cli.py`
+- **A printed threshold of `None` is stored as 9999** — `adversaries/catalogue.py` → `NO_THRESHOLD`. Some stat blocks print no thresholds at all (Minions, and small things like the Tiny Green Ooze on 2 HP), and every case so far is an adversary with fewer HP than the threshold could ever become relevant for. A threshold out of reach says exactly that: every hit lands in the lowest band. Zero would be catastrophically wrong — it would put every hit at or above Severe and mark 3 HP off a 1 HP track
+- **A feature's name may carry a parameter** — `content/names.py` → `base_name`, `parameter`; `content/registry.py` → `_registered`, `feature_parameter`. The SRD prints `Relentless (3)`, `Minion (3)`, `Horde (1d4+1)`: one feature with an argument, not several features. Content registers under the base name and reads its own X off the holder, so no hook signature grows a parameter that almost nothing uses

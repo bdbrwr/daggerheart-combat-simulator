@@ -20,7 +20,7 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from content import soften_damage
+from content import apply_on_damaged, harden_damage, soften_damage
 from items.registry import find_armor, find_weapon
 
 # How little unmarked HP counts as being on the edge.
@@ -190,7 +190,7 @@ class PlayerCharacter:
         free = self.stress_max - self.stress_marked
         self.stress_marked = min(self.stress_marked + amount, self.stress_max)
         if amount > free:
-            self._mark_hp_with_death_check(1)
+            self.mark_hp_and_check_death(1)
 
     def clear_stress(self, amount: int) -> None:
         self.stress_marked = max(self.stress_marked - amount, 0)
@@ -391,7 +391,7 @@ class PlayerCharacter:
             return 2
         return 1
 
-    def take_damage(self, amount: int, fight=None) -> int:
+    def take_damage(self, amount: int, fight=None, direct: bool = False) -> int:
         """Mark HP per the SRD's Damage Thresholds rule; return the HP marked.
 
         <=0 damage: mark nothing, and no slot is spent on a hit that wasn't
@@ -401,12 +401,22 @@ class PlayerCharacter:
         loadout gets its say. Both floor at zero.
 
         Armor goes first so a card is never asked to spend a resource on a hit
-        the free slot already absorbed.
+        the free slot already absorbed. Content that *worsens* a hit is asked
+        last, through `harden_damage`, so that "when you mark HP" is measured
+        against what the hit finally costs rather than what it started at.
+        Nothing on the PC side registers there yet; the call is here so both
+        sides of the table run the same pipeline.
 
         `fight` is passed straight through to the damage responses, which is the
         only way content whose effect lasts a single fight (Unstoppable) can
         tell whether it's currently running. It's optional: damage resolves the
         same way without one, with such content simply declining.
+
+        `direct` is the SRD's direct damage: **no Armor Slot may be marked
+        against it**, so it costs HP and nothing else. Thresholds still decide how
+        many, and damage responses still get their say - only the free slot is
+        skipped. Against this party that is worth roughly a whole HP on every
+        such hit, since the policy marks a slot against everything otherwise.
 
         Marking the last HP triggers Avoid Death.
         """
@@ -415,17 +425,25 @@ class PlayerCharacter:
 
         hp_to_mark = self.severity_of(amount)
 
-        if self.should_mark_armor_slot():
+        if not direct and self.should_mark_armor_slot():
             self.mark_armor_slot(1)
             hp_to_mark = max(hp_to_mark - 1, 0)
 
         hp_to_mark = soften_damage(self, amount, hp_to_mark, fight)
+        hp_to_mark = harden_damage(self, amount, hp_to_mark, fight)
 
-        self._mark_hp_with_death_check(hp_to_mark)
+        self.mark_hp_and_check_death(hp_to_mark)
+        apply_on_damaged(self, amount, hp_to_mark, fight)
         return hp_to_mark
 
-    def _mark_hp_with_death_check(self, amount: int) -> None:
-        """Mark HP and take the death move if that was the last of it."""
+    def mark_hp_and_check_death(self, amount: int) -> None:
+        """Mark HP and take the death move if that was the last of it.
+
+        Public because HP gets marked by things that aren't damage: Stress that
+        won't fit, and features that say "mark an additional HP" outright, like
+        the Acid Burrower's Spit Acid. All of them have to be able to be the last
+        HP, so none of them may use the raw `mark_hp`.
+        """
         self.mark_hp(amount)
         if self.hp_marked >= self.hp_max and not self.unconscious:
             self.avoid_death()

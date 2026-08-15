@@ -1,11 +1,172 @@
 {
   "publication": "Daggerheart SRD",
-  "notes": "Adversaries as printed in the SRD. Numbers here match the book exactly - per-encounter tuning belongs in encounters/, so these stay checkable against the printed page.",
+  "notes": "Adversaries as printed in the SRD. Numbers here match the book exactly - per-encounter tuning belongs in encounters/, so these stay checkable against the printed page. Entries are in the book's own tier-then-print order, and PORTED.md tracks which of the SRD's 129 are in and which are still out.",
 
   "adversaries": [
     {
+      "name": "Acid Burrower",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 14,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 8,
+      "stress_max": 3,
+      "attack_modifier": 3,
+      "damage_dice": "1d12",
+      "damage_modifier": 2,
+      "features": ["Relentless (3)", "Earth Eruption", "Spit Acid", "Acid Bath"],
+      "notes": "Claws: Very Close, 1d12+2 physical. Experience: Tremor Sense +2."
+    },
+
+    {
+      "name": "Bear",
+      "tier": 1,
+      "type": "Bruiser",
+      "difficulty": 14,
+      "major_threshold": 9,
+      "severe_threshold": 17,
+      "hp_max": 7,
+      "stress_max": 2,
+      "attack_modifier": 1,
+      "damage_dice": "1d8",
+      "damage_modifier": 3,
+      "features": ["Overwhelming Force", "Bite", "Momentum"],
+      "notes": "Claws: Melee, 1d8+3 physical. Experience: Ambusher +3, Keen Senses +2."
+    },
+
+    {
+      "name": "Cave Ogre",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 13,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 8,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "damage_dice": "1d10",
+      "damage_modifier": 2,
+      "features": ["Ramp Up", "Bone Breaker", "Hail of Boulders", "Rampaging Fury"],
+      "notes": "Club: Very Close, 1d10+2 physical. Experience: Throw +2."
+    },
+
+    {
+      "name": "Construct",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 13,
+      "major_threshold": 7,
+      "severe_threshold": 15,
+      "hp_max": 9,
+      "stress_max": 4,
+      "attack_modifier": 4,
+      "damage_dice": "1d20",
+      "damage_modifier": 0,
+      "features": ["Relentless (2)", "Weak Structure", "Trample", "Overload", "Death Quake"],
+      "notes": "Fist Slam: Melee, 1d20 physical - the one tier 1 standard attack with no flat bonus. No Experience printed."
+    },
+
+    {
+      "name": "Deeproot Defender",
+      "tier": 1,
+      "type": "Bruiser",
+      "difficulty": 10,
+      "major_threshold": 8,
+      "severe_threshold": 14,
+      "hp_max": 7,
+      "stress_max": 3,
+      "attack_modifier": 2,
+      "damage_dice": "1d8",
+      "damage_modifier": 3,
+      "features": ["Ground Slam", "Grab and Drag"],
+      "notes": "Vines: Close, 1d8+3 physical. Experience: Huge +3."
+    },
+
+    {
+      "name": "Dire Wolf",
+      "tier": 1,
+      "type": "Skulk",
+      "difficulty": 12,
+      "major_threshold": 5,
+      "severe_threshold": 9,
+      "hp_max": 4,
+      "stress_max": 3,
+      "attack_modifier": 2,
+      "damage_dice": "1d6",
+      "damage_modifier": 2,
+      "features": ["Pack Tactics", "Hobbling Strike"],
+      "notes": "Claws: Melee, 1d6+2 physical. Experience: Keen Senses +3."
+    },
+
+    {
+      "name": "Giant Mosquitoes",
+      "tier": 1,
+      "type": "Horde (5/HP)",
+      "difficulty": 10,
+      "major_threshold": 5,
+      "severe_threshold": 9,
+      "hp_max": 6,
+      "stress_max": 3,
+      "attack_modifier": -2,
+      "damage_dice": "1d8",
+      "damage_modifier": 3,
+      "features": ["Horde (1d4+1)", "Flying", "Bloodsucker"],
+      "notes": "Proboscis: Melee, 1d8+3 physical. Experience: Camouflage +2. The type reads 'Horde (5/HP)' on the page - that is the Battle Points shorthand, not the feature's number, which is the 1d4+1 in the feature name."
+    },
+
+    {
+      "name": "Giant Rat",
+      "tier": 1,
+      "type": "Minion",
+      "difficulty": 10,
+      "major_threshold": null,
+      "severe_threshold": null,
+      "hp_max": 1,
+      "stress_max": 1,
+      "attack_modifier": -4,
+      "damage_dice": "",
+      "damage_modifier": 1,
+      "features": ["Minion (3)", "Group Attack"],
+      "notes": "Claws: Melee, a flat 1 physical - no dice at all, which is why damage_dice is empty and the whole attack sits in damage_modifier. Thresholds print as 'None'; a Minion is defeated by any damage, so there is no second HP for a threshold to matter for. Experience: Keen Senses +3."
+    },
+
+    {
+      "name": "Giant Scorpion",
+      "tier": 1,
+      "type": "Bruiser",
+      "difficulty": 13,
+      "major_threshold": 7,
+      "severe_threshold": 13,
+      "hp_max": 6,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "damage_dice": "1d12",
+      "damage_modifier": 2,
+      "features": ["Double Strike", "Venomous Stinger", "Momentum"],
+      "notes": "Pincers: Melee, 1d12+2 physical. Experience: Camouflage +2. Momentum is the same feature the Bear carries and is already modelled."
+    },
+
+    {
+      "name": "Glass Snake",
+      "tier": 1,
+      "type": "Standard",
+      "difficulty": 14,
+      "major_threshold": 6,
+      "severe_threshold": 10,
+      "hp_max": 5,
+      "stress_max": 3,
+      "attack_modifier": 2,
+      "damage_dice": "1d8",
+      "damage_modifier": 2,
+      "features": ["Armor-Shredding Shards", "Spinning Serpent", "Spitter"],
+      "notes": "Glass Fangs: Very Close, 1d8+2 physical. No Experience printed."
+    },
+
+    {
       "name": "Jagged Knife Bandit",
       "tier": 1,
+      "type": "Standard",
       "difficulty": 12,
       "major_threshold": 8,
       "severe_threshold": 14,
@@ -15,12 +176,13 @@
       "damage_dice": "1d8",
       "damage_modifier": 1,
       "features": ["Climber", "From Above"],
-      "notes": "Tier 1 Standard. Daggers: melee, 1d8+1 physical."
+      "notes": "Daggers: Melee, 1d8+1 physical. Experience: Thief +2."
     },
 
     {
       "name": "Jagged Knife Sniper",
       "tier": 1,
+      "type": "Ranged",
       "difficulty": 13,
       "major_threshold": 4,
       "severe_threshold": 7,
@@ -30,7 +192,7 @@
       "damage_dice": "1d10",
       "damage_modifier": 2,
       "features": ["Unseen Strike"],
-      "notes": "Tier 1 Ranged. Shortbow: far range, 1d10+2 physical."
+      "notes": "Shortbow: Far, 1d10+2 physical."
     }
   ]
 }

@@ -14,22 +14,29 @@ official Battle Points math, because it hides how much of a character the
 simulator is actually running.
 
   * MODELLED          - code runs it. Registered with a hook decorator.
-  * NO_COMBAT_EFFECT  - assessed and dismissed: it *cannot* change a fight.
-                        Declared with `no_combat_effect(name, reason)`.
+  * NO_COMBAT_EFFECT  - assessed and dismissed: its effect has **no
+                        representation in this simulation**. Declared with
+                        `no_combat_effect(name, reason)`.
   * INSIGNIFICANT_COMBAT_EFFECT
-                      - assessed and dismissed: it could change a fight, but by
-                        too little to be worth modelling, and the reason says by
-                        how much. Declared with
-                        `insignificant_combat_effect(name, reason)`.
+                      - assessed and dismissed: its effect *is* represented here,
+                        but is so small it is very unlikely to change an outcome
+                        across a high-N run. The reason says by how much.
+                        Declared with `insignificant_combat_effect(name, reason)`.
   * UNIMPLEMENTED     - not declared at all. Work not done, and it should be
                         visible in output rather than silently absent.
 
-The middle two both run no code; what differs is the judgement recorded. Keeping
-them apart matters because "this cannot matter" and "this matters by about one
-point of damage" are different claims, and a reader deciding whether to trust a
-win rate should be able to tell which was made. Neither is ever the assistant's
-call - dismissing content is a judgement about the game, and it belongs to the
-user.
+The middle two both run no code; what differs is the judgement recorded, and the
+two claims are genuinely different. The first says the simulator has nothing for
+this effect to touch - a knockback moves a combatant, and no position is
+tracked. Note the scope: that is a statement about *this simulation*, not about
+the game, and a knockback really does change a fight at a table. The second says
+the effect lands squarely on something modelled and then measures it - +1
+expected damage, which threshold bands absorb far more often than not.
+
+So "it's small" settles neither. The first needs the effect to fall entirely
+outside what is modelled; the second needs a number. Neither is ever the
+assistant's call - dismissing content is a judgement about the game, and it
+belongs to the user.
 
 A fourth state also means a measured decision never has to be parked in
 UNIMPLEMENTED for want of anywhere better, which would misreport it as work
@@ -61,7 +68,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Iterable, NamedTuple, Protocol
 
-from content.names import canonical
+from content.names import base_name, canonical, parameter
 
 # Packages holding content definitions. Adding a content type is adding a line
 # here plus the package; nothing else in the codebase changes.
@@ -125,6 +132,7 @@ class Holder(Protocol):
     hope_marked: int
     armor_marked: int
     armor_max: int
+    armor_unmarked: int
     traits: dict[str, int]
     spellcast_trait: str
     experiences: list[dict]
@@ -181,6 +189,12 @@ class Fight(Protocol):
     fear: int
 
     def note(self, message: str) -> None: ...
+    def gain_fear(self, amount: int = 1) -> int: ...
+    def grant_activation(self, holder) -> None: ...
+    def apply_condition(self, holder, condition) -> None: ...
+    def has_condition(self, holder, name: str) -> bool: ...
+    def clear_condition(self, holder, name: str) -> None: ...
+    def is_vulnerable(self, combatant) -> bool: ...
     def token_count(self, holder, name: str) -> int: ...
     def add_token(self, holder, name: str, cap: int) -> bool: ...
     def set_token(self, holder, name: str, value: int) -> None: ...
@@ -224,9 +238,15 @@ _damage_bonuses: dict[str, Callable] = {}
 _extra_damage: dict[str, Callable] = {}
 _on_hits: dict[str, Callable] = {}
 _severity_responses: dict[str, Callable] = {}
+_severity_increases: dict[str, Callable] = {}
 _guards: dict[str, Callable] = {}
 _immunities: dict[str, Callable] = {}
 _damage_pools: dict[str, Callable] = {}
+_activation_limits: dict[str, Callable] = {}
+_direct_damage: dict[str, Callable] = {}
+_spotlight_costs: dict[str, Callable] = {}
+_attack_areas: dict[str, Callable] = {}
+_on_damaged: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -249,6 +269,36 @@ def severity_response(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_severity_responses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def severity_increase(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that makes an incoming hit mark *more* HP.
+
+    Signature and arguments are `severity_response`'s exactly - `(holder, amount,
+    hp_to_mark, fight) -> int` - and this is its opposite number: that hook is
+    for content that softens a hit, this one for content that worsens it. The
+    Construct's `Weak Structure` ("when the Construct marks HP from physical
+    damage, they must mark an additional HP") is the first, and the shape recurs
+    often enough across the SRD's adversaries to be worth its own hook rather
+    than a sign flip inside the softening one.
+
+    Two hooks rather than one because the *order* matters and has to be fixed
+    somewhere: softening runs first and hardening second, so a hit that armor and
+    a domain card absorbed entirely has marked no HP, and content triggering "when
+    you mark HP" correctly doesn't fire. Content here is responsible for checking
+    `hp_to_mark` itself before adding to it.
+
+    For symmetry `severity_response` would read better as `severity_decrease`.
+    It isn't renamed only because five content modules register against the
+    current name; that's the state of things rather than a decision anyone made.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_severity_increases, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -387,6 +437,102 @@ def damage_pool(name: str, unmodelled: Iterable[str] = ()):
     return register
 
 
+def activation_limit(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that lets its holder take more than one spotlight a turn.
+
+    Signature: `(holder, fight) -> int | None` - how many times this combatant
+    may be spotlighted in a single GM turn, or None to decline. The SRD's
+    `Relentless (X)` is the reason it exists, and so far the only user.
+
+    This is a *limit*, not a grant: it says how many activations are permitted,
+    and the GM still has to be able to afford each one past the first. Nothing
+    here charges Fear - `combat/fight.py` already does that for every extra
+    activation, and Relentless says to spend Fear as usual.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_activation_limits, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def spotlight_cost(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that makes its holder cost extra Fear to spotlight.
+
+    Signature: `(holder, fight) -> int` - Fear on top of what the GM turn already
+    charges. The Cave Ogre's `Ramp Up` ("you must spend a Fear to spotlight the
+    Ogre") is the reason: it charges even for the turn's first activation, which
+    is otherwise free.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_spotlight_costs, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def attack_area(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that turns its holder's standard attack into an area one.
+
+    Signature: `(holder, fight) -> Range | None` - the band the standard attack
+    now sweeps, or None to decline. Ramp Up's "while spotlighted, they can make
+    their standard attack against all targets within range" is the case, and it's
+    a passive rather than an action: it changes what the ordinary attack *is*, so
+    it can't be one option among several or it would only apply half the time.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_attack_areas, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def on_damaged(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that fires when its holder has just taken damage.
+
+    Signature: `(holder, amount, hp_marked, fight) -> None`. Distinct from
+    `severity_response` and `severity_increase`, which are asked *while* a hit is
+    being worked out and return the HP it should cost. This fires afterwards,
+    when the marking is done, for content that reacts rather than adjusts - the
+    Acid Burrower spraying blood on a Severe hit, the Construct exploding on its
+    last HP.
+
+    Both the raw `amount` and the `hp_marked` it came to are passed, because the
+    SRD triggers on both kinds: "takes Severe damage" is about the number rolled,
+    "marks 2 or more HP" is about what it cost.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_on_damaged, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def direct_damage(name: str, unmodelled: Iterable[str] = ()):
+    """Register content whose holder's attacks can't be softened by an Armor Slot.
+
+    Signature: `(holder, fight) -> bool`. The SRD's direct damage, which the Cave
+    Ogre's `Bone Breaker` grants for every attack it makes. A predicate rather
+    than a flag on the stat block, because content is where the answer belongs
+    and because a feature may well want to say "only on a critical" one day.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_direct_damage, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
 def on_hit(name: str, unmodelled: Iterable[str] = ()):
     """Register content that fires after an attack has landed.
 
@@ -505,7 +651,7 @@ def force_reroll(name: str, unmodelled: Iterable[str] = ()):
 
 
 def no_combat_effect(name: str, reason: str) -> None:
-    """Declare that `name` exists and cannot affect a fight.
+    """Declare that `name` exists and has no effect on the *simulated* fight.
 
     Called at module level in whichever content module the thing belongs to:
 
@@ -516,20 +662,26 @@ def no_combat_effect(name: str, reason: str) -> None:
     has looked at it yet; this means someone did, and here's why it was left
     out. Both end up in the coverage report, labelled differently.
 
-    Use this only when the content genuinely *cannot* reach a fight. If it can
-    but the effect is too small to bother with, that's
+    Use this when the content's effect has **nothing to touch here** - the whole
+    of it lands outside what the simulator represents. A knockback is the
+    standard case: it moves a combatant, no position is tracked, and so it can
+    change nothing. Say both halves in the reason, because such a feature is
+    usually not inert at a table - this is a statement about the simulation.
+
+    If the effect *is* represented and is merely small, that's
     `insignificant_combat_effect` - a different claim, recorded separately.
     """
     _assess(name, Status.NO_COMBAT_EFFECT, _calling_module(), reason=reason)
 
 
 def insignificant_combat_effect(name: str, reason: str) -> None:
-    """Declare that `name` could touch a fight, but by too little to model.
+    """Declare that `name` reaches the simulation, but by too little to matter.
 
     The difference from `no_combat_effect` is the judgement being recorded, not
-    the behaviour - both run no code. `no_combat_effect` says the content
-    *cannot* change a fight. This says it could in principle, somebody worked out
-    by how much, and the answer was small enough to leave out:
+    the behaviour - both run no code. `no_combat_effect` says the effect has no
+    representation here at all. This says it lands on something the simulator
+    models fully, somebody worked out how much it is worth, and the answer was
+    too small to change an outcome across a high-N run:
 
         insignificant_combat_effect(
             "adversary:From Above",
@@ -552,6 +704,47 @@ def _calling_module() -> str:
     frame = inspect.currentframe()
     caller = frame.f_back.f_back if frame and frame.f_back else None
     return caller.f_globals.get("__name__", "") if caller else ""
+
+
+def _registered(table: dict[str, Callable], name: str):
+    """The content registered for `name`, allowing for a parameter in the name.
+
+    A stat block writes the name as the SRD prints it - `Relentless (3)` - while
+    the content registers under its base name, `Relentless`, because the number
+    is an argument rather than part of what the feature is. This is the one place
+    that knows the two can differ, so every hook table gets the behaviour without
+    each dispatch function repeating it.
+
+    An exact match always wins, so content whose real name ends in brackets can
+    still claim it and is never shadowed by a base-name registration.
+    """
+    found = table.get(canonical(name))
+    if found is not None:
+        return found
+    base = base_name(name)
+    return table.get(canonical(base)) if base != name else None
+
+
+def feature_parameter(holder, name: str) -> str | None:
+    """The argument `holder`'s stat block wrote for the feature registered as `name`.
+
+    The other half of parameterised names. Dispatch finds a feature by its base
+    name and calls it with the ordinary signature; the feature then asks this
+    what X was for *this* holder - the Acid Burrower's Relentless is a 3 and the
+    Construct's is a 2, and only the holder can say which.
+
+    Deliberately not threaded through dispatch. Every hook signature would have
+    grown a parameter that almost no content uses, and reading it here keeps a
+    feature's own argument inside the feature, which is where "one card, one
+    place" puts it.
+
+    Returns None when the holder doesn't carry the feature at all, or carries it
+    without a parameter - both of which the caller has to have an answer for.
+    """
+    for written in holder.named_features:
+        if canonical(base_name(written)) == canonical(name):
+            return parameter(written)
+    return None
 
 
 def _claim(table: dict[str, Callable], name: str, function: Callable) -> None:
@@ -653,7 +846,7 @@ def assess(name: str) -> Assessment:
     it*, since that's the string somebody has to go and look for.
     """
     _discover()
-    return _assessments.get(canonical(name)) or Assessment(
+    return _registered(_assessments, name) or Assessment(
         name=name, status=Status.UNIMPLEMENTED
     )
 
@@ -685,13 +878,13 @@ def find_severity_response(name: str) -> Callable | None:
     means a PC who can't attack at all, which is worth failing loudly over.
     """
     _discover()
-    return _severity_responses.get(canonical(name))
+    return _registered(_severity_responses, name)
 
 
 def find_guard(name: str) -> Callable | None:
     """The guard behaviour for `name`, or None if it isn't modelled."""
     _discover()
-    return _guards.get(canonical(name))
+    return _registered(_guards, name)
 
 
 # --- Dispatch ----------------------------------------------------------------
@@ -717,9 +910,9 @@ def action_options(holder: Holder) -> list[Callable]:
     """
     _discover()
     options = [
-        _actions[canonical(name)]
+        found
         for name in holder.named_features
-        if canonical(name) in _actions
+        if (found := _registered(_actions, name)) is not None
     ]
     random.shuffle(options)
     return options
@@ -753,9 +946,9 @@ def use_free_abilities(holder: Holder, fight: Fight, limit: int) -> list[str]:
     # The sheet's own spelling is carried along for the report; only the lookup
     # is canonical.
     candidates = [
-        (name, _free_abilities[canonical(name)])
+        (name, found)
         for name in holder.named_features
-        if canonical(name) in _free_abilities
+        if (found := _registered(_free_abilities, name)) is not None
     ]
     random.shuffle(candidates)
 
@@ -780,9 +973,9 @@ def hope_die_for(holder: Holder, fight: Fight) -> int:
     """
     _discover()
     candidates = [
-        _hope_dice[canonical(name)]
+        found
         for name in holder.named_features
-        if canonical(name) in _hope_dice
+        if (found := _registered(_hope_dice, name)) is not None
     ]
     random.shuffle(candidates)
 
@@ -810,7 +1003,7 @@ def total_roll_bonus(holder: Holder, target, fight: Fight, names=None) -> int:
     _discover()
     total = 0
     for name in holder.named_features if names is None else names:
-        contribute = _roll_bonuses.get(canonical(name))
+        contribute = _registered(_roll_bonuses, name)
         if contribute is not None:
             total += contribute(holder, target, fight)
     return total
@@ -826,7 +1019,7 @@ def adjust_damage_pool(holder: Holder, weapon, pool: DamagePool, fight=None, nam
     """
     _discover()
     for name in holder.named_features if names is None else names:
-        adjust = _damage_pools.get(canonical(name))
+        adjust = _registered(_damage_pools, name)
         if adjust is not None:
             pool = adjust(holder, weapon, pool, fight)
     return pool
@@ -836,7 +1029,7 @@ def apply_on_roll(holder: Holder, roll, fight: Fight) -> None:
     """Let content respond to how an action roll came out."""
     _discover()
     for name in holder.named_features:
-        respond = _on_rolls.get(canonical(name))
+        respond = _registered(_on_rolls, name)
         if respond is not None:
             respond(holder, roll, fight)
 
@@ -860,10 +1053,10 @@ def _party_offers(fight: Fight, table: dict[str, Callable]) -> list[tuple[Holder
         return []
 
     offers: list[tuple[Holder, Callable]] = [
-        (holder, table[canonical(name)])
+        (holder, found)
         for holder in fight.conscious_party
         for name in holder.named_features
-        if canonical(name) in table
+        if (found := _registered(table, name)) is not None
     ]
     if len(offers) > 1:
         random.shuffle(offers)
@@ -926,7 +1119,7 @@ def total_damage_bonus(holder: Holder, target, fight: Fight) -> int:
     _discover()
     total = 0
     for name in holder.named_features:
-        contribute = _damage_bonuses.get(canonical(name))
+        contribute = _registered(_damage_bonuses, name)
         if contribute is not None:
             total += contribute(holder, target, fight)
     return total
@@ -946,17 +1139,41 @@ def total_extra_damage(holder: Holder, target, roll, fight=None) -> list:
     _discover()
     groups: list = []
     for name in holder.named_features:
-        contribute = _extra_damage.get(canonical(name))
+        contribute = _registered(_extra_damage, name)
         if contribute is not None:
             groups.extend(contribute(holder, target, roll, fight))
     return groups
+
+
+# One spotlight per combatant per GM turn, unless content says otherwise.
+DEFAULT_ACTIVATIONS = 1
+
+
+def activations_allowed(holder, fight=None) -> int:
+    """How many times `holder` may be spotlighted in one GM turn.
+
+    One, unless something they carry raises it. Where two pieces of content both
+    answer, the highest wins - a limit is a permission, and the more permissive
+    one is what a GM would be working from.
+
+    Called by the GM turn once per candidate. Nothing here knows about
+    Relentless; the loop only asks how many activations this adversary is good
+    for and then has to afford them.
+    """
+    _discover()
+    allowed = DEFAULT_ACTIVATIONS
+    for name in holder.named_features:
+        limit = _registered(_activation_limits, name)
+        if limit is not None:
+            allowed = max(allowed, limit(holder, fight) or DEFAULT_ACTIVATIONS)
+    return allowed
 
 
 def apply_on_hit(holder: Holder, target, result, fight: Fight) -> None:
     """Let every on-hit ability in the loadout respond to a landed attack."""
     _discover()
     for name in holder.named_features:
-        respond = _on_hits.get(canonical(name))
+        respond = _registered(_on_hits, name)
         if respond is not None:
             respond(holder, target, result, fight)
 
@@ -974,7 +1191,83 @@ def soften_damage(character: Holder, amount: int, hp_to_mark: int, fight=None) -
     """
     _discover()
     for name in character.named_features:
-        respond = _severity_responses.get(canonical(name))
+        respond = _registered(_severity_responses, name)
+        if respond is not None:
+            hp_to_mark = respond(character, amount, hp_to_mark, fight)
+    return hp_to_mark
+
+
+def extra_spotlight_cost(holder, fight=None) -> int:
+    """Fear this combatant costs to spotlight, on top of the turn's own charge."""
+    _discover()
+    total = 0
+    for name in holder.named_features:
+        charge = _registered(_spotlight_costs, name)
+        if charge is not None:
+            total += charge(holder, fight)
+    return total
+
+
+def standard_attack_area(holder, fight=None):
+    """The band this combatant's standard attack sweeps, or None for one target.
+
+    First answer wins; nothing in the SRD gives one adversary two of these, and
+    combining bands would be inventing a rule.
+    """
+    _discover()
+    for name in holder.named_features:
+        area = _registered(_attack_areas, name)
+        if area is not None:
+            band = area(holder, fight)
+            if band is not None:
+                return band
+    return None
+
+
+def apply_on_damaged(holder, amount: int, hp_marked: int, fight=None) -> None:
+    """Let content react to `holder` having just taken a hit.
+
+    Called by both sides' `take_damage` once the marking is settled, so a feature
+    keyed on "marks their last HP" sees the holder already down.
+    """
+    _discover()
+    for name in holder.named_features:
+        respond = _registered(_on_damaged, name)
+        if respond is not None:
+            respond(holder, amount, hp_marked, fight)
+
+
+def deals_direct_damage(holder, fight=None) -> bool:
+    """Whether this combatant's attacks bypass the target's Armor Slot right now.
+
+    False unless something they carry says otherwise. One call site, in the
+    adversary's standard attack; PC weapons don't ask because no PC content deals
+    direct damage yet.
+    """
+    _discover()
+    for name in holder.named_features:
+        grants = _registered(_direct_damage, name)
+        if grants is not None and grants(holder, fight):
+            return True
+    return False
+
+
+def harden_damage(character, amount: int, hp_to_mark: int, fight=None) -> int:
+    """Let everything this combatant carries make an incoming hit cost more.
+
+    The mirror of `soften_damage`, and called immediately after it by whoever is
+    taking the damage - both sides of the table, since an adversary's Weak
+    Structure and a PC's armor are the same shape of thing pointed in opposite
+    directions.
+
+    Running second is what makes "when you mark HP" honest: by the time this is
+    asked, the softening has had its say, so a hit fully absorbed by armor and a
+    domain card is sitting at zero and content that only fires on a real mark can
+    see that.
+    """
+    _discover()
+    for name in character.named_features:
+        respond = _registered(_severity_increases, name)
         if respond is not None:
             hp_to_mark = respond(character, amount, hp_to_mark, fight)
     return hp_to_mark
@@ -988,7 +1281,7 @@ def is_immune_to(holder: Holder, condition: str, fight=None) -> bool:
     """
     _discover()
     for name in holder.named_features:
-        grants = _immunities.get(canonical(name))
+        grants = _registered(_immunities, name)
         if grants is not None and grants(holder, condition, fight):
             return True
     return False
@@ -1009,7 +1302,7 @@ def find_shielder(target: Holder, party: list) -> Interception | None:
         if ally is target:
             continue
         for name in ally.named_features:
-            steps_in = _guards.get(canonical(name))
+            steps_in = _registered(_guards, name)
             if steps_in is not None and steps_in(ally, target):
                 return Interception(shielder=ally, card=name)
     return None

@@ -31,7 +31,15 @@ from typing import Protocol
 
 from combat.results import AttackResult
 from content.names import ADVERSARY, qualified
-from content.registry import force_adversary_reroll
+from content.aoe import targets_hit
+from content.registry import (
+    apply_on_damaged,
+    deals_direct_damage,
+    force_adversary_reroll,
+    harden_damage,
+    soften_damage,
+    total_damage_bonus,
+)
 from dice.common import AdvantageState
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
@@ -47,7 +55,7 @@ class Target(Protocol):
     # ordinary hit is worth paying for.
     is_near_death: bool
 
-    def take_damage(self, amount: int, fight=None) -> int: ...
+    def take_damage(self, amount: int, fight=None, direct: bool = False) -> int: ...
 
 
 @dataclass
@@ -74,6 +82,22 @@ class Adversary:
     # domain cards use, and reported in the coverage block either way - so a
     # feature nobody has written is visible rather than silently absent.
     features: list[str] = field(default_factory=list)
+
+    # The role the SRD prints beside the tier - "Solo", "Bruiser", "Minion".
+    #
+    # Carried as data and **never honoured by the fight loop**, because the SRD
+    # gives a type no rules of its own: "An adversary's type represents the role
+    # they play in a conflict", followed by one descriptive line each ("Bruisers:
+    # tough; deliver powerful attacks"). Everything mechanical that sounds like a
+    # type is printed as a named *feature* instead - Minion (X), Horde (X),
+    # Relentless (X), Slow, Arcane Form, Armored Carapace are all in the SRD's
+    # list of example passives, which is where they reach a fight from.
+    #
+    # It's here because it's on the printed page and a catalogue entry is meant
+    # to be checkable against it, and because it's what a reader filters on -
+    # Social adversaries are deliberately not ported, and without this the reason
+    # would live nowhere.
+    type: str = ""
 
     # Which book this stat block was printed in, or where a homebrew one came
     # from. Never read by the fight loop; it's how a reader tells an as-printed
@@ -120,11 +144,101 @@ class Adversary:
         changes.update(overrides)
         return replace(self, **changes)
 
+    def _damage_for(self, dice, modifier, is_critical, target, fight):
+        """Roll this attack's damage, letting content add to it first.
+
+        `dice`/`modifier` default to the stat block's, so a feature that hits
+        with something other than the printed attack - the Bear's Bite at
+        3d4+10 - passes its own rather than reimplementing the roll.
+
+        `total_damage_bonus` is asked here, which is "before rolling damage" and
+        after the hit is known, exactly where the Construct's Overload wants to
+        be offered its Stress.
+        """
+        bonus = total_damage_bonus(self, target, fight) if fight is not None else 0
+        return roll_damage(
+            dice_groups=self.damage_dice if dice is None else dice,
+            modifier=(self.damage_modifier if modifier is None else modifier) + bonus,
+            is_critical=is_critical,
+        )
+
+    def area_attack(
+        self,
+        targets: list,
+        advantage_state: AdvantageState = AdvantageState.NONE,
+        fight=None,
+        damage_dice=None,
+        damage_modifier=None,
+        direct: bool | None = None,
+    ) -> tuple[AttackResult, list]:
+        """One attack roll measured against every target's Evasion.
+
+        The shape the SRD's area features take: "make an attack against all
+        targets in front of them within Close range. Targets the Ogre succeeds
+        against take 1d10+2." One roll, one damage roll, applied to everyone it
+        beat - the same reading `Hold Them Off` already uses for reusing a roll.
+
+        Returns the result and the targets actually struck, since callers need
+        the count: several features hand the GM a Fear for beating more than one.
+
+        The party is offered a forced reroll here exactly as it is for a
+        single-target attack, and for the same reason - the roll hasn't been read
+        yet, so replacing it is indistinguishable from having rolled that way. The
+        PC handed to the dispatch is whoever in the area is closest to going down,
+        since content deciding whether the roll is worth stopping is asking about
+        the worst it could do.
+        """
+        if not targets:
+            return AttackResult(attack_roll=None, damage_roll=None), []
+
+        def swing():
+            return roll_d20(
+                modifier=self.attack_modifier,
+                # The area rule reads a success as beating *somebody*, so the
+                # roll is checked against the easiest target and each one
+                # re-checked below.
+                evasion=min(target.evasion for target in targets),
+                advantage_state=advantage_state,
+            )
+
+        attack_roll = force_adversary_reroll(
+            self,
+            min(targets, key=lambda target: target.hp_unmarked),
+            swing(),
+            swing,
+            fight,
+        )
+
+        struck = targets_hit(attack_roll, targets)
+        if not struck:
+            return AttackResult(attack_roll=attack_roll, damage_roll=None), []
+
+        damage_roll = self._damage_for(
+            damage_dice, damage_modifier, attack_roll.is_critical, struck[0], fight
+        )
+        # Unstated means "whatever this adversary's features say", so Bone
+        # Breaker reaches a swept attack the same way it reaches a single one.
+        if direct is None:
+            direct = deals_direct_damage(self, fight)
+
+        marked = 0
+        for target in struck:
+            marked += target.take_damage(damage_roll.total, fight, direct=direct)
+
+        return (
+            AttackResult(
+                attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+            ),
+            struck,
+        )
+
     def attack(
         self,
         target: Target,
         advantage_state: AdvantageState = AdvantageState.NONE,
         fight=None,
+        damage_dice=None,
+        damage_modifier=None,
     ) -> AttackResult:
         """Standard attack: d20 + attack_modifier against the target's Evasion.
 
@@ -158,12 +272,15 @@ class Adversary:
         if not attack_roll.is_success:
             return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
-        damage_roll = roll_damage(
-            dice_groups=self.damage_dice,
-            modifier=self.damage_modifier,
-            is_critical=attack_roll.is_critical,
+        damage_roll = self._damage_for(
+            damage_dice, damage_modifier, attack_roll.is_critical, target, fight
         )
-        marked = target.take_damage(damage_roll.total, fight)
+        # Whether this attack is direct - no Armor Slot may be marked against it -
+        # is a question for the attacker's features, asked generically. Nothing
+        # here knows that the Cave Ogre's Bone Breaker is what answers it.
+        marked = target.take_damage(
+            damage_roll.total, fight, direct=deals_direct_damage(self, fight)
+        )
         return AttackResult(
             attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
         )
@@ -180,7 +297,40 @@ class Adversary:
     def clear_stress(self, amount: int) -> None:
         self.stress_marked = max(self.stress_marked - amount, 0)
 
-    def take_damage(self, amount: int, fight=None) -> int:
+    def can_spend_stress(self, amount: int = 1) -> bool:
+        """Whether this adversary can pay a feature's Stress cost.
+
+        The SRD is explicit about where it comes from: "If a feature requires the
+        GM to spend Stress to activate it, the Stress must come from the adversary
+        whose feature is being activated." So this is per-adversary, not a pool.
+
+        Same shape as a PC's voluntary Stress cost, and the same rule - a feature
+        whose Stress can't be paid simply isn't available. Unlike a PC there is no
+        fallback to marking HP, because that rule is about being *forced* to mark
+        Stress, which nothing does to an adversary here.
+        """
+        return self.stress_marked + amount <= self.stress_max
+
+    def spend_stress(self, amount: int = 1) -> bool:
+        """Pay a feature's Stress cost; return whether it went through."""
+        if not self.can_spend_stress(amount):
+            return False
+        self.stress_marked += amount
+        return True
+
+    @property
+    def is_vulnerable(self) -> bool:
+        """Adversaries are never Vulnerable of their own accord.
+
+        A PC becomes Vulnerable by marking their last Stress; nothing in the SRD
+        does that to an adversary, so the only route here is content applying the
+        condition, which `FightState.is_vulnerable` asks about separately. This
+        exists so both sides answer the same question rather than the caller
+        having to know which kind of combatant it is holding.
+        """
+        return False
+
+    def take_damage(self, amount: int, fight=None, direct: bool = False) -> int:
         """Mark HP per the SRD's Damage Thresholds rule; return the HP marked.
 
         Same rule, and same threshold-to-HP-marked math, as
@@ -189,9 +339,18 @@ class Adversary:
         here rather than factored into a shared base class for now; revisit
         if a third caller needs the same logic.
 
-        `fight` is accepted and ignored, so that both sides satisfy the same
-        Target protocol. Adversaries carry no content, so nothing on this side
-        has a damage response to consult.
+        The two damage-response hooks are consulted in the same order the PC
+        side uses them: softening first, then hardening, so content that fires
+        "when this adversary marks HP" is measured against what the hit finally
+        cost. Adversaries mark no Armor Slots - they have none - so there is no
+        equivalent of the PC's free slot before either.
+
+        `fight` is passed through to both, the way a PC's is, for content whose
+        effect only exists for the length of a fight.
+
+        `direct` is accepted and ignored: direct damage means no Armor Slot may
+        be marked against it, and adversaries have no Armor Slots to begin with.
+        It's in the signature so both sides satisfy one Target protocol.
         """
         if amount <= 0:
             hp_to_mark = 0
@@ -201,5 +360,14 @@ class Adversary:
             hp_to_mark = 2
         else:
             hp_to_mark = 1
+
+        hp_to_mark = soften_damage(self, amount, hp_to_mark, fight)
+        hp_to_mark = harden_damage(self, amount, hp_to_mark, fight)
+
         self.mark_hp(hp_to_mark)
+
+        # Fired last, with the marking settled, so content keyed on "marks their
+        # last HP" sees an adversary that is already down - which is what the
+        # Construct's Death Quake needs to be true.
+        apply_on_damaged(self, amount, hp_to_mark, fight)
         return hp_to_mark

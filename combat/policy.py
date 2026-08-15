@@ -46,10 +46,12 @@ from content import (
     find_shielder,
     hope_die_for,
     is_immune_to,
+    standard_attack_area,
     total_damage_bonus,
     total_roll_bonus,
     use_free_abilities,
 )
+from content.aoe import targets_in_area
 from content.conditions import VULNERABLE
 from content.names import canonical
 from content.rolls import clear_experience_utilised, note_experience_utilised
@@ -325,11 +327,55 @@ def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult
 
     target = _shield(target, state)
 
-    vulnerable = target.is_vulnerable and not is_immune_to(target, VULNERABLE, state)
-    advantage = AdvantageState.ADVANTAGE if vulnerable else AdvantageState.NONE
-    result = adversary.attack(target, advantage, state)
+    def standard_attack(attacker, at, fight):
+        """The stat block's printed attack - what an adversary does by default.
 
-    if result.damage_roll is None:
+        Two sources of Vulnerable - a full Stress track, and content that applied
+        the condition - which the fight state answers for as one question.
+
+        Never declines, exactly like the PC's weapon swing, so a spotlight always
+        resolves into something.
+        """
+        vulnerable = fight.is_vulnerable(at) and not is_immune_to(at, VULNERABLE, fight)
+        advantage = AdvantageState.ADVANTAGE if vulnerable else AdvantageState.NONE
+
+        # A passive can turn the printed attack into an area one - the Cave
+        # Ogre's Ramp Up. Asked here rather than being an action option, because
+        # it changes what the standard attack *is* rather than replacing it.
+        band = standard_attack_area(attacker, fight)
+        if band is not None:
+            caught = targets_in_area(band, fight.conscious_party)
+            result, struck = attacker.area_attack(caught, advantage, fight)
+            for hit in struck:
+                fight.note(f"{attacker.name} catches {hit.name} in its swing")
+            return result
+
+        return attacker.attack(at, advantage, fight)
+
+    # An SRD "Action" feature is what the adversary does *instead of* its
+    # standard attack, so the two are offered together and exactly one resolves -
+    # the same shape as a PC choosing between a domain card and their weapon, and
+    # shuffled for the same reason: the order a stat block lists its features in
+    # carries no meaning and must not decide which one gets used.
+    options = action_options(adversary) + [standard_attack]
+    random.shuffle(options)
+
+    result = None
+    for option in options:
+        result = option(adversary, target, state)
+        if result is not None:
+            break
+
+    # The GM side gets its on-hit riders the same way the party does, through the
+    # one dispatch call - the Bear's Momentum hands the GM a Fear off a landed
+    # attack. Nothing here knows which feature that is, and an adversary carrying
+    # none is unaffected.
+    if result.damage_roll is not None:
+        apply_on_hit(adversary, target, result, state)
+
+    if not result.made_an_attack:
+        pass  # the feature narrated itself; there is no roll to report
+    elif result.damage_roll is None:
         state.note(f"{adversary.name} misses {target.name} ({result.attack_roll})")
     else:
         state.note(

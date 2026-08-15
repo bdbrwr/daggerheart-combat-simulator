@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from adversaries.adversary import Adversary
+from characters.player_character import NEAR_DEATH_HP_UNMARKED
 from dice.common import AdvantageState
 from dice.d20 import D20RollResult
 from dice.damage import DamageRollResult, DiceGroup
@@ -26,14 +27,28 @@ def _make_adversary(**overrides) -> Adversary:
 class FakeTarget:
     """A minimal stand-in for the adversaries.adversary.Target protocol."""
 
-    def __init__(self, evasion: int = 10):
+    def __init__(self, evasion: int = 10, hp_unmarked: int = 6):
         self.evasion = evasion
+        self.hp_unmarked = hp_unmarked
         self.damage_taken: list[int] = []
+        self.direct_damage_taken: list[int] = []
 
-    def take_damage(self, amount: int, fight=None) -> int:
+    @property
+    def is_near_death(self) -> bool:
+        """Part of the protocol so the party's forced-reroll content can ask."""
+        return self.hp_unmarked <= NEAR_DEATH_HP_UNMARKED
+
+    def take_damage(self, amount: int, fight=None, direct: bool = False) -> int:
         """`fight` is part of the protocol so a PC's damage responses can reach
-        per-fight state; a fake has none, and records only the damage."""
+        per-fight state; a fake has none, and records only the damage.
+
+        `direct` says no Armor Slot may be marked against the hit. A fake has no
+        armor either, so it changes nothing here - it's recorded separately so a
+        test can still assert that an attack came through as direct.
+        """
         self.damage_taken.append(amount)
+        if direct:
+            self.direct_damage_taken.append(amount)
         return amount
 
 
@@ -44,6 +59,47 @@ def _d20_result(*, die: int, modifier: int, evasion: int) -> D20RollResult:
         advantage_state=AdvantageState.NONE,
         evasion=evasion,
     )
+
+
+def test_a_feature_can_make_the_standard_attack_direct():
+    """Bone Breaker reaches the attack without `attack` knowing its name.
+
+    Also the reason FakeTarget records direct hits separately: without this,
+    `direct` would be accepted and dropped, and a broken dispatch would look
+    exactly like a working one.
+    """
+    ogre = _make_adversary(features=["Bone Breaker"])
+    target = FakeTarget(evasion=10)
+    damage_roll = DamageRollResult(
+        dice_groups=[DiceGroup(count=1, sides=8)], die_results=[[5]], modifier=1
+    )
+
+    with (
+        patch("adversaries.adversary.roll_d20",
+              return_value=_d20_result(die=15, modifier=1, evasion=10)),
+        patch("adversaries.adversary.roll_damage", return_value=damage_roll),
+    ):
+        ogre.attack(target)
+
+    assert target.direct_damage_taken == [6]
+
+
+def test_an_ordinary_attack_is_not_direct():
+    adversary = _make_adversary()
+    target = FakeTarget(evasion=10)
+    damage_roll = DamageRollResult(
+        dice_groups=[DiceGroup(count=1, sides=8)], die_results=[[5]], modifier=1
+    )
+
+    with (
+        patch("adversaries.adversary.roll_d20",
+              return_value=_d20_result(die=15, modifier=1, evasion=10)),
+        patch("adversaries.adversary.roll_damage", return_value=damage_roll),
+    ):
+        adversary.attack(target)
+
+    assert target.damage_taken == [6]
+    assert target.direct_damage_taken == []
 
 
 def test_mark_hp_clamps_to_max():

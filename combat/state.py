@@ -13,6 +13,7 @@ from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.common import Side
 from combat.rest import Rest
+from content.conditions import VULNERABLE, Condition
 
 # Per the SRD the GM can hold up to 12 Fear at once. Fear generated past the
 # cap is simply lost, which matters for balance: a party that rolls badly for
@@ -58,6 +59,16 @@ class FightState:
     # keyed by (id(holder), name) like the per-rest uses above.
     tokens: dict[tuple[int, str], int] = field(default_factory=dict)
 
+    # Temporary conditions on either side, keyed the same way. Separate from
+    # tokens because a condition is a record rather than a count - it carries the
+    # predicate that says when it's over.
+    conditions: dict[tuple[int, str], Condition] = field(default_factory=dict)
+
+    # Extra spotlights content handed out during the current GM turn, by id().
+    # Cleared at the start of each one - "take the spotlight again" means this
+    # turn, not a credit carried forward.
+    granted: dict[int, int] = field(default_factory=dict)
+
     logging: bool = False
     log: list[str] = field(default_factory=list)
 
@@ -80,7 +91,10 @@ class FightState:
 
     @property
     def max_activations_per_gm_turn(self) -> int:
-        """How many adversaries the GM may spotlight in one turn.
+        """How many activations the GM gets in one turn.
+
+        Activations, not distinct adversaries: `Relentless (X)` lets one
+        adversary take several, and they all count against this.
 
         Party size + 1. The SRD lets the GM spend Fear to spotlight as many
         adversaries as they can afford; that's fine at a table where a GM is
@@ -127,6 +141,71 @@ class FightState:
             return False
         self.spent_per_rest.add((id(holder), ability))
         return True
+
+    def grant_activation(self, holder) -> None:
+        """Let `holder` be spotlighted once more this GM turn.
+
+        The Construct's Overload ("the Construct can then take the spotlight
+        again") grants one mid-turn, which a feature registered on
+        `activation_limit` can't express - that answers before the turn starts.
+
+        Still bounded by the turn's own cap and still charged the usual Fear, on
+        the same reasoning as Relentless: the cap is what holds a simulated fight
+        to something a GM would run, so nothing reaches around it.
+        """
+        self.granted[id(holder)] = self.granted.get(id(holder), 0) + 1
+
+    def granted_activations(self, holder) -> int:
+        return self.granted.get(id(holder), 0)
+
+    # --- Conditions ----------------------------------------------------------
+
+    def apply_condition(self, holder, condition: Condition) -> None:
+        """Put `condition` on `holder`, replacing any of the same name.
+
+        Replacing rather than stacking: nothing in the SRD makes being Vulnerable
+        twice worse than once, and a re-application refreshes how long it lasts,
+        which is what the later of two overlapping effects should do.
+        """
+        self.conditions[(id(holder), condition.name)] = condition
+
+    def has_condition(self, holder, name: str) -> bool:
+        return (id(holder), name) in self.conditions
+
+    def clear_condition(self, holder, name: str) -> None:
+        self.conditions.pop((id(holder), name), None)
+
+    def expire_conditions(self, holder, moment: str) -> list[str]:
+        """Offer every condition on `holder` the chance to end; return those that did.
+
+        The loop announces a moment - a combatant acting, a GM turn coming round -
+        and each condition decides for itself whether that is its cue. Nothing
+        here knows what any condition is or how long it should last.
+
+        A condition with no `end` never ends, which is how "until the scene ends"
+        is expressed.
+        """
+        ended = []
+        for (holder_id, name), condition in list(self.conditions.items()):
+            if holder_id != id(holder) or condition.end is None:
+                continue
+            if condition.end(holder, self, moment):
+                self.clear_condition(holder, name)
+                ended.append(name)
+        return ended
+
+    def is_vulnerable(self, combatant) -> bool:
+        """Whether rolls against `combatant` have Advantage right now.
+
+        Two sources, and the caller shouldn't have to know there are two: a PC
+        with every Stress marked is Vulnerable by the rules, and anybody can be
+        made Vulnerable by content. Asking here keeps `PlayerCharacter` from
+        needing to see the fight it's in.
+
+        Immunity is *not* checked here - that's a separate question with its own
+        dispatch, and the one caller that cares asks both.
+        """
+        return combatant.is_vulnerable or self.has_condition(combatant, VULNERABLE)
 
     def token_count(self, holder, name: str) -> int:
         """How many `name` tokens `holder` is currently holding."""

@@ -25,7 +25,8 @@ from combat.common import FightOutcome, Side
 from combat.policy import take_adversary_turn, take_pc_turn
 from combat.report import FightResult
 from combat.state import FightState
-from content import apply_on_roll
+from content import activations_allowed, apply_on_roll, extra_spotlight_cost
+from content.conditions import ON_A_GM_TURN, WHEN_THEY_ACT
 from dice.duality import DualityOutcome
 
 # Safety net for a matchup that can't resolve - PCs who can't beat a
@@ -124,6 +125,13 @@ def _take_pc_spotlight(state: FightState) -> None:
 
     state.acted_this_pass.add(id(pc))
     result = take_pc_turn(pc, state)
+
+    # "Until they next act" ends *after* the acting, so a PC knocked over is
+    # still Vulnerable for the action that gets them back up - which is the whole
+    # point of having been knocked over.
+    for ended in state.expire_conditions(pc, WHEN_THEY_ACT):
+        state.note(f"{pc.name} is no longer {ended}")
+
     if result is None:  # nothing left to attack; the loop will call it
         return
 
@@ -186,26 +194,43 @@ def _apply_duality_outcome(pc, roll, state: FightState) -> None:
 def _take_gm_turn(state: FightState) -> None:
     """The GM spotlights adversaries, then hands the spotlight back.
 
-    One activation is free; each one after costs a Fear. An adversary acts at
-    most once per GM turn, and the turn stops at party size + 1 activations
-    even if there's Fear to burn.
+    One activation is free; each one after costs a Fear. The turn stops at party
+    size + 1 activations even if there's Fear to burn.
+
+    An adversary acts once per GM turn unless something they carry says
+    otherwise - the SRD's `Relentless (X)` allows X. That's asked generically
+    through `activations_allowed`; nothing here knows the feature exists, and
+    Relentless says to "spend Fear as usual", which the loop already does for
+    every activation past the first.
 
     Fear left over is not spent on anything else yet - adversary Fear features
     aren't implemented, and that's where the rest of the pool would go.
     """
     state.gm_turns += 1
-    activated: set[int] = set()
+    state.granted.clear()
 
-    while len(activated) < state.max_activations_per_gm_turn:
-        available = [a for a in state.living_adversaries if id(a) not in activated]
-        if not available:
+    # A condition the party put on an adversary gets its chance to end here,
+    # which for most of them means the GM paying a Fear to shake it off. Done
+    # before anything is spotlighted, so an adversary freed this turn can act.
+    for adversary in state.living_adversaries:
+        for ended in state.expire_conditions(adversary, ON_A_GM_TURN):
+            state.note(f"{adversary.name} is no longer {ended}")
+
+    taken: dict[int, int] = {}
+
+    while sum(taken.values()) < state.max_activations_per_gm_turn:
+        adversary = _next_adversary(state, taken)
+        if adversary is None:
             break
 
-        if activated and not state.spend_fear(1):
-            break  # out of Fear, so out of extra activations
+        # One activation a turn is free; every one after costs a Fear. Some
+        # adversaries cost extra on top, even for the free one - the Cave Ogre's
+        # Ramp Up. Asked generically; nothing here knows the feature.
+        owed = (0 if not taken else 1) + extra_spotlight_cost(adversary, state)
+        if owed and not state.spend_fear(owed):
+            break  # can't afford this one, so not the next one either
 
-        adversary = available[0]
-        activated.add(id(adversary))
+        taken[id(adversary)] = taken.get(id(adversary), 0) + 1
         state.adversary_activations += 1
         take_adversary_turn(adversary, state)
 
@@ -213,3 +238,31 @@ def _take_gm_turn(state: FightState) -> None:
             break
 
     state.spotlight = Side.PCS
+
+
+def _next_adversary(state: FightState, taken: dict[int, int]):
+    """Which adversary the GM spotlights next, or None if nobody is left.
+
+    Everyone who can still act goes before anyone goes again, so a Relentless
+    adversary takes its extra spotlights after the rest of the field rather than
+    swallowing the whole turn up front. That matches how the extra activation
+    reads at a table: it's the dangerous thing coming back round, not the only
+    thing that ever moves.
+
+    Ties are broken at random rather than by list position. The order an
+    encounter happens to spawn its adversaries in carries no meaning and must
+    never decide an outcome - the same rule `_next_pc` follows.
+    """
+    available = [
+        adversary
+        for adversary in state.living_adversaries
+        if taken.get(id(adversary), 0)
+        < activations_allowed(adversary, state) + state.granted_activations(adversary)
+    ]
+    if not available:
+        return None
+
+    fewest = min(taken.get(id(adversary), 0) for adversary in available)
+    return random.choice(
+        [a for a in available if taken.get(id(a), 0) == fewest]
+    )

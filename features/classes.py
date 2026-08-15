@@ -353,6 +353,9 @@ WIZARD_GAPS = [
     "Not This Time: forcing a reroll of a *damage* roll. Only attack rolls can "
     "be re-made, and a damage roll that has already been applied to a PC can't "
     "be taken back without unwinding the hit",
+    "Not This Time: on an adversary's *area* attack the near-death check is "
+    "asked of whoever in the area is closest to going down, since one roll "
+    "covers several PCs and the card has to be offered a single target",
     "Prestidigitation, ruled as having no combat effect and declared as such "
     "under its own name",
     "Strange Patterns: changing the number on a long rest. It's drawn fresh for "

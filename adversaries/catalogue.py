@@ -70,6 +70,42 @@ _FILE_KEYS = frozenset({"publication", "notes", "adversaries"})
 # `damage_modifier`, so that an encounter can tune the two independently.
 _DIE = re.compile(r"^(\d*)d(\d+)$", re.IGNORECASE)
 
+# What the book's `Thresholds: None` becomes.
+#
+# Some stat blocks print no thresholds at all - Minions, and small things like
+# the Tiny Green Ooze on 2 HP. Every case found so far is an adversary with less
+# HP than the threshold would ever become relevant for: a Minion is defeated by
+# any damage, so there is no second or third HP for a Major hit to mark.
+#
+# A threshold set out of reach expresses that exactly, and every hit lands in the
+# lowest band, which is the right answer. Zero would be catastrophically wrong -
+# it would put every hit at or above Severe and mark 3 HP off a 1 HP track.
+NO_THRESHOLD = 9999
+
+_UNPRINTED_THRESHOLD = frozenset({"none", ""})
+_THRESHOLDS = ("major_threshold", "severe_threshold")
+
+
+def parse_threshold(value, source: str, entry: str) -> int:
+    """One damage threshold, reading the book's `None` as out of reach.
+
+    JSON `null` and the string `"None"` are both accepted, since the reference
+    data spells it one way and a hand-typed entry may well spell it the other.
+    """
+    if value is None or (
+        isinstance(value, str) and value.strip().casefold() in _UNPRINTED_THRESHOLD
+    ):
+        return NO_THRESHOLD
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{source}: {entry!r} has a threshold of {value!r}, which is neither a "
+            "number nor 'None'. The book prints 'None' for adversaries with too "
+            "few HP for the threshold to matter; anything else has to be a number."
+        ) from None
+
 
 def parse_dice(spec, source: str, entry: str) -> list[DiceGroup]:
     """Damage dice from `"1d8"`, or `["2d6", "1d4"]`, or nothing at all.
@@ -136,6 +172,8 @@ def adversary_from_data(data: dict, publication: str, source: str) -> Adversary:
         )
 
     stats = {key: data[key] for key in _STATS if key in data}
+    for threshold in _THRESHOLDS:
+        stats[threshold] = parse_threshold(data[threshold], source, entry)
     stats["damage_dice"] = parse_dice(data.get("damage_dice"), source, entry)
     stats["features"] = list(features)
     # The file says which book it is once, rather than every entry repeating it.

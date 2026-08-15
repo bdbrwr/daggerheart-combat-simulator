@@ -55,7 +55,7 @@ def area_difficulty(targets: list) -> int:
 
 
 def targets_beaten(roll, targets: list) -> list:
-    """The targets in an area that the roll actually beat.
+    """The adversaries in an area that a PC's roll actually beat.
 
     Each is checked against its own Difficulty, which is what "targets you
     succeeded against" means when one roll faces several. A critical beats all
@@ -65,6 +65,20 @@ def targets_beaten(roll, targets: list) -> list:
         target
         for target in targets
         if roll.is_critical or roll.total >= target.difficulty
+    ]
+
+
+def targets_hit(roll, targets: list) -> list:
+    """The PCs in an area that an adversary's roll actually hit.
+
+    The mirror of `targets_beaten`, and separate from it for the reason
+    `dice/d20.py` gives for naming its field `evasion` rather than `difficulty`:
+    a roll against a PC is measured against Evasion, and the two are different
+    numbers on different sheets. One function taking whichever attribute happened
+    to exist would be the kind of cleverness that hides a mismatch.
+    """
+    return [
+        target for target in targets if roll.is_critical or roll.total >= target.evasion
     ]
 
 
