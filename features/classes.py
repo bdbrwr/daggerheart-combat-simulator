@@ -393,7 +393,7 @@ def strange_patterns(wizard: Holder, roll, fight: Fight) -> None:
 
 
 @force_reroll("Wizard")
-def not_this_time(wizard: Holder, adversary, roll, remake, fight: Fight):
+def not_this_time(wizard: Holder, adversary, target, roll, remake, fight: Fight):
     """The Wizard's Hope feature. Spend 3 Hope to make an adversary reroll.
 
     SRD: spend 3 Hope to force an adversary within Far range to reroll an attack
@@ -402,31 +402,46 @@ def not_this_time(wizard: Holder, adversary, roll, remake, fight: Fight):
     Range costs nothing here: Far is the widest band, and the area rule already
     treats Far as reaching the whole field, so an adversary is always within it.
 
-    SIMULATION RULE - policy. Saved for **criticals**. The card can be spent on
-    any attack roll, and a player at the table watching a d20 come up 20 is
-    exactly who reaches for it - a natural 20 hits regardless of Evasion, and the
-    critical doubles what the damage roll is worth, so it is both the most
+    SIMULATION RULE - policy. Spent on a hit that is either a **critical** or
+    aimed at a PC who is **near death**, and on nothing else. Those are the two
+    rolls a player at the table reaches for it on. A natural 20 hits regardless
+    of Evasion and doubles what the damage roll is worth, so it is the most
     damaging roll the GM makes and the only one a reroll is guaranteed to
-    improve. Spending 3 Hope on an ordinary hit would be paying the same price
-    for a much smaller swing.
+    improve. A hit on a PC one solid blow from the floor is the other: the
+    damage there is measured against a PC dropping out of the fight rather than
+    against a number, which is worth far more than three Hope. On any other
+    ordinary hit the same price buys much less, so it is held.
 
-    That makes the trigger visible to a player, which is why this is modelled
-    where the Faerie's Wings is not: a critical is announced at the table, where
-    the number an attack needed to beat never is.
+    Near death is `NEAR_DEATH_HP_UNMARKED` unmarked HP or fewer, asked of the
+    target rather than worked out here - the same question and the same number
+    the near-death rate in the report is built on.
+
+    A **miss is never rerolled**, near-death target or not. The reroll can only
+    make an attack that already failed land, and no player spends 3 Hope to give
+    the GM a second try. Criticals are unaffected by the check, since a natural
+    20 always succeeds.
+
+    Both triggers stay visible to a player, which is why this is modelled where
+    the Faerie's Wings is not: a critical is announced at the table and a PC's
+    own marked HP is in front of them, where the number an attack needed to beat
+    never is.
 
     The Hope is claimed only once the reroll is definitely happening, per the
     reroll contract - though for this feature there is nothing left to decline
     after the Hope check.
     """
-    if not roll.is_critical:
+    if not roll.is_success:
+        return None
+    if not (roll.is_critical or target.is_near_death):
         return None
     if not wizard.can_spend_hope(HOPE_FEATURE_COST):
         return None
 
     wizard.spend_hope(HOPE_FEATURE_COST)
     replacement = remake()
+    stopped = "critical" if roll.is_critical else f"hit on {target.name}"
     fight.note(
-        f"{wizard.name} refuses it (Not This Time: {adversary.name}'s critical "
+        f"{wizard.name} refuses it (Not This Time: {adversary.name}'s {stopped} "
         f"is rerolled to {replacement.total})"
     )
     return replacement

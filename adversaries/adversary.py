@@ -42,6 +42,11 @@ class Target(Protocol):
 
     evasion: int
 
+    # Read by nothing here, but handed to the party's forced-reroll content: how
+    # close the target is to going down is what decides whether stopping an
+    # ordinary hit is worth paying for.
+    is_near_death: bool
+
     def take_damage(self, amount: int, fight=None) -> int: ...
 
 
@@ -148,7 +153,7 @@ class Adversary:
 
         # Asked before anything reads the roll, so a forced reroll is
         # indistinguishable from the adversary having rolled that way first.
-        attack_roll = force_adversary_reroll(self, swing(), swing, fight)
+        attack_roll = force_adversary_reroll(self, target, swing(), swing, fight)
 
         if not attack_roll.is_success:
             return AttackResult(attack_roll=attack_roll, damage_roll=None)

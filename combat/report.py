@@ -58,6 +58,16 @@ class CombatantState:
     scars: int
     death_moves: int
 
+    # Where this PC's Hope went, rather than only what was left of it. Hope is
+    # the one track that both fills and empties during a fight, so the end state
+    # on its own says nothing: two Hope left over is a PC who never spent any
+    # and a PC who earned eight and burned them both. Defaulted so a record
+    # built by hand in a test can still state an end state without accounting
+    # for the whole fight.
+    hope_at_start: int = 0
+    hope_gained: int = 0
+    hope_spent: int = 0
+
     @classmethod
     def of(cls, pc) -> "CombatantState":
         """A snapshot of `pc` exactly as they are now."""
@@ -73,6 +83,9 @@ class CombatantState:
             hope_marked=pc.hope_marked,
             scars=pc.scars,
             death_moves=pc.death_moves,
+            hope_at_start=pc.hope_at_start,
+            hope_gained=pc.hope_gained,
+            hope_spent=pc.hope_spent,
         )
 
 

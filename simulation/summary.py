@@ -14,12 +14,17 @@ like?") stays answerable from a summary that's already in hand.
 from dataclasses import dataclass
 from statistics import fmean
 
+from characters.player_character import NEAR_DEATH_HP_UNMARKED
 from combat.common import FightOutcome
 from combat.report import CombatantState, FightResult
 
 # A PC this close to going down counts the fight as a near thing, however it
-# ended. Two HP is roughly one solid hit from unconsciousness for a tier 1 PC.
-NEAR_DEATH_HP_UNMARKED = 2
+# ended. The number is defined on PlayerCharacter and re-exported here, where
+# this module and simulation/report.py have always read it: content in features/
+# keys on the same threshold (the Wizard's Not This Time), and a report that
+# called a fight a near thing on a different number from the one the party plays
+# to would be quietly describing two different edges.
+__all__ = ["NEAR_DEATH_HP_UNMARKED", "Distribution", "FightRecord", "SimulationSummary"]
 
 
 @dataclass(frozen=True)

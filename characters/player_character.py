@@ -23,6 +23,17 @@ from pathlib import Path
 from content import soften_damage
 from items.registry import find_armor, find_weapon
 
+# How little unmarked HP counts as being on the edge.
+#
+# It started as a reporting threshold - `simulation/summary.py` reads it for the
+# near-death rate - and it is now also a trigger content keys on, since the
+# Wizard's Not This Time steps in for a PC who is one hit from the floor. Both
+# are asking the same question, so both read the same number rather than each
+# picking one: two HP is roughly one solid hit from unconsciousness for a tier 1
+# PC. It lives here because it is a fact about a PC's HP, and because content in
+# features/ can reach a character but not the simulation layer.
+NEAR_DEATH_HP_UNMARKED = 2
+
 
 @dataclass
 class PlayerCharacter:
@@ -85,6 +96,13 @@ class PlayerCharacter:
     hope_marked: int = 0
     armor_marked: int = 0
 
+    # What this PC's Hope did over a fight, rather than only what was left of it
+    # at the end. Counted as it actually lands, the way the Fear pool counts
+    # itself: Hope offered past the cap never arrives and is not counted gained,
+    # and a cost bigger than the bank spends only what was there.
+    hope_gained: int = 0
+    hope_spent: int = 0
+
     # Set by a death move rather than loaded from JSON: a character sheet
     # describes a PC walking into a fight, not one already down in it.
     unconscious: bool = False
@@ -95,6 +113,16 @@ class PlayerCharacter:
     # outcome of it - a PC can go down without scarring, and reporting only
     # scars would undercount how often the fight went badly wrong.
     death_moves: int = 0
+
+    # The Hope banked when this PC walked into the fight. Never passed in - it's
+    # read off `hope_marked` at construction, which is exactly what a sheet's
+    # starting state is - but recorded rather than derived from the counters
+    # above, because a scar crosses out a filled Hope slot and that loss is
+    # neither a gain nor a spend.
+    hope_at_start: int = field(init=False, default=0)
+
+    def __post_init__(self) -> None:
+        self.hope_at_start = self.hope_marked
 
     @classmethod
     def from_json(cls, path: str | Path) -> "PlayerCharacter":
@@ -190,7 +218,17 @@ class PlayerCharacter:
         self.armor_marked = max(self.armor_marked - amount, 0)
 
     def gain_hope(self, amount: int) -> None:
-        self.hope_marked = min(self.hope_marked + amount, self.hope_max)
+        """Bank Hope up to the cap; Hope offered past it is simply lost.
+
+        Only what actually lands is counted as gained, which is how the Fear
+        pool counts itself too - so the four figures a report shows (start,
+        gained, spent, what's left) reconcile.
+        """
+        gained = min(amount, self.hope_max - self.hope_marked)
+        if gained <= 0:
+            return
+        self.hope_marked += gained
+        self.hope_gained += gained
 
     def can_spend_hope(self, amount: int = 1) -> bool:
         """Whether there's enough Hope banked to pay `amount`.
@@ -202,7 +240,10 @@ class PlayerCharacter:
         return self.hope_marked >= amount
 
     def spend_hope(self, amount: int) -> None:
-        self.hope_marked = max(self.hope_marked - amount, 0)
+        """Pay a Hope cost, clamped at nothing; only what was there is spent."""
+        spent = min(amount, self.hope_marked)
+        self.hope_marked -= spent
+        self.hope_spent += spent
 
     @property
     def armor_features(self) -> list[str]:
@@ -296,6 +337,17 @@ class PlayerCharacter:
         `hp_marked`, "would this drop me?" off this one.
         """
         return self.hp_max - self.hp_marked
+
+    @property
+    def is_near_death(self) -> bool:
+        """One solid hit from the floor - `NEAR_DEATH_HP_UNMARKED` unmarked or less.
+
+        Content asks this to decide whether a PC is worth spending something
+        expensive on. It is true of an unconscious PC too, who has every HP
+        marked, but nothing consults it about one: an unconscious PC can't be
+        targeted, so no attack is ever aimed at them to answer for.
+        """
+        return self.hp_unmarked <= NEAR_DEATH_HP_UNMARKED
 
     @property
     def stress_unmarked(self) -> int:
@@ -393,5 +445,9 @@ class PlayerCharacter:
             return False
         self.scars += 1
         self.hope_max = max(self.hope_max - 1, 0)
+        # A scar crosses out a Hope slot, and a banked Hope sitting in it goes
+        # with it. That is neither gained nor spent, so it isn't counted as
+        # either - which is the one case where a Hope report's four figures
+        # don't add up, and the report says so.
         self.hope_marked = min(self.hope_marked, self.hope_max)
         return True

@@ -42,6 +42,8 @@ def format_report(summary: SimulationSummary) -> str:
             "",
             *_per_member(summary),
             "",
+            *_hope(summary),
+            "",
             *_fear(summary),
             *_warnings(summary),
         ]
@@ -273,6 +275,60 @@ def _member_row(name: str, *figures: str) -> str:
     )
     cells = "".join(f"{figure:>{MEMBER_FIGURE_WIDTH}}" for figure in figures)
     return f"  {shortened:<{MEMBER_NAME_WIDTH}}{cells}".rstrip()
+
+
+# The HOPE block, in the order a Hope track fills and empties. Each is one
+# attribute off `CombatantState`; "left over" is the end state the snapshot
+# already carried, the other three are what got it there.
+HOPE_ROWS = (
+    ("Start", "hope_at_start"),
+    ("Generated", "hope_gained"),
+    ("Spent", "hope_spent"),
+    ("Left over", "hope_marked"),
+)
+
+# Same indent as the FEAR block's labels, so the two economies line up down the
+# page - four spaces of nesting under a name, against two and a wider label.
+HOPE_LABEL_WIDTH = 13
+
+
+def _hope(summary: SimulationSummary) -> list[str]:
+    """Where each PC's Hope came from and went - the party's half of the economy.
+
+    FEAR below asks the same of the GM, and the two are halves of one system:
+    every duality roll hands something to one side or the other. Hope is broken
+    out per party member where Fear isn't, because Fear is a single pool and Hope
+    is one bank per PC - a party total would average a Wizard who never quite
+    reaches a 3-Hope feature against a Ranger sitting on a full track, which is
+    exactly the difference worth seeing.
+
+    Four figures rather than the end state alone, because the end state on its
+    own can't be read: two Hope left over describes both a PC who spent nothing
+    all fight and a PC who earned eight and burned them. Start plus generated
+    minus spent is what's left, with one exception the footnote names.
+
+    Not repeated in the comparison table. That table is the headline numbers
+    across variations, and sixteen rows of resource accounting per variation
+    would bury them.
+    """
+    names = summary.member_names
+    if not names:
+        return ["HOPE", "  (no per-member state was recorded)"]
+
+    lines = ["HOPE  (per party member, resolved fights)"]
+    for position, name in enumerate(names):
+        lines.append(f"  {name}")
+        lines += [
+            f"    {label:<{HOPE_LABEL_WIDTH}}"
+            f"{summary.member_distribution(position, attribute).summarize()}"
+            for label, attribute in HOPE_ROWS
+        ]
+
+    lines += [
+        "  (start + generated - spent is what's left over, except where a scar",
+        "   crossed out a Hope slot with a Hope still banked in it)",
+    ]
+    return lines
 
 
 def _fear(summary: SimulationSummary) -> list[str]:

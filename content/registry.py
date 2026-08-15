@@ -119,6 +119,7 @@ class Holder(Protocol):
     severe_threshold: int
     hp_marked: int
     hp_unmarked: int
+    is_near_death: bool
     stress_marked: int
     stress_max: int
     hope_marked: int
@@ -483,14 +484,16 @@ def reroll(name: str, unmodelled: Iterable[str] = ()):
 def force_reroll(name: str, unmodelled: Iterable[str] = ()):
     """Register content that forces an *adversary* to re-make a roll.
 
-    Signature: `(holder, attacker, roll, remake, fight) -> D20RollResult | None`,
+    Signature:
+    `(holder, attacker, target, roll, remake, fight) -> D20RollResult | None`,
     with the same `remake()` contract as `reroll`. The mirror image of that hook:
     there the party is re-rolling its own dice, here it is reaching across the
     table. The Wizard's Not This Time is the reason it exists.
 
     Scanned across the whole conscious party, since the PC who owns the content
     is not the one being attacked - the Wizard spends the Hope whoever the
-    adversary swung at.
+    adversary swung at. `target` is that PC, and is in the signature because how
+    badly hurt they are is exactly what makes an ordinary hit worth stopping.
     """
 
     def register(function: Callable) -> Callable:
@@ -894,19 +897,25 @@ def remake_action_roll(roller: Holder, roll, remake: Callable, fight: Fight = No
     return roll
 
 
-def force_adversary_reroll(attacker, roll, remake: Callable, fight: Fight = None):
+def force_adversary_reroll(
+    attacker, target, roll, remake: Callable, fight: Fight = None
+):
     """Give the party a chance to make an adversary re-make the roll it just made.
 
     The mirror of `remake_action_roll`, and the same contract: the roll to carry
     on with is returned either way, and the first PC willing to pay for it is the
     only one asked.
 
+    `target` is the PC being swung at, who is generally not the PC being asked -
+    content here reaches across the table on somebody else's behalf, so it needs
+    to see whose behalf that is.
+
     `fight` may be None - an adversary's attack can be resolved outside a fight,
     in a test - in which case there is no party to ask and the roll stands.
     """
     _discover()
     for holder, offer in _party_offers(fight, _force_rerolls):
-        replacement = offer(holder, attacker, roll, remake, fight)
+        replacement = offer(holder, attacker, target, roll, remake, fight)
         if replacement is not None:
             return replacement
     return roll

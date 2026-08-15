@@ -120,6 +120,19 @@ def _remake_d20():
 
 
 # --- Not This Time -----------------------------------------------------------
+#
+# Two triggers, so every test here has to say which PC is being swung at as well
+# as what the d20 did. `_unhurt` isolates the critical, `_bleeding` the other.
+
+
+def _unhurt(name: str = "Artorias") -> PlayerCharacter:
+    """A target with every HP unmarked - nowhere near death."""
+    return _make_pc(name)
+
+
+def _bleeding(name: str = "Artorias") -> PlayerCharacter:
+    """A target on 2 unmarked HP of 6, which is `NEAR_DEATH_HP_UNMARKED`."""
+    return _make_pc(name, hp_marked=4)
 
 
 def test_a_critical_is_rerolled_for_three_hope():
@@ -127,19 +140,54 @@ def test_a_critical_is_rerolled_for_three_hope():
     adversary = _make_adversary()
     fight = _fight([wizard], [adversary])
 
-    replacement = not_this_time(wizard, adversary, _d20(20), _remake_d20, fight)
+    replacement = not_this_time(
+        wizard, adversary, _unhurt(), _d20(20), _remake_d20, fight
+    )
 
     assert replacement is not None
     assert replacement.die_result == 2
     assert wizard.hope_marked == 0
 
 
-def test_an_ordinary_hit_is_left_alone():
-    """The card allows it; the policy saves the Hope for a critical."""
+def test_an_ordinary_hit_on_an_unhurt_pc_is_left_alone():
+    """The card allows it; the policy holds the Hope for the two rolls worth it."""
     wizard = _make_pc("Wizard", hope_marked=6)
     fight = _fight([wizard])
 
-    assert not_this_time(wizard, _make_adversary(), _d20(18), _remake_d20, fight) is None
+    assert (
+        not_this_time(
+            wizard, _make_adversary(), _unhurt(), _d20(18), _remake_d20, fight
+        )
+        is None
+    )
+    assert wizard.hope_marked == 6
+
+
+def test_an_ordinary_hit_on_a_near_death_pc_is_rerolled():
+    """Not a critical, but the damage is measured against a PC leaving the fight."""
+    wizard = _make_pc("Wizard", hope_marked=3)
+    fight = _fight([wizard])
+
+    replacement = not_this_time(
+        wizard, _make_adversary(), _bleeding(), _d20(18), _remake_d20, fight
+    )
+
+    assert replacement is not None
+    assert replacement.die_result == 2
+    assert wizard.hope_marked == 0
+
+
+def test_a_miss_is_never_rerolled():
+    """Even on a near-death PC: a reroll can only give the GM a second try."""
+    wizard = _make_pc("Wizard", hope_marked=6)
+    fight = _fight([wizard])
+
+    assert (
+        not_this_time(
+            wizard, _make_adversary(), _bleeding(), _d20(1), _remake_d20, fight
+        )
+        is None
+    )
     assert wizard.hope_marked == 6
 
 
@@ -147,7 +195,12 @@ def test_a_critical_costs_nothing_without_the_full_three_hope():
     wizard = _make_pc("Wizard", hope_marked=2)
     fight = _fight([wizard])
 
-    assert not_this_time(wizard, _make_adversary(), _d20(20), _remake_d20, fight) is None
+    assert (
+        not_this_time(
+            wizard, _make_adversary(), _unhurt(), _d20(20), _remake_d20, fight
+        )
+        is None
+    )
     assert wizard.hope_marked == 2
 
 
@@ -158,7 +211,7 @@ def test_an_adversarys_critical_reaches_the_wizard_through_dispatch():
     fight = _fight([fighter, wizard])
 
     replacement = force_adversary_reroll(
-        _make_adversary(), _d20(20), _remake_d20, fight
+        _make_adversary(), fighter, _d20(20), _remake_d20, fight
     )
 
     assert replacement.die_result == 2
@@ -169,7 +222,10 @@ def test_an_adversary_roll_stands_when_there_is_no_fight_to_ask():
     """Damage can be resolved outside a fight, and then there's no party."""
     original = _d20(20)
 
-    assert force_adversary_reroll(_make_adversary(), original, _remake_d20) is original
+    assert (
+        force_adversary_reroll(_make_adversary(), _unhurt(), original, _remake_d20)
+        is original
+    )
 
 
 # --- Luckbender --------------------------------------------------------------
