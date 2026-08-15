@@ -40,6 +40,8 @@ def format_report(summary: SimulationSummary) -> str:
             "",
             *_cost(summary),
             "",
+            *_per_member(summary),
+            "",
             *_fear(summary),
             *_warnings(summary),
         ]
@@ -147,8 +149,15 @@ def _cost(summary: SimulationSummary) -> list[str]:
             "none, by definition" if victories else "-",
             _spread(summary.distribution("surviving_adversaries", defeats)),
         ),
-        _row("Scars", _total_scars(victories), _total_scars(defeats)),
+        _row(
+            "Death moves",
+            _total(victories, "death_moves"),
+            _total(defeats, "death_moves"),
+        ),
+        _row("Scars", _total(victories, "scars_gained"), _total(defeats, "scars_gained")),
         f"  (near death = a PC finished on {NEAR_DEATH_HP_UNMARKED} unmarked HP or less)",
+        "  (a death move is a PC dropping; a scar is the roll after it going badly,",
+        "   so scars are always the smaller number)",
     ]
 
 
@@ -169,10 +178,101 @@ def _spread(distribution) -> str:
     return f"mean {distribution.mean:>4.1f}  median {distribution.median:>4.1f}"
 
 
-def _total_scars(records) -> str:
+def _total(records, attribute: str) -> str:
     if not records:
         return "-"
-    return f"{sum(record.scars_gained for record in records):,}"
+    return f"{sum(getattr(record, attribute) for record in records):,}"
+
+
+# The per-member table: one row per PC, one column per figure. Narrow columns
+# because there are eight of them and the name still has to fit.
+MEMBER_NAME_WIDTH = 15
+MEMBER_FIGURE_WIDTH = 7
+
+# Going down is reported as a rate *and* a count. At 10,000 runs a rate rounds
+# to 0.0% while the absolute number is still several fights in which somebody hit
+# the floor, and "it never happens" and "it happens eight times in ten thousand"
+# are different answers - the second is a rare disaster, which is exactly the
+# thing a tuning pass wants to see rather than round away.
+MEMBER_HEADINGS = (
+    "down%",
+    "downs",
+    "HP min",
+    "HP avg",
+    "Str min",
+    "Str avg",
+    "Arm min",
+    "Arm avg",
+)
+
+
+def _per_member(summary: SimulationSummary) -> list[str]:
+    """What the fight cost each character, rather than the party as a whole.
+
+    A party total hides the thing worth knowing. Three PCs averaging four
+    unmarked HP is a comfortable encounter if they all sit at four, and a badly
+    aimed one if two are untouched and the third is on nothing every time - and
+    it is the second case that sends a player home unhappy. This is the table
+    that tells them apart.
+
+    Two different scopes, which the footnote spells out. Going down is counted
+    over every resolved fight, because a PC dropping in a fight the party still
+    wins is precisely the event worth surfacing. What was left unmarked is
+    measured over victories only, for the reason the near-death row gives: a
+    defeat means everybody is down with every HP marked, so including defeats
+    would drag every one of these toward zero and say nothing.
+    """
+    names = summary.member_names
+    if not names:
+        return ["PER PARTY MEMBER", "  (no per-member state was recorded)"]
+
+    lines = ["PER PARTY MEMBER  (end state)", _member_row("", *MEMBER_HEADINGS)]
+    for position, name in enumerate(names):
+        lines.append(_member_row(name, *_member_figures(summary, position)))
+
+    lines += [
+        "  (down% and downs are the share and the count of resolved fights that PC",
+        "   ended unconscious - the count because a rate rounds a rare disaster to",
+        "   zero. The rest are what they had left unmarked, in victories only: a",
+        "   defeat leaves every PC on zero HP by definition.)",
+    ]
+    return lines
+
+
+def _member_figures(summary: SimulationSummary, position: int) -> list[str]:
+    """One member's cells, in `MEMBER_HEADINGS` order.
+
+    Shared by the per-run table and the comparison so the two can't drift into
+    showing different figures under the same headings.
+    """
+    victories = summary.victories
+    left = ["-"] * 6
+    if victories:
+        left = [
+            figure
+            for attribute in ("hp_unmarked", "stress_unmarked", "armor_unmarked")
+            for figure in _minimum_and_mean(
+                summary.member_distribution(position, attribute, victories)
+            )
+        ]
+    return [
+        f"{summary.unconscious_rate(position):.1%}",
+        f"{summary.times_unconscious(position):,}",
+        *left,
+    ]
+
+
+def _minimum_and_mean(distribution) -> tuple[str, str]:
+    """A track's worst case and its typical one - the pair every track reports."""
+    return f"{distribution.minimum:.0f}", f"{distribution.mean:.1f}"
+
+
+def _member_row(name: str, *figures: str) -> str:
+    shortened = (
+        name if len(name) < MEMBER_NAME_WIDTH else name[: MEMBER_NAME_WIDTH - 2] + "…"
+    )
+    cells = "".join(f"{figure:>{MEMBER_FIGURE_WIDTH}}" for figure in figures)
+    return f"  {shortened:<{MEMBER_NAME_WIDTH}}{cells}".rstrip()
 
 
 def _fear(summary: SimulationSummary) -> list[str]:
@@ -242,12 +342,48 @@ def format_comparison(summaries: list[SimulationSummary], title: str = "") -> st
         "  victories only - a defeat leaves every PC on zero by definition.",
     ]
 
+    lines += _member_comparison(summaries)
+
     stalled = [summary for summary in summaries if summary.unresolved]
     if stalled:
         names = ", ".join(summary.encounter_name for summary in stalled)
         lines += ["", f"  ! Fights hit the action cap in: {names}. See the reports above."]
 
     return "\n".join(lines)
+
+
+def _member_comparison(summaries: list[SimulationSummary]) -> list[str]:
+    """The per-member table again, but across variations.
+
+    Grouped by variation rather than by character, because the question being
+    asked is "what did moving this knob do?" and the answer is read down one
+    variation's block. A column per character instead would fit more on screen
+    and answer the other question - which is what the per-variation reports
+    above are already for.
+
+    Skipped entirely when no variation recorded per-member state, rather than
+    printing a table of dashes.
+    """
+    if not any(summary.member_names for summary in summaries):
+        return []
+
+    lines = [
+        "",
+        "PER PARTY MEMBER  (end state, by variation)",
+        _member_row("", *MEMBER_HEADINGS),
+    ]
+
+    for summary in summaries:
+        lines.append(f"  {summary.variation or summary.encounter_name}")
+        for position, name in enumerate(summary.member_names):
+            lines.append(_member_row(f"  {name}", *_member_figures(summary, position)))
+
+    lines += [
+        "",
+        "  down% and downs are of resolved fights; the rest are what was left",
+        "  unmarked in victories only.",
+    ]
+    return lines
 
 
 def _comparison_row(name: str, *figures: str) -> str:

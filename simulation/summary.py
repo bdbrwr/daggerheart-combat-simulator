@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from statistics import fmean
 
 from combat.common import FightOutcome
-from combat.report import FightResult
+from combat.report import CombatantState, FightResult
 
 # A PC this close to going down counts the fight as a near thing, however it
 # ended. Two HP is roughly one solid hit from unconsciousness for a tier 1 PC.
@@ -40,6 +40,14 @@ class FightRecord:
     fear_remaining: int
     scars_gained: int
 
+    # Every PC's end state, in the order the party was fielded. The party-wide
+    # figures above could be recomputed from this, and `of()` derives both from
+    # one party so they cannot disagree; they stay as fields because a record
+    # built by hand in a test wants to state a total without inventing a party.
+    party_state: tuple[CombatantState, ...] = ()
+
+    death_moves: int = 0
+
     @classmethod
     def of(cls, result: FightResult) -> "FightRecord":
         return cls(
@@ -56,6 +64,8 @@ class FightRecord:
             fear_spent=result.fear_spent,
             fear_remaining=result.fear_remaining,
             scars_gained=result.scars_gained,
+            party_state=result.party_state,
+            death_moves=result.death_moves,
         )
 
     @property
@@ -231,3 +241,65 @@ class SimulationSummary:
         """The distribution of one record attribute, over resolved fights by default."""
         source = self.resolved if records is None else records
         return Distribution.of(getattr(record, attribute) for record in source)
+
+    # --- Per party member ----------------------------------------------------
+    #
+    # The same questions as above, asked of one character rather than the party.
+    # An encounter that averages out fine can still be the one that reliably puts
+    # the same PC on the floor, and a party total hides that completely.
+    #
+    # Members are addressed by **position**, not by name. The party is fixed for
+    # the length of a run, so position is exact and free; a name would have to
+    # cope with two PCs sharing one, which is a problem this doesn't need to
+    # have.
+
+    @property
+    def member_names(self) -> list[str]:
+        """The party, in the order it was fielded, or empty if nothing recorded it.
+
+        Read off the first record that has any per-member state rather than off
+        `party`, so the names always match the states the statistics below are
+        computed from.
+        """
+        for record in self.records:
+            if record.party_state:
+                return [member.name for member in record.party_state]
+        return []
+
+    def member_distribution(self, position: int, attribute: str, records=None) -> Distribution:
+        """One member's `attribute` across the run - `hp_unmarked`, say.
+
+        Records that carry no per-member state are skipped rather than counted as
+        zero: a hand-built record with no party isn't a member on nothing left,
+        it's a fight nobody wrote the member down for.
+        """
+        source = self.resolved if records is None else records
+        return Distribution.of(
+            getattr(record.party_state[position], attribute)
+            for record in source
+            if len(record.party_state) > position
+        )
+
+    def times_unconscious(self, position: int, records=None) -> int:
+        """How many of these fights this member ended unconscious."""
+        source = self.resolved if records is None else records
+        return sum(
+            1
+            for record in source
+            if len(record.party_state) > position
+            and not record.party_state[position].conscious
+        )
+
+    def unconscious_rate(self, position: int, records=None) -> float:
+        """How often this member ended a fight down, as a share of those counted.
+
+        Measured over every resolved fight rather than over victories: going down
+        in a fight the party still wins is exactly the event this is here to
+        surface, and scoping it to wins would hide the defeats where they went
+        down first.
+        """
+        source = self.resolved if records is None else records
+        counted = [record for record in source if len(record.party_state) > position]
+        if not counted:
+            return 0.0
+        return self.times_unconscious(position, counted) / len(counted)

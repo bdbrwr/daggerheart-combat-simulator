@@ -209,10 +209,15 @@ _assessments: dict[str, Assessment] = {}
 #   _on_hits           fire after an attack has landed
 #   _severity_responses / _guards
 #                      fire when damage arrives, not when the holder acts
+#   _rerolls / _force_rerolls
+#                      fire on a roll that has already resolved, and may replace
+#                      it. Both are scanned party-wide, not holder-wide
 _actions: dict[str, Callable] = {}
 _hope_dice: dict[str, Callable] = {}
 _roll_bonuses: dict[str, Callable] = {}
 _on_rolls: dict[str, Callable] = {}
+_rerolls: dict[str, Callable] = {}
+_force_rerolls: dict[str, Callable] = {}
 _free_abilities: dict[str, Callable] = {}
 _damage_bonuses: dict[str, Callable] = {}
 _extra_damage: dict[str, Callable] = {}
@@ -441,6 +446,55 @@ def on_roll(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_on_rolls, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def reroll(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that can re-make a PC's action roll after it resolves.
+
+    Signature: `(holder, roller, roll, remake, fight) -> DualityRollResult | None`
+    - the replacement roll, or None to decline. `remake()` produces a fresh roll
+    on the same terms as the original; content calls it rather than building one,
+    so nothing here has to know the modifier, difficulty or Hope Die that went
+    into the roll it is replacing.
+
+    `holder` owns the content and `roller` made the roll, and they are not always
+    the same PC: the Faerie's Luckbender can rescue an ally's roll, while the
+    Human's Adaptability is strictly about your own. Content that only ever
+    applies to itself checks `holder is roller`.
+
+    Like `hope_die` and `roll_bonus`, being asked is close to the commitment -
+    the replacement is taken as soon as it's offered - so content that spends
+    Hope, Stress or a per-rest use here has genuinely spent it. Decline first,
+    pay second.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_rerolls, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def force_reroll(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that forces an *adversary* to re-make a roll.
+
+    Signature: `(holder, attacker, roll, remake, fight) -> D20RollResult | None`,
+    with the same `remake()` contract as `reroll`. The mirror image of that hook:
+    there the party is re-rolling its own dice, here it is reaching across the
+    table. The Wizard's Not This Time is the reason it exists.
+
+    Scanned across the whole conscious party, since the PC who owns the content
+    is not the one being attacked - the Wizard spends the Hope whoever the
+    adversary swung at.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_force_rerolls, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -782,6 +836,80 @@ def apply_on_roll(holder: Holder, roll, fight: Fight) -> None:
         respond = _on_rolls.get(canonical(name))
         if respond is not None:
             respond(holder, roll, fight)
+
+
+def _party_offers(fight: Fight, table: dict[str, Callable]) -> list[tuple[Holder, Callable]]:
+    """Every (PC, content) pair in `table` the standing party can offer, shuffled.
+
+    Both reroll hooks are party-wide rather than holder-wide, so neither the
+    order an encounter listed the party in nor the order a sheet was typed in may
+    decide who answers. Flattening both and shuffling once is a uniform choice
+    across every offer on the table.
+
+    **The shuffle only happens when there is a choice to make.** With no offers
+    or exactly one, the order can't matter, and drawing from the global RNG
+    anyway would shift the dice for every roll in every fight - including fights
+    where nothing in the party can reroll anything. Two seeded runs that differ
+    only in a loadout would then diverge for no reason connected to the loadout,
+    which is exactly what a fixed seed exists to rule out.
+    """
+    if fight is None:
+        return []
+
+    offers: list[tuple[Holder, Callable]] = [
+        (holder, table[canonical(name)])
+        for holder in fight.conscious_party
+        for name in holder.named_features
+        if canonical(name) in table
+    ]
+    if len(offers) > 1:
+        random.shuffle(offers)
+    return offers
+
+
+def remake_action_roll(roller: Holder, roll, remake: Callable, fight: Fight = None):
+    """Give the party a chance to replace an action roll that has just resolved.
+
+    Returns the roll to carry on with - the replacement if anything offered one,
+    otherwise the roll it was given, so a caller can always use the result
+    unconditionally.
+
+    **At most one reroll applies.** The first offer wins and the rest are never
+    asked, which stops a party stacking Luckbender on top of Adaptability to buy
+    three attempts at one roll. Nothing in the SRD forbids that outright, but a
+    chain of rerolls off a single trigger is not what any of these features
+    describes, and letting it happen would quietly make a failed roll cheap.
+
+    Called immediately after the roll is made and before anything reads it, so a
+    replacement is indistinguishable from having rolled that way first. Content
+    that rolls its own attack should reach this through
+    `content/rolls.py`'s `make_action_roll` rather than calling `roll_duality`
+    directly - the same contract that already applies to `total_roll_bonus`.
+    """
+    _discover()
+    for holder, offer in _party_offers(fight, _rerolls):
+        replacement = offer(holder, roller, roll, remake, fight)
+        if replacement is not None:
+            return replacement
+    return roll
+
+
+def force_adversary_reroll(attacker, roll, remake: Callable, fight: Fight = None):
+    """Give the party a chance to make an adversary re-make the roll it just made.
+
+    The mirror of `remake_action_roll`, and the same contract: the roll to carry
+    on with is returned either way, and the first PC willing to pay for it is the
+    only one asked.
+
+    `fight` may be None - an adversary's attack can be resolved outside a fight,
+    in a test - in which case there is no party to ask and the roll stands.
+    """
+    _discover()
+    for holder, offer in _party_offers(fight, _force_rerolls):
+        replacement = offer(holder, attacker, roll, remake, fight)
+        if replacement is not None:
+            return replacement
+    return roll
 
 
 def total_damage_bonus(holder: Holder, target, fight: Fight) -> int:

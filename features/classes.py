@@ -21,6 +21,7 @@ from content.registry import (
     Fight,
     Holder,
     damage_bonus,
+    force_reroll,
     immunity,
     no_combat_effect,
     on_hit,
@@ -349,9 +350,9 @@ STRANGE_PATTERNS = "Strange Patterns"
 DUALITY_DIE_FACES = 12
 
 WIZARD_GAPS = [
-    "Not This Time (the Wizard's Hope feature): spend 3 Hope to force an "
-    "adversary within Far range to reroll an attack or damage roll - nothing "
-    "can force a reroll yet",
+    "Not This Time: forcing a reroll of a *damage* roll. Only attack rolls can "
+    "be re-made, and a damage roll that has already been applied to a PC can't "
+    "be taken back without unwinding the hit",
     "Prestidigitation, ruled as having no combat effect and declared as such "
     "under its own name",
     "Strange Patterns: changing the number on a long rest. It's drawn fresh for "
@@ -389,6 +390,46 @@ def strange_patterns(wizard: Holder, roll, fight: Fight) -> None:
     else:
         wizard.gain_hope(1)
         fight.note(f"{wizard.name} sees the pattern in a {watched}, and gains a Hope")
+
+
+@force_reroll("Wizard")
+def not_this_time(wizard: Holder, adversary, roll, remake, fight: Fight):
+    """The Wizard's Hope feature. Spend 3 Hope to make an adversary reroll.
+
+    SRD: spend 3 Hope to force an adversary within Far range to reroll an attack
+    or damage roll.
+
+    Range costs nothing here: Far is the widest band, and the area rule already
+    treats Far as reaching the whole field, so an adversary is always within it.
+
+    SIMULATION RULE - policy. Saved for **criticals**. The card can be spent on
+    any attack roll, and a player at the table watching a d20 come up 20 is
+    exactly who reaches for it - a natural 20 hits regardless of Evasion, and the
+    critical doubles what the damage roll is worth, so it is both the most
+    damaging roll the GM makes and the only one a reroll is guaranteed to
+    improve. Spending 3 Hope on an ordinary hit would be paying the same price
+    for a much smaller swing.
+
+    That makes the trigger visible to a player, which is why this is modelled
+    where the Faerie's Wings is not: a critical is announced at the table, where
+    the number an attack needed to beat never is.
+
+    The Hope is claimed only once the reroll is definitely happening, per the
+    reroll contract - though for this feature there is nothing left to decline
+    after the Hope check.
+    """
+    if not roll.is_critical:
+        return None
+    if not wizard.can_spend_hope(HOPE_FEATURE_COST):
+        return None
+
+    wizard.spend_hope(HOPE_FEATURE_COST)
+    replacement = remake()
+    fight.note(
+        f"{wizard.name} refuses it (Not This Time: {adversary.name}'s critical "
+        f"is rerolled to {replacement.total})"
+    )
+    return replacement
 
 
 def _watched_number(wizard: Holder, fight: Fight) -> int:

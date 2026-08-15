@@ -74,6 +74,8 @@ def test_the_defaults_are_a_full_unseeded_statistical_run():
     assert arguments.all is False
     assert arguments.save is False
     assert arguments.save_dir is None
+    assert arguments.no_coverage is False
+    assert arguments.full_coverage is False
 
 
 def test_the_short_flags_mean_what_the_long_ones_mean():
@@ -134,8 +136,8 @@ def test_a_run_compares_the_variations_in_the_file(capsys):
     assert ENCOUNTER in printed
 
 
-def test_a_run_reports_how_much_of_the_party_is_modelled(capsys):
-    """Coverage isn't behind a flag - it's context the win rate needs."""
+def test_a_run_reports_what_is_missing_from_the_party(capsys):
+    """Coverage is on by default - it's context the win rate needs."""
     main([ENCOUNTER, "--runs", "3", "--seed", "1"])
 
     printed = capsys.readouterr().out
@@ -148,6 +150,34 @@ def test_coverage_is_not_repeated_for_every_variation_sharing_a_party(capsys):
     main([ENCOUNTER, "--runs", "3", "--seed", "1"])
 
     assert capsys.readouterr().out.count("COVERAGE") == 1
+
+
+def test_no_coverage_drops_the_block_but_keeps_the_report(capsys):
+    main([ENCOUNTER, "--runs", "3", "--seed", "1", "--no-coverage"])
+
+    printed = capsys.readouterr().out
+    assert "COVERAGE" not in printed
+    assert "OUTCOMES" in printed
+
+
+def test_full_coverage_adds_the_modelled_half_back(capsys):
+    main([ENCOUNTER, "--runs", "3", "--seed", "1", "--full-coverage"])
+    full = capsys.readouterr().out
+
+    main([ENCOUNTER, "--runs", "3", "--seed", "1"])
+    default = capsys.readouterr().out
+
+    assert "modelled" in full
+    assert "modelled" not in default
+    assert len(full) > len(default)
+
+
+def test_asking_for_no_coverage_and_all_of_it_is_refused():
+    """Three points on one dial; two at once has no sensible answer."""
+    with pytest.raises(SystemExit) as raised:
+        main([ENCOUNTER, "--no-coverage", "--full-coverage"])
+
+    assert raised.value.code == 2
 
 
 def test_a_single_variation_gets_no_comparison_table(capsys, experiments):

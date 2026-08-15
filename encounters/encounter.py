@@ -70,6 +70,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from adversaries.adversary import Adversary
+from adversaries.catalogue import parse_dice
 from adversaries.registry import find_adversary
 from characters.player_character import PlayerCharacter
 from combat.common import Side
@@ -147,18 +148,30 @@ class Group:
         Overrides are checked against the stats an Adversary actually has, so a
         misspelled knob fails while the file is being read rather than at spawn
         time - by which point a run is already under way.
+
+        `damage_dice` is the one override that isn't a bare number, so it goes
+        through the catalogue's own `parse_dice`: an encounter writes `"2d6"` or
+        `"2d6+1d4"` exactly the way a stat block does. Parsing here rather than
+        in `__init__` keeps the JSON path and the Python one honest - a Group
+        built in code passes `DiceGroup`s directly, the same way it passes an
+        Adversary object instead of a name.
         """
         _reject_unknown_keys(data, _GROUP_KEYS, "a group", source)
         if "adversary" not in data:
             raise ValueError(f"{source}: a group is missing 'adversary'.")
 
-        overrides = data.get("overrides", {})
+        overrides = dict(data.get("overrides", {}))
         unknown = sorted(set(overrides) - _ADVERSARY_STATS)
         if unknown:
             raise ValueError(
                 f"{source}: {data['adversary']!r} is overridden on "
                 f"{', '.join(repr(stat) for stat in unknown)}, which an adversary "
                 "doesn't have."
+            )
+
+        if "damage_dice" in overrides:
+            overrides["damage_dice"] = parse_dice(
+                overrides["damage_dice"], source, data["adversary"]
             )
 
         try:

@@ -19,7 +19,7 @@ from characters.player_character import PlayerCharacter
 from combat.policy import FREE_BUDGET_ALONE, FREE_BUDGET_BEFORE_A_ROLL, take_pc_turn
 from combat.state import FightState
 from content import action, free, take_action, use_free_abilities
-from content.aoe import MANY_ADVERSARIES, Range, targets_reached
+from content.aoe import MANY_ADVERSARIES, Range, chance_within, targets_reached
 from dice.damage import DiceGroup
 
 FIRED: list[str] = []
@@ -314,6 +314,59 @@ def test_very_close_is_a_third():
 def test_melee_reaches_two_until_the_fight_is_crowded():
     assert targets_reached(Range.MELEE, 4) == 2
     assert targets_reached(Range.MELEE, MANY_ADVERSARIES) == 3
+
+
+# --- The same bands as odds --------------------------------------------------
+#
+# `chance_within` answers a different question from `targets_reached`: not "how
+# many does this band sweep?" but "is this one named person inside it?". Content
+# whose condition is a specific ally being in range needs the second, and with no
+# positions tracked the band's share of the field stands in for it.
+
+
+def test_far_always_reaches_a_named_combatant():
+    assert chance_within(Range.FAR, 4) == 1.0
+
+
+def test_close_is_three_quarters_as_odds_too():
+    assert chance_within(Range.CLOSE, 4) == 0.75
+
+
+def test_very_close_is_a_third_as_odds_too():
+    assert chance_within(Range.VERY_CLOSE, 9) == pytest.approx(1 / 3)
+
+
+def test_melee_odds_come_from_the_field_size():
+    """Melee's rule is a flat count, so it has no share to read off."""
+    assert chance_within(Range.MELEE, 4) == 0.5
+    assert chance_within(Range.MELEE, MANY_ADVERSARIES) == pytest.approx(0.5)
+
+
+def test_a_proportional_band_is_not_certain_just_because_the_field_is_small():
+    """The bug this exists to prevent.
+
+    `targets_reached` floors at 1 so an area effect never catches nobody - right
+    as a count, badly wrong as a probability. Read off it directly, a single
+    adversary made Close and Very Close certainties.
+
+    Melee is excluded because it genuinely saturates: its rule is "2 combatants",
+    so with only one on the field reaching them is certain, and that is the rule
+    rather than a rounding artefact.
+    """
+    for band in (Range.CLOSE, Range.VERY_CLOSE):
+        for count in range(1, 12):
+            assert chance_within(band, count) < 1.0
+
+
+def test_an_empty_field_is_not_certainty_either():
+    for band in Range:
+        assert chance_within(band, 0) == 0.0
+
+
+def test_the_odds_are_a_probability_at_every_band():
+    for band in Range:
+        for count in range(1, 12):
+            assert 0.0 <= chance_within(band, count) <= 1.0
 
 
 def test_an_area_effect_always_reaches_at_least_one():

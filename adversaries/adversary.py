@@ -31,6 +31,7 @@ from typing import Protocol
 
 from combat.results import AttackResult
 from content.names import ADVERSARY, qualified
+from content.registry import force_adversary_reroll
 from dice.common import AdvantageState
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
@@ -131,12 +132,23 @@ class Adversary:
         responses can depend on state that only lives for the length of a fight
         (Unstoppable's die), and the target has no other way to reach it. It
         stays optional so a damage calculation can still be tested on its own.
+
+        The one thing `fight` *is* used for here is reaching the party: content
+        that can force this adversary to re-make its roll belongs to a PC, not to
+        the PC being swung at, so the dispatch is asked party-wide. Nothing in
+        this module knows which content that is.
         """
-        attack_roll = roll_d20(
-            modifier=self.attack_modifier,
-            evasion=target.evasion,
-            advantage_state=advantage_state,
-        )
+
+        def swing():
+            return roll_d20(
+                modifier=self.attack_modifier,
+                evasion=target.evasion,
+                advantage_state=advantage_state,
+            )
+
+        # Asked before anything reads the roll, so a forced reroll is
+        # indistinguishable from the adversary having rolled that way first.
+        attack_roll = force_adversary_reroll(self, swing(), swing, fight)
 
         if not attack_roll.is_success:
             return AttackResult(attack_roll=attack_roll, damage_roll=None)

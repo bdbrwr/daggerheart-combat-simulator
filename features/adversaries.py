@@ -34,8 +34,8 @@ no_combat_effect(
 
 insignificant_combat_effect(
     qualified(ADVERSARY, "From Above"),
-    "Jagged Knife Bandit: 1d10+1 instead of its standard 1d8+1 when attacking "
-    "from above - about +1 expected damage (6.5 against 5.5). Against "
+    "1d10+1 instead of the standard 1d8+1 when attacking from above, about +1 "
+    "expected damage (6.5 against 5.5). Against "
     "thresholds of 8 and 14 that almost never moves a hit into a higher "
     "threshold band, so it would change the HP marked in only a small "
     "fraction of hits. Position isn't tracked either, so it could not fire "
@@ -44,8 +44,8 @@ insignificant_combat_effect(
 
 insignificant_combat_effect(
     qualified(ADVERSARY, "Unseen Strike"),
-    "Jagged Knife Sniper: 1d10+4 instead of its standard 1d10+2 while Hidden - "
-    "+2 expected damage (9.5 against 7.5). Larger than From Above's bump but "
+    "1d10+4 instead of the standard 1d10+2 while Hidden, +2 expected damage "
+    "(9.5 against 7.5). Larger than From Above's bump but "
     "the same reasoning applies: damage reaches HP through threshold bands, so "
     "most of it is absorbed within a band. Hidden isn't a tracked condition "
     "either.",

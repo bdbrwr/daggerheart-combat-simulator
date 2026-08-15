@@ -44,7 +44,7 @@ from pathlib import Path
 
 from combat.fight import run_fight
 from encounters.registry import all_experiments, find_experiment, load_errors
-from simulation.coverage import format_coverage
+from simulation.coverage import CoverageDetail, format_coverage
 from simulation.report import format_comparison, format_report
 from simulation.runner import DEFAULT_RUNS, describe_group, run_simulation
 
@@ -61,6 +61,7 @@ examples:
   python -m simulation "Roadside Ambush" "Cliffside Chase" --seed 7
   python -m simulation --all --runs 2000 --seed 7 --save
   python -m simulation "Roadside Ambush" --play-by-play --seed 7
+  python -m simulation "Roadside Ambush" --full-coverage
 """
 
 
@@ -118,6 +119,20 @@ def build_parser() -> argparse.ArgumentParser:
     # Two flags rather than one `--save [DIR]`: an optional-value option sitting
     # next to a variadic positional is an argparse trap, where
     # `--save "Roadside Ambush"` quietly reads the encounter as a directory name.
+    # Mutually exclusive: they're three points on one dial, and asking for two
+    # at once has no sensible answer.
+    coverage = parser.add_mutually_exclusive_group()
+    coverage.add_argument(
+        "--no-coverage",
+        action="store_true",
+        help="omit the coverage block entirely",
+    )
+    coverage.add_argument(
+        "--full-coverage",
+        action="store_true",
+        help="print the whole coverage block, including modelled content and the "
+        "gaps declared on it (default: only what isn't running)",
+    )
     parser.add_argument(
         "--save",
         action="store_true",
@@ -169,7 +184,9 @@ def main(argv: list[str] | None = None) -> int:
             for variation in experiment.variations
         )
     else:
-        output = _run_and_compare(experiments, arguments.runs, arguments.seed)
+        output = _run_and_compare(
+            experiments, arguments.runs, arguments.seed, _coverage_detail(arguments)
+        )
 
     print(output)
 
@@ -193,7 +210,21 @@ def _chosen_experiments(parser, arguments) -> list[str] | None:
     return list(arguments.encounters) or None
 
 
-def _run_and_compare(experiments, runs: int, seed: int | None) -> str:
+def _coverage_detail(arguments) -> CoverageDetail:
+    """Which coverage level the flags asked for; argparse already refused both."""
+    if arguments.no_coverage:
+        return CoverageDetail.NONE
+    if arguments.full_coverage:
+        return CoverageDetail.FULL
+    return CoverageDetail.SUMMARY
+
+
+def _run_and_compare(
+    experiments,
+    runs: int,
+    seed: int | None,
+    coverage: CoverageDetail = CoverageDetail.SUMMARY,
+) -> str:
     """Every variation's full report, with its experiment's comparison underneath.
 
     The comparison belongs to one experiment rather than to the whole command:
@@ -201,12 +232,16 @@ def _run_and_compare(experiments, runs: int, seed: int | None) -> str:
     a table mixing two unrelated experiments would invite exactly the comparison
     the file boundary exists to prevent.
 
-    Coverage follows the reports, unconditionally - it's the context a win rate
-    has to be read against, since unimplemented content on the party's side makes
-    an encounter look harder than it is and unimplemented content on the
-    opposition's makes it look easier. Printed once per distinct pairing of party
-    and opposition rather than once per variation, since variations usually share
-    both, but never skipped for a variation that changes either.
+    Coverage follows the reports - it's the context a win rate has to be read
+    against, since unimplemented content on the party's side makes an encounter
+    look harder than it is and unimplemented content on the opposition's makes it
+    look easier. Printed once per distinct pairing of party and opposition rather
+    than once per variation, since variations usually share both, but never
+    skipped for a variation that changes either.
+
+    How much of it prints is `--no-coverage` / `--full-coverage`; see
+    simulation/coverage.py. At NONE the block comes back empty and simply isn't
+    appended, so nothing here needs to know which level it asked for.
     """
     blocks = []
     for experiment in experiments:
@@ -226,11 +261,11 @@ def _run_and_compare(experiments, runs: int, seed: int | None) -> str:
             )
             if fielded not in shown:
                 shown.add(fielded)
-                blocks.append(
-                    format_coverage(
-                        variation.spawn_party(), variation.spawn_adversaries()
-                    )
+                block = format_coverage(
+                    variation.spawn_party(), variation.spawn_adversaries(), coverage
                 )
+                if block:
+                    blocks.append(block)
 
         if len(summaries) > 1:
             blocks.append(format_comparison(summaries, title=experiment.name))

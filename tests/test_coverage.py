@@ -21,7 +21,7 @@ from content.registry import (
     no_combat_effect,
     severity_response,
 )
-from simulation.coverage import format_coverage
+from simulation.coverage import CoverageDetail, format_coverage
 
 
 def _make_character(**overrides) -> PlayerCharacter:
@@ -159,7 +159,7 @@ def test_the_block_counts_each_state_for_each_character():
     (Reliable, modelled) and Gambeson Armor (Flexible, ruled sheet-resolved)."""
     party = [_make_character(name="Kael", domain_cards_loadout=["Get Back Up"], **NOWHERE)]
 
-    block = format_coverage(party)
+    block = format_coverage(party, detail=CoverageDetail.FULL)
 
     assert "Kael" in block
     assert "2 modelled" in block  # Get Back Up, weapon:Reliable
@@ -180,14 +180,165 @@ def test_the_block_names_what_is_unimplemented():
 def test_the_block_spells_out_a_partial_implementation():
     party = [_make_character(name="Kael", domain_cards_loadout=["I Am Your Shield"])]
 
-    block = format_coverage(party)
+    block = format_coverage(party, detail=CoverageDetail.FULL)
 
     assert "gap" in block
     assert "I Am Your Shield" in block
 
 
+# --- How much of it prints ---------------------------------------------------
+
+
+def _detailed(detail: CoverageDetail) -> str:
+    party = [_make_character(name="Kael", domain_cards_loadout=["I Am Your Shield"], **NOWHERE)]
+    return format_coverage(party, detail=detail)
+
+
+def _tally_rows(block: str, name: str) -> list[str]:
+    """Every tally line for `name` - never the detail lines underneath one.
+
+    Matched on the counts themselves rather than on the name appearing in a
+    line, because a reason is free to mention anything: `adversary:From Above`
+    opens its reason with "Jagged Knife Bandit:", so counting the name across
+    the whole block finds the row *and* the prose under it.
+    """
+    return [
+        line
+        for line in block.splitlines()
+        if line.strip().startswith(name) and "unimplemented" in line
+    ]
+
+
+def _counts_for(block: str, name: str) -> str:
+    """The one tally line for `name`.
+
+    Assertions about which *counts* appear have to be made against this rather
+    than the whole block, since the detail lines carry prose reasons and a
+    reason is free to contain any word a count is named after.
+    """
+    return _tally_rows(block, name)[0]
+
+
+def test_nothing_is_printed_at_all_when_coverage_is_turned_off():
+    """Empty rather than a stub heading, so the caller can print what it gets."""
+    assert _detailed(CoverageDetail.NONE) == ""
+
+
+def test_the_default_leaves_out_the_modelled_half():
+    """The block answers "what isn't running?"; modelled content answers the opposite."""
+    block = _detailed(CoverageDetail.SUMMARY)
+
+    assert "modelled" not in _counts_for(block, "Kael")
+    assert "I Am Your Shield" not in block  # modelled, so neither it nor its gaps
+
+
+def test_the_default_still_carries_every_state_that_means_something_is_missing():
+    block = _detailed(CoverageDetail.SUMMARY)
+
+    assert "no effect" in block
+    assert "insignificant" in block
+    assert "unimplemented" in block
+    assert "Unwritten Class" in block  # named, not just counted
+
+
+def test_the_full_block_adds_the_modelled_count_and_the_declared_gaps():
+    block = _detailed(CoverageDetail.FULL)
+
+    assert "modelled" in _counts_for(block, "Kael")
+    assert "gap" in block
+    assert "I Am Your Shield" in block
+
+
+def test_a_gap_line_only_appears_for_content_that_declared_one():
+    """A fully modelled feature has no gaps, so it prints no gap line even at FULL."""
+    party = [_make_character(name="Kael", domain_cards_loadout=["Get Back Up"], **NOWHERE)]
+
+    block = format_coverage(party, detail=CoverageDetail.FULL)
+
+    assert "2 modelled" in block  # Get Back Up and weapon:Reliable, neither partial
+    assert "gap" not in block
+
+
+# --- Naming what was dismissed, and why --------------------------------------
+
+
+def test_a_dismissal_is_named_and_carries_its_reason():
+    """A count alone asks the reader to take the judgement on trust."""
+    party = [_make_character(name="Kael", domain_cards_loadout=[], **NOWHERE)]
+
+    block = format_coverage(party)
+
+    assert "no effect" in block
+    assert "Wildborne" in block  # named, not just counted
+    assert "Ruled as having no effect" in block  # and why
+
+
+def test_both_dismissals_are_named_not_only_the_insignificant_one():
+    """They were reported differently once: insignificant named, no effect counted."""
+    block = format_coverage(
+        [_make_character(name="Kael", domain_cards_loadout=[], **NOWHERE)],
+        [find_adversary("Jagged Knife Bandit")],
+    )
+
+    assert "armor:Flexible" in block  # a no-effect dismissal
+    assert "adversary:From Above" in block  # an insignificant one
+
+
+def test_only_the_opening_sentence_of_a_reason_is_printed():
+    """Reasons run to a paragraph; the block would be unreadable carrying all of it."""
+    party = [_make_character(name="Kael", domain_cards_loadout=[], **NOWHERE)]
+
+    block = format_coverage(party)
+
+    assert "+1 to Evasion." in block  # armor:Flexible's opening sentence
+    assert "count it twice" not in block  # the rest of its argument
+
+
+def test_an_unimplemented_name_carries_no_note():
+    """There is nothing to say about it - that's what unimplemented means."""
+    party = [_make_character(name="Kael", domain_cards_loadout=[], **NOWHERE)]
+
+    block = format_coverage(party)
+    unimplemented = next(
+        line for line in block.splitlines() if "unimplemented   " in line
+    )
+
+    assert "Unwritten Class" in unimplemented
+    assert " - " not in unimplemented
+
+
+# --- Laying it out -----------------------------------------------------------
+
+
+def test_a_long_name_keeps_a_gap_before_its_counts():
+    """"Jagged Knife Bandit" is 19 characters and used to run into the tally."""
+    block = format_coverage([], [find_adversary("Jagged Knife Bandit")])
+    row = _counts_for(block, "Jagged Knife Bandit")
+
+    assert "Jagged Knife Bandit " in row
+    assert "Bandit0" not in row and "Bandit1" not in row
+
+
+def _counts_start(line: str) -> int:
+    """Where the tally begins - the first digit, none of these names having one."""
+    return next(index for index, char in enumerate(line) if char.isdigit())
+
+
+def test_both_sides_share_one_name_column():
+    """Party and opposition line up with each other, not each within itself."""
+    block = format_coverage(
+        [_make_character(name="Kael", **NOWHERE)],
+        [find_adversary("Jagged Knife Bandit")],
+    )
+
+    assert _counts_start(_counts_for(block, "Kael")) == _counts_start(
+        _counts_for(block, "Jagged Knife Bandit")
+    )
+
+
 def test_the_block_warns_that_unimplemented_is_not_harmless():
-    party = [_make_character(name="Kael")]
+    """Named against the invented sheet, so implementing real content can't silence it."""
+    party = [_make_character(name="Kael", **NOWHERE)]
 
     assert "work not done" in format_coverage(party)
 
@@ -287,7 +438,7 @@ def test_copies_of_one_stat_block_are_reported_once():
 
     block = format_coverage([], [bandit.spawn(), bandit.spawn(), bandit.spawn()])
 
-    assert block.count("Jagged Knife Bandit") == 1
+    assert len(_tally_rows(block, "Jagged Knife Bandit")) == 1
 
 
 def test_an_opposition_only_fight_still_reports():

@@ -18,6 +18,7 @@ from content.registry import (
     action,
     hope_die_for,
     no_combat_effect,
+    remake_action_roll,
     severity_response,
     total_extra_damage,
     total_roll_bonus,
@@ -40,11 +41,19 @@ def _spellcast(caster: Holder, target, fight: Fight, difficulty: int | None = No
     if not trait or trait not in caster.traits:
         return None
 
-    return roll_duality(
-        modifier=caster.traits[trait] + total_roll_bonus(caster, target, fight),
-        difficulty=target.difficulty if difficulty is None else difficulty,
-        hope_die=hope_die_for(caster, fight),
-    )
+    # Both worked out outside the closure: asking for a roll bonus or a Hope Die
+    # is the commitment, and a reroll re-makes the dice rather than the decisions
+    # that fed them.
+    modifier = caster.traits[trait] + total_roll_bonus(caster, target, fight)
+    against = target.difficulty if difficulty is None else difficulty
+    hope_die = hope_die_for(caster, fight)
+
+    def roll():
+        return roll_duality(modifier=modifier, difficulty=against, hope_die=hope_die)
+
+    # Offered to the reroll hook, so content that can re-make a resolved roll
+    # reaches a spell as readily as it reaches a weapon swing.
+    return remake_action_roll(caster, roll(), roll, fight)
 
 
 # --- Vicious Entangle --------------------------------------------------------

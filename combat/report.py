@@ -27,6 +27,56 @@ from combat.common import FightOutcome
 
 
 @dataclass(frozen=True)
+class CombatantState:
+    """One PC's condition at the moment a fight ended.
+
+    The party-wide totals a report used to carry - unconscious PCs, scars, the
+    party's unmarked HP - answer questions about *the party*. They can't answer
+    "which of these three is the one the encounter keeps knocking over?", which
+    is a different and often more useful question when tuning: an encounter that
+    is fine on average can still be reliably brutal to one character.
+
+    Frozen and free of any reference back to the PlayerCharacter it was taken
+    from, so a run of 10,000 fights can keep every one of these without keeping
+    10,000 parties and their gear alive.
+
+    It is also the shape a **sequence** of encounters needs. Running fights back
+    to back means carrying each PC's marked tracks into the next one, and this is
+    that state, written down. Nothing restores from it yet - the carry-forward is
+    still unbuilt - but the recording half no longer is.
+    """
+
+    name: str
+    conscious: bool
+    hp_unmarked: int
+    hp_max: int
+    stress_unmarked: int
+    stress_max: int
+    armor_unmarked: int
+    armor_max: int
+    hope_marked: int
+    scars: int
+    death_moves: int
+
+    @classmethod
+    def of(cls, pc) -> "CombatantState":
+        """A snapshot of `pc` exactly as they are now."""
+        return cls(
+            name=pc.name,
+            conscious=pc.is_conscious,
+            hp_unmarked=pc.hp_unmarked,
+            hp_max=pc.hp_max,
+            stress_unmarked=pc.stress_unmarked,
+            stress_max=pc.stress_max,
+            armor_unmarked=pc.armor_unmarked,
+            armor_max=pc.armor_max,
+            hope_marked=pc.hope_marked,
+            scars=pc.scars,
+            death_moves=pc.death_moves,
+        )
+
+
+@dataclass(frozen=True)
 class FightResult:
     """The full record of one simulated fight, including both sides' end state."""
 
@@ -52,6 +102,28 @@ class FightResult:
     @property
     def party_size(self) -> int:
         return len(self.party)
+
+    @property
+    def party_state(self) -> tuple[CombatantState, ...]:
+        """Each PC's end state, in the order the party was fielded.
+
+        Derived rather than stored, so it can't drift from the party it
+        describes. The simulation layer copies it into its own record, which is
+        where it has to survive the party being dropped.
+        """
+        return tuple(CombatantState.of(pc) for pc in self.party)
+
+    @property
+    def death_moves(self) -> int:
+        """How many death moves the party made between them.
+
+        Distinct from `scars_gained`, which counts only the ones that left a
+        mark. With Avoid Death the only move implemented and nobody ever revived,
+        this currently equals the number of PCs who ended unconscious - but it is
+        counted where it happens rather than inferred, so it stays right when a
+        second death move or a revival arrives.
+        """
+        return sum(pc.death_moves for pc in self.party)
 
     @property
     def party_won(self) -> bool:

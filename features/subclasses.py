@@ -39,12 +39,14 @@ from content.registry import (
     extra_damage,
     hope_die_for,
     no_combat_effect,
+    remake_action_roll,
     roll_bonus,
     severity_response,
     total_damage_bonus,
     total_extra_damage,
     total_roll_bonus,
 )
+from content.rolls import note_experience_utilised
 from dice.common import AdvantageState
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import DualityOutcome, roll_duality
@@ -135,6 +137,10 @@ def adept(wizard: Holder, target, fight: Fight) -> int:
         return 0
 
     bonus = max(experience["modifier"] for experience in wizard.experiences) * 2
+    # Recorded for content that triggers on having utilised an Experience -
+    # paying with Stress is still utilising one, so this route has to say so as
+    # much as the Hope route in combat/policy.py does.
+    note_experience_utilised(wizard, fight)
     fight.note(f"{wizard.name} marks a Stress to double an Experience (+{bonus})")
     return bonus
 
@@ -197,12 +203,18 @@ def companion(ranger: Holder, target, fight: Fight) -> AttackResult | None:
         return None
 
     # Asked only once the command is going ahead, so nothing is spent toward a
-    # roll that isn't being made.
-    attack_roll = roll_duality(
-        modifier=ranger.traits[trait] + total_roll_bonus(ranger, target, fight),
-        difficulty=target.difficulty,
-        hope_die=hope_die_for(ranger, fight),
-    )
+    # roll that isn't being made - and outside the closure, so a reroll doesn't
+    # charge for the bonuses twice.
+    modifier = ranger.traits[trait] + total_roll_bonus(ranger, target, fight)
+    hope_die = hope_die_for(ranger, fight)
+
+    def roll():
+        return roll_duality(
+            modifier=modifier, difficulty=target.difficulty, hope_die=hope_die
+        )
+
+    # Offered to the reroll hook so it reaches the companion's Spellcast Roll too.
+    attack_roll = remake_action_roll(ranger, roll(), roll, fight)
 
     if not attack_roll.is_success:
         fight.note(f"{ranger.name}'s companion misses {target.name}")

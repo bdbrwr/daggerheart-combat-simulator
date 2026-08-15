@@ -50,6 +50,9 @@ the balance numbers, and none of them is wrong in a rules sense.
 | **Iron Will** marks its extra Armor Slot only when the hit would drop the Guardian, or would still mark 2+ HP after the free slot | `features/subclasses.py` → `IRON_WILL_WORTH_A_SLOT` | Marking the extra slot is a choice. Slots are finite, so spending one to save a single HP is usually the worse trade - but that is a judgement, not a rule. |
 | The Beastbound **Companion**'s "advantage on your next action roll" is taken **immediately**, as a weapon swing with Advantage in the same spotlight | `features/subclasses.py` → `_press_the_advantage` | The companion sheet grants it on a success with Hope "if your next action builds on their success" - a fiction call, assumed always true. A success with Hope also keeps the spotlight, but the loop hands it to a random PC who hasn't acted, so waiting would usually give the advantage to nobody. The cost is that a Beastbound Ranger makes two action rolls in one spotlight, which no other PC can do. The companion roll's Hope is paid out inside the feature, since only the returned roll reaches the loop. |
 | **Adept** fires only *below* the Hope floor, so a Wizard pays for an Experience with Hope while they have plenty and with Stress once they don't | `features/subclasses.py` → `adept` | The feature offers the choice on every Experience. Splitting the two by the Hope floor means the doubled modifier is never taken while Hope is plentiful, even though a player might take it. |
+| **Not This Time** is spent only on an adversary's **critical**, never on an ordinary hit | `features/classes.py` → `not_this_time` | The card can force a reroll of any attack roll. A natural 20 hits regardless of Evasion and doubles what the damage is worth, so it's both the worst roll the GM makes and the only one a reroll is certain to improve; 3 Hope on an ordinary hit buys much less. |
+| **Luckbender** rerolls only a **failed** roll, only at 6 Hope or above, and for an *ally's* roll only if a range check passes | `features/ancestries.py` → `luckbender`, `LUCKBENDER_HOPE_FLOOR` | The card triggers on any action roll, yours or a willing ally's within Close range. Rerolling a success buys nothing measurable; the Hope floor keeps a class Hope feature affordable afterwards, since those are generally the bigger swing. |
+| **Adaptability** is used only while 4 or fewer Stress are marked | `features/ancestries.py` → `ADAPTABILITY_MAX_STRESS_MARKED` | The card sets no limit. Marking the last Stress makes a PC Vulnerable for the rest of the fight, which costs far more than one rerolled attack is worth, so the last slots are held back. |
 
 ### Area of effect, standing in for range
 
@@ -88,6 +91,36 @@ intended consequence of a uniform rule, not an oversight.
 
 Which adversaries get picked is a separate policy question. Focus fire already
 governs single-target selection, so an AOE takes the most wounded first.
+
+The same fractions do second duty as **odds that one particular combatant is in
+range**, via `content/aoe.py` → `chance_within`. Some content isn't sweeping an
+area at all but needs one named person to be close by — Luckbender rescues "a
+willing ally within Close range". With no positions tracked the simulator has to
+put a number on that, and reusing the area fraction means both answers come from
+one set of knobs: sweeping the range bands moves them together. At Close that's
+a 3-in-4 chance the ally is reachable.
+
+### Imperfect information is not modelled
+
+The party is otherwise simulated playing well — an Experience is spent whenever
+it helps, a trigger gets its lenient reading. The exception is content whose
+decision depends on information a real player does not have at the moment of
+choosing.
+
+The simulator can see an adversary's attack roll, the target's Evasion and the
+damage about to land; a player sees none of it until afterwards. Implementing
+such content would inevitably fire it at precisely the right moments, which does
+not model the party more accurately — it models a *better* party than the one at
+the table. So it is declared as assessed content with the reasoning recorded,
+rather than implemented.
+
+The Faerie's **Wings** is the case this was ruled on: its Stress buys +2 Evasion
+against an incoming attack, and a player never learns what that attack needed to
+beat. Note the boundary — this covers information genuinely unavailable when the
+choice is made, not content that is merely hard to optimise. A trigger the player
+can see (their own failed roll, an announced critical, an ally already down) is
+ordinary content and gets modelled with a stated policy. That's exactly why
+**Not This Time** is implemented and Wings is not.
 
 ### How much a PC can do before passing the spotlight
 
@@ -151,6 +184,8 @@ the numbers.
 | **Reinforced** (armor) applies to the hit that marked the last Armor Slot, not only to later ones | `features/armor.py` → `reinforced` | The SRD raises the thresholds "when you mark your last Armor Slot". By the time damage responses are consulted that slot has already been marked, so the wearer is in the state the feature describes. Reading it the other way would need the damage pipeline to remember what armor looked like before the hit, for a difference of one HP on one hit per fight. |
 | A **weapon's** feature applies only to attacks made with that weapon; an **armor's** applies to everything that happens to its wearer | `items/weapons.py` → `attack_with`; `characters/player_character.py` → `named_features`, `weapon_features` | Not an ambiguity in the rules so much as one the code could easily introduce. Dispatch is holder-scoped by default, so registering a Broadsword's *Reliable* that way would silently add +1 to a Wizard's spell attacks. Armor genuinely is holder-scoped - Fortified changes what any hit costs - so the two reach a fight by different routes. |
 | **Massive**/**Powerful** discard the lowest of the dice *the weapon* rolled. Dice a feature added are rolled alongside and added to the same total, out of the discard's reach - and the total is still checked against the thresholds once | `dice/damage.py` → `DiceGroup.discardable`, `dropped`, `critical_bonus` | "Roll an additional damage die and discard the lowest result" doesn't say whose dice. The feature belongs to the weapon, so its discard is read as reaching only the weapon's own pool; the other reading lets a Greatstaff throw away a Wizard's Face Your Fear die. |
+| **At most one reroll applies to any roll.** The first piece of content willing to re-make it wins, and nothing else is asked | `content/registry.py` → `remake_action_roll`, `force_adversary_reroll` | Nothing in the SRD forbids a party stacking Luckbender on top of Adaptability for a third attempt at one roll, but no card describes a chain off a single trigger, and allowing it would make a failed roll cheap. |
+| A reroll re-makes the **whole** roll, not only the Duality Dice — but re-rolls only the *dice*, never the decisions that fed them: bonuses, the Hope Die and any Experience are worked out once and reused | `items/weapons.py` → `attack_with`; the `_spellcast` helpers in `domain_cards/` | Luckbender and Adaptability both say to reroll the Duality Dice, which would leave an Advantage or Help die standing; re-making everything differs only on rolls that had one, and is declared as a gap on both. Holding the modifiers fixed is not optional — asking content for a roll bonus is the commitment, so several of them spend Hope or mark Stress on being asked, and re-asking would charge twice. |
 | A die discarded by **Massive**/**Powerful** doesn't count toward the critical bonus - a crit adds the maximum of the dice that were kept, not of every die rolled | `dice/damage.py` → `critical_bonus` | A crit "adds the maximum possible result of the damage dice"; the SRD doesn't say whether a discarded die is still one of "the damage dice". Counting it would pay for a die that was thrown away. |
 
 ## 3. Not implemented

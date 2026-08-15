@@ -42,6 +42,8 @@ uv run python -m simulation "Roadside Ambush" --play-by-play --seed 7
 | `--seed N`, `-s` | Repeat a run exactly. **One seed seeds every variation in the command**, so they face the same dice and a difference between rows is a difference between stat blocks rather than luck |
 | `--all`, `-a` | Run every encounter file |
 | `--play-by-play`, `-p` | One seeded fight, narrated line by line |
+| `--no-coverage` | Omit the coverage block |
+| `--full-coverage` | Print all of it, including modelled content and its declared gaps |
 | `--save` / `--save-dir` | Write exactly what was printed to a timestamped file in `runs/` |
 
 ### The tuning loop
@@ -113,7 +115,9 @@ Everything outside `variations` is the shared baseline; a variation overrides on
 what it states. **Per-encounter tuning belongs in `overrides`**, never in the stat
 block — that keeps `adversaries/srd.json` checkable against the printed page, and
 lets the same adversary appear at different settings in different variations. The
-keys you may override are exactly the keys the catalogue uses.
+keys you may override are exactly the keys the catalogue uses, in the same
+notation — so `"damage_dice": "2d6"`, `"2d6+1d4"` or `["2d6", "1d4"]`, with any
+flat bonus going in `damage_modifier` rather than into the dice string.
 
 ### Adding an adversary
 
@@ -160,11 +164,20 @@ in the coverage block.
   anyone had.
 - **COST TO THE PARTY** — victories and defeats side by side. A 60% win rate
   reached in three rounds with nobody hurt is a different encounter from a 60%
-  reached in nine with a PC on their last HP.
+  reached in nine with a PC on their last HP. *Death moves* counts PCs dropping;
+  *scars* counts the roll after that going badly, so scars are always fewer.
+- **PER PARTY MEMBER** — the same cost, one character at a time: how often each
+  ended a fight down (as a rate *and* a count, because at 10,000 runs a rate
+  rounds a rare disaster to 0.0%), and the minimum and mean of what they had left
+  unmarked on each track. A party averaging four unmarked HP is comfortable if all three sit
+  at four and badly aimed if two are untouched and the third is on nothing every
+  time — and only this table tells them apart. Repeated under the comparison,
+  grouped by variation, so you can see what moving a knob did to each character.
 - **FEAR** — whether the GM's economy did anything. Fear spent near zero means
   extra activations never got bought.
-- **COVERAGE** — how much of each combatant the simulator actually ran, for
-  both sides. Read this first.
+- **COVERAGE** — what the simulator *isn't* running, for both sides. Read this
+  first. `--full-coverage` adds the modelled half and the gaps declared on it;
+  `--no-coverage` drops the block entirely.
 
 Coverage separates four states, and the difference between the dismissals and the
 last one is the whole point:
@@ -177,6 +190,13 @@ last one is the whole point:
 
 Only the last one is a gap. The two dismissals cost the results nothing, because
 somebody looked and wrote down what they found.
+
+The default prints the three states that mean something isn't running. Modelled
+content is left out, and so are the **gaps** declared on partial implementations
+— a modelled feature saying which parts of itself it doesn't do. Those are real,
+but in a full party they run to twenty-odd lines and bury the handful of entries
+worth acting on, so they wait behind `--full-coverage`. Content that is modelled
+with nothing left out declares no gaps and never prints one at any level.
 
 Unimplemented content on the *party's* side makes an encounter look harder than
 it is. Unimplemented content on the *opposition's* side makes it look easier. The

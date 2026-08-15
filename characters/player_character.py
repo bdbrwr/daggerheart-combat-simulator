@@ -90,6 +90,12 @@ class PlayerCharacter:
     unconscious: bool = False
     scars: int = 0
 
+    # How many times this PC has made a death move. Counted separately from
+    # `scars` because a death move is the event and a scar is one possible
+    # outcome of it - a PC can go down without scarring, and reporting only
+    # scars would undercount how often the fight went badly wrong.
+    death_moves: int = 0
+
     @classmethod
     def from_json(cls, path: str | Path) -> "PlayerCharacter":
         """Build a PlayerCharacter at its starting state from a characters/*.json file."""
@@ -291,6 +297,21 @@ class PlayerCharacter:
         """
         return self.hp_max - self.hp_marked
 
+    @property
+    def stress_unmarked(self) -> int:
+        """Stress slots still free - the inverse of `stress_marked`.
+
+        Same vocabulary as HP, and for the same reason: the game marks a track,
+        so "unmarked" is the unambiguous word for what's left. Reaching zero is
+        what makes a PC Vulnerable, which is why it's worth reporting.
+        """
+        return self.stress_max - self.stress_marked
+
+    @property
+    def armor_unmarked(self) -> int:
+        """Armor Slots still free - the inverse of `armor_marked`."""
+        return self.armor_max - self.armor_marked
+
     def should_mark_armor_slot(self) -> bool:
         """Whether to spend an Armor Slot against incoming damage.
 
@@ -367,6 +388,7 @@ class PlayerCharacter:
         often a party walks away marked is part of what an encounter costs.
         """
         self.unconscious = True
+        self.death_moves += 1
         if random.randint(1, 12) > self.level:
             return False
         self.scars += 1

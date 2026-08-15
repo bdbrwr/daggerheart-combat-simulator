@@ -29,7 +29,13 @@ tracks distance. See SIMULATION-RULES.md.
 from typing import Protocol
 
 from combat.results import AttackResult
-from content import DamagePool, adjust_damage_pool, total_extra_damage, total_roll_bonus
+from content import (
+    DamagePool,
+    adjust_damage_pool,
+    remake_action_roll,
+    total_extra_damage,
+    total_roll_bonus,
+)
 from dice.common import AdvantageState
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import roll_duality
@@ -78,20 +84,33 @@ def attack_with(
     can change how many HP a hit marks and not just the number printed. So is
     everything the two dispatch calls below contribute, for the same reason.
     """
-    attack_roll = roll_duality(
-        modifier=(
-            # Indexed, not `.get(..., 0)`: the catalogue already validated the
-            # trait against the six real ones and sheets lowercase their trait
-            # keys, so a miss here is a broken sheet and should say so rather
-            # than quietly rolling a flat zero.
-            attacker.traits[weapon.trait]
-            + bonus
-            + total_roll_bonus(attacker, target, fight, names=weapon.named_features)
-        ),
-        difficulty=target.difficulty,
-        advantage_state=advantage_state,
-        hope_die=hope_die,
+    # Worked out once, before the roll, and *outside* the closure below: asking
+    # content for a roll bonus is the commitment, so several of them spend Hope
+    # or mark Stress on being asked. A reroll re-makes the dice, not the
+    # decisions that fed them - evaluating this twice would charge for it twice.
+    modifier = (
+        # Indexed, not `.get(..., 0)`: the catalogue already validated the
+        # trait against the six real ones and sheets lowercase their trait
+        # keys, so a miss here is a broken sheet and should say so rather
+        # than quietly rolling a flat zero.
+        attacker.traits[weapon.trait]
+        + bonus
+        + total_roll_bonus(attacker, target, fight, names=weapon.named_features)
     )
+
+    def roll():
+        return roll_duality(
+            modifier=modifier,
+            difficulty=target.difficulty,
+            advantage_state=advantage_state,
+            hope_die=hope_die,
+        )
+
+    # Content that can re-make a resolved roll gets its say before anything
+    # reads the result, so a reroll is indistinguishable from having rolled that
+    # way first. It re-makes the roll through the same closure, on identical
+    # terms.
+    attack_roll = remake_action_roll(attacker, roll(), roll, fight)
 
     if not attack_roll.is_success:
         return AttackResult(attack_roll=attack_roll, damage_roll=None)

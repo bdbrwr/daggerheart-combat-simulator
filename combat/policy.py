@@ -52,6 +52,7 @@ from content import (
 )
 from content.conditions import VULNERABLE
 from content.names import canonical
+from content.rolls import clear_experience_utilised, note_experience_utilised
 from dice.common import AdvantageState
 from items.registry import find_consumable, find_weapon
 from items.weapons import attack_with
@@ -233,6 +234,9 @@ def _experience_bonus(pc: PlayerCharacter, state: FightState) -> int:
         return 0
     bonus = max(experience["modifier"] for experience in pc.experiences)
     pc.spend_hope(1)
+    # Recorded generically, for content that triggers on a roll having utilised
+    # an Experience. Nothing here knows which content that is.
+    note_experience_utilised(pc, state)
     state.note(f"{pc.name} spends a Hope on an Experience (+{bonus})")
     return bonus
 
@@ -246,6 +250,11 @@ def _make_the_roll(
     makes an action roll of its own gets first refusal, and declines by
     returning None. Nothing in this function knows what any of that content is.
     """
+    # A new roll, so whatever the last one utilised is forgotten. Set before the
+    # options are offered because it's the option that chooses to pay for an
+    # Experience, and only the one that takes the roll ever does.
+    clear_experience_utilised(pc, state)
+
     def swing_the_weapon(attacker, at, fight):
         """The weapon as one option among the rest. It never declines.
 

@@ -152,6 +152,73 @@ def test_overrides_reach_the_spawned_adversaries(tmp_path):
     assert spawned[0].damage_modifier == 4
 
 
+def test_damage_dice_are_overridden_in_the_notation_a_stat_block_uses(tmp_path):
+    """The one override that isn't a bare number, so it needs parsing like the catalogue's."""
+    variation = _one_variation(
+        tmp_path / "fight.json",
+        groups=[
+            {
+                "adversary": "Jagged Knife Bandit",
+                "count": 1,
+                "overrides": {"damage_dice": "2d6"},
+            }
+        ],
+    )
+
+    spawned = variation.spawn_adversaries()
+
+    assert [(g.count, g.sides) for g in spawned[0].damage_dice] == [(2, 6)]
+
+
+def test_a_mixed_damage_pool_can_be_written_with_a_plus(tmp_path):
+    variation = _one_variation(
+        tmp_path / "fight.json",
+        groups=[
+            {
+                "adversary": "Jagged Knife Bandit",
+                "count": 1,
+                "overrides": {"damage_dice": "2d6+1d4"},
+            }
+        ],
+    )
+
+    spawned = variation.spawn_adversaries()
+
+    assert [(g.count, g.sides) for g in spawned[0].damage_dice] == [(2, 6), (1, 4)]
+
+
+def test_damage_dice_can_also_be_written_as_a_list(tmp_path):
+    variation = _one_variation(
+        tmp_path / "fight.json",
+        groups=[
+            {
+                "adversary": "Jagged Knife Bandit",
+                "count": 1,
+                "overrides": {"damage_dice": ["2d6", "1d4"]},
+            }
+        ],
+    )
+
+    spawned = variation.spawn_adversaries()
+
+    assert [(g.count, g.sides) for g in spawned[0].damage_dice] == [(2, 6), (1, 4)]
+
+
+def test_unparseable_damage_dice_fail_while_the_file_is_being_read(tmp_path):
+    """Not at spawn time, by which point a run is already under way."""
+    with pytest.raises(ValueError, match="isn't a die size"):
+        _one_variation(
+            tmp_path / "fight.json",
+            groups=[
+                {
+                    "adversary": "Jagged Knife Bandit",
+                    "count": 1,
+                    "overrides": {"damage_dice": "2d6+3"},
+                }
+            ],
+        )
+
+
 # --- Failing loudly ----------------------------------------------------------
 
 

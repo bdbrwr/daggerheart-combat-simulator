@@ -68,6 +68,47 @@ def targets_beaten(roll, targets: list) -> list:
     ]
 
 
+# The share of the field each band covers, as a probability. These are the same
+# numbers `targets_reached` below works in - keep the two in step by hand. They
+# are not derived from it, and the reason is the floor: `targets_reached` never
+# returns zero, because an area effect that caught nobody would be a rounding
+# artefact rather than a decision. As a *count* that floor is right. As a
+# *probability* it is badly wrong - against a single adversary it would say any
+# given ally is certainly within Close range.
+_BAND_SHARE = {
+    Range.FAR: 1.0,
+    Range.CLOSE: 3 / 4,
+    Range.VERY_CLOSE: 1 / 3,
+}
+
+
+def chance_within(band: Range, adversaries: int) -> float:
+    """The odds that one particular other combatant is within `band`.
+
+    The area rule already answers "how much of the field does this band cover?".
+    This reuses the same shares as a *probability* for a single named combatant:
+    if an area effect at Close range reaches three quarters of the field, then
+    any one combatant is within Close range about three quarters of the time.
+
+    SIMULATION RULE - policy. It exists for content whose condition is that one
+    specific other person is in range rather than that an area is swept: the
+    Faerie's Luckbender can rescue "a willing ally within Close range", and with
+    no positions tracked the simulator has to put a number on that.
+
+    Melee is the odd one out. Its rule is a flat count - 2 adversaries, or 3 in a
+    crowd - rather than a share of the field, so there is no fraction to read off
+    and it is worked out from the field size instead, capped at certainty.
+
+    Returns 0.0 on an empty field: there is nothing to measure against, and
+    content should decline rather than treat that as certainty.
+    """
+    if adversaries <= 0:
+        return 0.0
+    if band in _BAND_SHARE:
+        return _BAND_SHARE[band]
+    return min(targets_reached(Range.MELEE, adversaries) / adversaries, 1.0)
+
+
 def targets_reached(band: Range, adversaries: int) -> int:
     """How many of `adversaries` an area effect at `band` catches.
 

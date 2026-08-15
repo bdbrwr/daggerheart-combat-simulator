@@ -15,6 +15,7 @@ from content.registry import (
     Holder,
     hope_die_for,
     no_combat_effect,
+    remake_action_roll,
     total_extra_damage,
     total_roll_bonus,
 )
@@ -39,19 +40,27 @@ def _spellcast(caster: Holder, target, fight: Fight, bonus: int = 0):
     content that quietly fires wrong.
 
     Asks for the Hope Die rather than assuming a d12, so anything that swaps it
-    applies to spells as much as to weapon swings.
+    applies to spells as much as to weapon swings - and offers the result to
+    `remake_action_roll` for the same reason, so a Luckbender or an Adaptability
+    reaches a spell as readily as it reaches a swing.
     """
     trait = getattr(caster, "spellcast_trait", "")
     if not trait or trait not in caster.traits:
         return None
 
     # Asked only once the cast is going ahead, so a spell that declines above
-    # never spends a token or a per-rest use toward a roll it isn't making.
-    return roll_duality(
-        modifier=caster.traits[trait] + bonus + total_roll_bonus(caster, target, fight),
-        difficulty=target.difficulty,
-        hope_die=hope_die_for(caster, fight),
-    )
+    # never spends a token or a per-rest use toward a roll it isn't making - and
+    # asked outside the closure, so a reroll re-makes the dice without charging
+    # for the bonuses a second time.
+    modifier = caster.traits[trait] + bonus + total_roll_bonus(caster, target, fight)
+    hope_die = hope_die_for(caster, fight)
+
+    def roll():
+        return roll_duality(
+            modifier=modifier, difficulty=target.difficulty, hope_die=hope_die
+        )
+
+    return remake_action_roll(caster, roll(), roll, fight)
 
 
 # --- Book of Ava -------------------------------------------------------------
