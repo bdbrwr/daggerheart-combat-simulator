@@ -29,9 +29,13 @@ class FakeTarget:
     moving part - the weapon - and records what damage it was handed.
     """
 
-    def __init__(self, difficulty: int = 10):
+    def __init__(self, difficulty: int = 10, features: list[str] | None = None):
         self.difficulty = difficulty
         self.damage_taken: list[int] = []
+        # Scanned for content that punishes being hit - the Glass Snake's
+        # Armor-Shredding Shards. Empty by default so these stay about the
+        # weapon; a test that wants such a feature passes it.
+        self.named_features = features or []
 
     def take_damage(self, amount: int, fight=None) -> int:
         self.damage_taken.append(amount)

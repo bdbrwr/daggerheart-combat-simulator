@@ -55,8 +55,56 @@ the balance numbers, and none of them is wrong in a rules sense.
 | **Not This Time** is spent on an adversary's **critical**, or on any hit against a PC who is **near death** (`NEAR_DEATH_HP_UNMARKED` unmarked HP or fewer) - and never on a miss | `features/classes.py` → `not_this_time` | The card can force a reroll of any attack roll. A natural 20 hits regardless of Evasion and doubles what the damage is worth, so it's both the worst roll the GM makes and the only one a reroll is certain to improve. A hit on a PC one blow from the floor is the other one worth three Hope, because what it's measured against is a PC leaving the fight rather than a number. On any other ordinary hit the same price buys much less, and rerolling a *miss* only gives the GM a second try. |
 | **Luckbender** rerolls only a **failed** roll, only at 6 Hope or above, and for an *ally's* roll only if a range check passes | `features/ancestries.py` → `luckbender`, `LUCKBENDER_HOPE_FLOOR` | The card triggers on any action roll, yours or a willing ally's within Close range. Rerolling a success buys nothing measurable; the Hope floor keeps a class Hope feature affordable afterwards, since those are generally the bigger swing. |
 | An adversary's spotlight is **one action feature or the standard attack**, chosen at random among those willing | `combat/policy.py` → `take_adversary_turn` | The SRD calls these Actions and says they're what an adversary does when the spotlight is on them, but nothing says which to pick. Same random-among-viable stand-in the party already uses, and for the same reason: the order a stat block lists its features in carries no meaning. |
-| **Every batch 1 adversary feature fires whenever its cost can be paid** — no other condition | `features/adversaries.py` | Nothing; using a feature is the GM's choice every time. **These are placeholder defaults awaiting a ruling, not decisions.** "Whenever it can be paid" is the least inventive option available, and it is written here as a placeholder rather than as a policy so that nobody later mistakes it for a judgement somebody made. The features are Earth Eruption, Spit Acid, Bite, Hail of Boulders, Trample, Overload, Ground Slam and Grab and Drag; the open list is in `adversaries/PORTED.md`. |
+| **An adversary spends Stress on an Action only once hurt**: with X Stress slots still free, when `hp_unmarked <= X**2 + 1` | `adversaries/adversary.py` → `will_spend_stress` | Nothing; spending an adversary's Stress is the GM's choice every time. See "Adversary desperation" below for the whole rule. |
+| **A Reaction costing Stress fires on every trigger it can pay for** — the desperation rule above deliberately does not apply | `adversaries/adversary.py` → `can_spend_stress`, called directly by reaction features | Nothing. A reaction has a moment rather than a choice of moment; gating it on how hurt the adversary is would mean throwing the trigger away instead of picking a better time. |
+| **An attack feature that is worse than the standard attack by ≥ `2` expected damage and exists mainly to apply a condition is used only against a target that doesn't already have that condition** | `features/adversaries.py` → `CONDITION_ATTACK_EV_MARGIN` | Nothing. The margin is a knob and is deliberately a single named number rather than a per-feature threshold. It is set from two examples only (Venomous Stinger and Grab and Drag, both at exactly 2.0), which is thin — see the open validation note below. |
+| **Anything with no policy of its own is chosen at random among the options whose costs can be paid** | `combat/policy.py` → `take_adversary_turn`; `content/registry.py` → `action_options` | Nothing. The same rule the party already plays by, and the standing default rather than a per-feature placeholder: a feature is a candidate when it can be afforded and reaches somebody, and the shuffle picks among the candidates. |
+| **A Minion Group Attack is used when it reaches 2 or more Minions of that stat block** | `features/adversaries.py` → `GROUP_ATTACK_WORTH_IT` | Nothing; spending the Fear is the GM's choice. Below the threshold the feature buys nothing - it is one shared roll for the combined damage of everyone swept, so at one Minion it *is* that Minion's standard attack, bought with a Fear. Written for Minions in general rather than for the Giant Rat, since the shape recurs across the SRD's Minions. |
+| **Spitter is bought at the first spotlight the Fear allows**, and its extra activation is granted **once**, on that turn | `features/adversaries.py` → `spitter` | Nothing. The die keeps rolling every spotlight for the rest of the fight, so it is worth strictly more the earlier it lands and there is no reason to hold it. The one-off grant is the Overload shape (`grant_activation`) rather than the Relentless one: the Fear buys the die *and* one extra activation that turn, and every turn afterwards the die rolls and buys nothing. |
+| **`Flying (X)` is authored as the *average* uplift**, not checked per round | `features/adversaries.py` → `flying`; `adversaries/adversary.py` → `spawn` | The SRD qualifies it - "*while* flying" - and nothing tracks whether an adversary is currently airborne. Rather than invent a per-round check, the qualifier moves to the author: a creature in the air the whole fight is written `Flying (2)`, one up half the time `Flying (1)`. Over a high-N run those land in the same place, and the knob is in the JSON per adversary. |
 | **Adaptability** is used only while 4 or fewer Stress are marked | `features/ancestries.py` → `ADAPTABILITY_MAX_STRESS_MARKED` | The card sets no limit. Marking the last Stress makes a PC Vulnerable for the rest of the fight, which costs far more than one rerolled attack is worth, so the last slots are held back. |
+
+### Adversary desperation — when Stress gets spent
+
+An adversary's Stress is a small, fixed pool, and nothing in the SRD says when
+the GM should spend it. A simulator left alone spends it immediately, which turns
+every stat block's Stress into an opening flourish and makes a fight front-heavy
+in a way a table never is.
+
+The rule instead ties spending to how close the adversary is to going down. With
+**X** Stress slots still free, an **Action** costing Stress is available when
+
+```
+hp_unmarked <= X ** 2 + 1
+```
+
+| Slots still free | Spends at |
+|---|---|
+| 3 | 10 or fewer unmarked HP |
+| 2 | 5 or fewer |
+| 1 | 2 or fewer |
+
+The last slot opens at 2 unmarked HP, which is `NEAR_DEATH_HP_UNMARKED` — the
+same line the party plays to — and that alignment is where the `+ 1` comes from.
+A cost of more than one slot is measured at the *last* slot it would mark, since
+that is the one that has to be affordable.
+
+The shape it produces: most ported tier 1 adversaries have three Stress against
+9 HP or fewer, so their first Stress Action is on the table from the opening
+spotlight and the rest arrive as the party wears them down. The **Bear** is the
+outlier and the clearest illustration — 7 HP against only two Stress, so it
+cannot Bite until it is at 5 unmarked HP, and a healthy Bear is a plain 1d8+3
+attacker.
+
+**Reactions are exempt.** A reaction has one moment, not a choice of moments, so
+gating it on the adversary's HP would discard the trigger rather than time it
+better. They call `can_spend_stress` directly and fire whenever the trigger
+happens and the slot exists. The largest consequence is the Construct's
+**Overload**: all four of its Stress ride its first four landed attacks, from
+full health.
+
+Both halves are knobs. The exponent, the `+ 1`, and the action/reaction split are
+each worth sweeping.
 
 ### Area of effect, standing in for range
 
@@ -66,23 +114,36 @@ table, where the GM places adversaries and the spread of a fight is what makes a
 AOE good or wasted. Instead, **the range band caps how many adversaries an AOE
 can reach**:
 
-| Range band | Adversaries reached |
-|---|---|
-| Far | all of them |
-| Close | 75%, and never all — at least one is always out of it |
-| Very Close | at most a third |
-| Melee | 2, or 3 once there are a lot of adversaries |
+**The reach is rolled, not fixed.** Each band has a base reach from the field
+size and then a *spread roll* that can cut it, because a table's spread isn't
+fixed either — the same four adversaries are sometimes bunched and sometimes
+strung out, and a band that always delivered its best case would price every
+area ability off its best case. Two calls with the same field can differ, on
+purpose; a seeded run is still reproducible.
 
-As a formula over `n` living adversaries, with the result floored at 1:
+As a formula over `n` living adversaries, with the result floored at 1 and
+capped at `n`:
 
-- Far: `n`
-- Close: `min(n * 3 // 4, n - 1)`
-- Very Close: `n // 3`
-- Melee: `2`, or `3` when `n >= MANY_ADVERSARIES`
+| Band | Base | Spread roll |
+|---|---|---|
+| Far | `n` | one short, **1 in 4** |
+| Close | `min(n * 3 // 4, n - 1)` | held to `CLOSE_CAP` (3), **1 in 2** |
+| Very Close | `n // 3` | held to `VERY_CLOSE_CAP` (2) unless **1 in 10** |
+| Melee | 3 at `n >= MANY_ADVERSARIES`, else 2 | one fewer, **1 in 2** |
 
-`MANY_ADVERSARIES` is a knob, not a rule — it needs a number and 6 is a
-reasonable first guess. The percentages are knobs too, and worth sweeping: they
-are the whole of how much an AOE ability is worth in this simulator.
+So against four adversaries: Far reaches 4 or 3, Close reaches 3, Very Close
+reaches 1, and Melee reaches 2 or 1.
+
+Two of these were tightened deliberately, because the bands they governed were
+too strong. **Far** used to mean "the whole field, always", which made every Far
+ability worth its ceiling on every cast. **Melee** used to be a flat 2 below
+`MANY_ADVERSARIES` and is now 1 or 2, so a Melee sweep is no longer reliably
+better than a single-target attack on a small field.
+
+Every number here is a knob — the caps, the one-in-N divisors and
+`MANY_ADVERSARIES` alike. They are the whole of how much an area ability is
+worth in this simulator, so they are the first thing to sweep when an area-heavy
+party looks mispriced.
 
 The cap is the **total** number of adversaries caught, uniformly — including,
 for an ability that extends an attack that already hit someone, the adversary
@@ -100,9 +161,17 @@ The same fractions do second duty as **odds that one particular combatant is in
 range**, via `content/aoe.py` → `chance_within`. Some content isn't sweeping an
 area at all but needs one named person to be close by — Luckbender rescues "a
 willing ally within Close range". With no positions tracked the simulator has to
-put a number on that, and reusing the area fraction means both answers come from
-one set of knobs: sweeping the range bands moves them together. At Close that's
-a 3-in-4 chance the ally is reachable.
+put a number on that. At Close that's a 3-in-4 chance the ally is reachable.
+
+> **These three shares are now out of step with the counts above, and that is
+> flagged rather than fixed.** The spread rolls cut every band's expected reach,
+> but `_BAND_SHARE` still reads Far 1.0, Close 3/4, Very Close 1/3. Re-deriving
+> them would make Far n-dependent (`1 - 0.25/n`) instead of certain and would
+> change how often Luckbender can rescue an ally, which is a balance decision
+> rather than a tidy-up — so it is left for a ruling. Melee is the exception and
+> was fixed: its count is rolled, so `chance_within` uses the *expectation*
+> (the higher count less a half) rather than asking the roller, which would have
+> returned one sample of a random variable and called it a likelihood.
 
 ### Imperfect information is not modelled
 
@@ -161,6 +230,15 @@ holder Advantage, which is a large and fully represented effect, so content that
 applies it has something to apply. `FightState.is_vulnerable` answers for both
 sources at once — a PC with every Stress marked, and anyone the condition was
 put on.
+
+**Poison is modelled, and it is a family rather than one condition.** Several of
+the SRD's poisons share the name while differing in both what they do and how
+they end, so `POISONED` is the shared name and each source supplies its own `end`
+and `effect`. The Giant Scorpion's is the first: shaken off on a Knowledge
+Reaction Roll at 16, and costing its holder a Stress on a d6 of 4 or lower before
+each action roll. That second half is the first real use of `Condition.effect`
+and of `BEFORE_AN_ACTION_ROLL`, announced from `combat/policy.py` →
+`_make_the_roll`.
 
 **Restrained is ruled to have no combat effect here.** It stops a combatant
 moving and does nothing else, and no movement is modelled. A feature that
@@ -230,6 +308,9 @@ the numbers.
 | An adversary's **area attack** is one roll checked against each target's Evasion, with one damage roll applied to everyone it beat | `adversaries/adversary.py` → `area_attack`; `content/aoe.py` → `targets_hit` | The mirror of the reading already used for a PC rolling against an area, and of `Hold Them Off` reusing one roll against several. The roll's own success is measured against the *lowest* Evasion present, for the same reason the PC side measures against the lowest Difficulty: it either beat somebody or it beat nobody. |
 | A feature keyed on "takes **Severe damage**" reads the number rolled; one keyed on "marks **2 or more HP**" reads what the hit cost | `features/adversaries.py` → `acid_bath`, `rampaging_fury`; `content/registry.py` → `on_damaged` | The SRD writes both kinds and means different things by them, so `on_damaged` is handed both figures and each feature reads the one its own text names. |
 | Content that **worsens** a hit is asked after content that softens it, and **Weak Structure** fires only on a hit that actually marked HP | `content/registry.py` → `harden_damage`, `severity_increase`; `features/adversaries.py` → `weak_structure` | "When the Construct marks HP … they must mark an additional HP" doesn't say whether that's the HP the damage started at or the HP it ended at. Reading it as the final amount means a hit an Armor Slot or a domain card absorbed entirely marked nothing, so there is nothing to add to - which is what the trigger says on its face. Fixing the order in the dispatch rather than in each feature keeps the answer the same however many features register |
+| **Pack Tactics** asks the **area rule** whether the pack converged: of the wolves alive, `targets_reached(MELEE, ...)` says how many are on this target, and the feature needs 2 - the attacker and one more | `features/adversaries.py` → `pack_tactics`, `PACK_TACTICS_WOLVES` | "Another Dire Wolf within Melee range of the target" is positioning, and none is tracked. Reading it as "is another wolf alive anywhere?" would fire on every standard attack for as long as any packmate stood, which is far more than the page promises - so the Melee band answers instead. Since that band is rolled, a pair converges about half the time and a pack of six always does, and how often the band lets it through is the whole of what holds the feature back. |
+| **Armor-Shredding Shards** reads "within Melee range" off the **attacker's weapon**: everyone is assumed to have attacked from the greatest range their weapon allows, so a Melee-only weapon triggers it and anything reaching further does not | `features/adversaries.py` → `armor_shredding_shards`; `items/weapons.py` → `attack_with` | No positions are tracked, so the trigger needs some handle on distance and the weapon is the only one there is. It makes the feature a tax on the front line and free for archers, which is the shape it has at a table - and it means a party's answer to the Glass Snake is a weapon choice. Only weapon attacks reach it; content that rolls an attack of its own has no weapon and no range, declared as a gap |
+| A **Minion Group Attack** is **one activation** however many Minions it sweeps, but each Minion swept has its own spotlight consumed and doesn't act again that GM turn | `features/adversaries.py` → `group_attack`; `combat/state.py` → `consume_activation`; `combat/fight.py` → `_next_adversary` | "Spend a Fear to choose a target and spotlight all Giant Rats within Close range" - the SRD spotlights several combatants with one feature, which nothing in the loop had a shape for. Charging one activation follows from it being one shared attack roll; consuming the rest follows from them having been spotlighted. Reading it the other way (one activation each) would let a swarm act, then act again, and would empty the GM turn's budget into a single feature |
 | A die discarded by **Massive**/**Powerful** doesn't count toward the critical bonus - a crit adds the maximum of the dice that were kept, not of every die rolled | `dice/damage.py` → `critical_bonus` | A crit "adds the maximum possible result of the damage dice"; the SRD doesn't say whether a discarded die is still one of "the damage dice". Counting it would pay for a die that was thrown away. |
 
 ## 3. Not implemented
@@ -254,7 +335,7 @@ complete simulation of the game.
 - **All conditions except Vulnerable** — see the conditions section above. Restrained is *ruled* to have no combat effect here rather than merely absent; Hidden, On Fire and Stunned have no representation and nothing applies them.
 - **Direct damage bypasses the Armor Slot only.** `characters/player_character.py` → `take_damage(direct=True)`; `content/registry.py` → `direct_damage`, `deals_direct_damage`. Thresholds still decide how many HP it costs, and damage responses still get their say — the SRD's restriction is on armor. Against this party it's worth close to a whole HP per hit, since the policy otherwise marks a free slot against everything
 - **Adversary Fear features** — no adversary has one implemented yet. Note this is distinct from features that merely *cost* the GM Fear, several of which are modelled (Ramp Up charges to spotlight, Grab and Drag spends on a hit)
-- **Adversary Experiences.** The SRD gives adversaries optional Experiences the GM can spend a Fear on, "to raise their attack roll or increase the Difficulty of a roll made against them". There is no field for them and no mechanic behind them; they're recorded in each catalogue entry's `notes` so an entry stays checkable against the printed page
+- **Adversary Experiences — ruled out, not outstanding.** The SRD gives adversaries optional Experiences the GM can spend a Fear on, "to raise their attack roll or increase the Difficulty of a roll made against them". The user has decided not to model them, and the reason is the Fear economy rather than the effort: this simulator already commits a great deal of Fear to extra activations, and an Experience competes for that same Fear while buying a comparatively minor bonus on a single roll. A GM in this simulator would essentially never take that trade, so implementing it would add a branch that never fires. They stay recorded in each catalogue entry's `notes` so an entry remains checkable against the printed page, and there is deliberately no field and no mechanic. This is a decision, so it does not belong on anyone's list of work to do
 - **Adversary `type` is data only.** The SRD gives a type no rules of its own — "an adversary's type represents the role they play in a conflict", then one descriptive line each. Everything mechanical that sounds like a type is printed as a named *feature* (`Minion (X)`, `Horde (X)`, `Relentless (X)`, `Slow`, `Arcane Form`, `Armored Carapace` are all SRD example passives), so the fight loop never reads `Adversary.type`. It is carried because it's on the printed page and because it's what "Social adversaries aren't ported" keys on — see `adversaries/PORTED.md`
 - **Adversary passive features** — named in `adversaries/srd.json` rather than sitting in a code comment, so they reach the coverage block. All three Jagged Knife passives are assessed in `features/adversaries.py`: *Climber* has no combat effect, and *From Above* (+1 expected damage) and *Unseen Strike* (+2) are declared **insignificant**, because damage reaches HP through threshold bands and a bump that size lands within a band far more often than across one. Neither is left *unimplemented* — that state is for work nobody has done, not for a decision
 - **Most of the SRD armor table.** Only what the current sheets equip is catalogued in `items/srd.json`. Fortified, Resilient, Shifting, Impenetrable, Painful, Hopeful, Burning and the rest are real mechanics with nothing behind them yet — an armor naming one reports as unimplemented the moment it's equipped
@@ -293,4 +374,5 @@ Not game rules at all — machinery that exists because this is software.
 - **"Near death" means 2 or fewer unmarked HP** on whoever came closest. Not a game concept — `characters/player_character.py` → `NEAR_DEATH_HP_UNMARKED`, `is_near_death`. It began as a reporting threshold and is now a trigger content keys on too (Not This Time), which is why it lives on the character rather than in `simulation/`: a report that called a fight a near thing on a different number from the one the party plays to would be describing two different edges
 - **One seed per command** seeds every encounter in it, so variations face the same dice — `simulation/cli.py`
 - **A printed threshold of `None` is stored as 9999** — `adversaries/catalogue.py` → `NO_THRESHOLD`. Some stat blocks print no thresholds at all (Minions, and small things like the Tiny Green Ooze on 2 HP), and every case so far is an adversary with fewer HP than the threshold could ever become relevant for. A threshold out of reach says exactly that: every hit lands in the lowest band. Zero would be catastrophically wrong — it would put every hit at or above Severe and mark 3 HP off a 1 HP track
+- **An adversary's standard-attack range is a required field** — `adversaries/adversary.py` → `range`, `attack_band`; `adversaries/catalogue.py` → `parse_range`. No positioning is tracked, so it never decides whether an ordinary attack connects, and it looks like provenance. It isn't: a feature that turns the standard attack into an area one sweeps *this* band, so the number decides how many combatants such a feature reaches. Before it was a field, content had to name a band itself — the Cave Ogre's Very Close was written into `Ramp Up`, which would have swept the wrong band on a Melee adversary and meant every future feature of that shape carrying its own hand-entered copy of a number already printed on the page. `Ramp Up` and `Trample` now read `attack_band`; features that name their *own* band on the page (Hail of Boulders at Far, Spinning Serpent at Very Close) still state it, because that band is theirs and not the adversary's
 - **A feature's name may carry a parameter** — `content/names.py` → `base_name`, `parameter`; `content/registry.py` → `_registered`, `feature_parameter`. The SRD prints `Relentless (3)`, `Minion (3)`, `Horde (1d4+1)`: one feature with an argument, not several features. Content registers under the base name and reads its own X off the holder, so no hook signature grows a parameter that almost nothing uses

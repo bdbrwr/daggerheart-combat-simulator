@@ -208,6 +208,7 @@ def _take_gm_turn(state: FightState) -> None:
     """
     state.gm_turns += 1
     state.granted.clear()
+    state.consumed.clear()
 
     # A condition the party put on an adversary gets its chance to end here,
     # which for most of them means the GM paying a Fear to shake it off. Done
@@ -252,17 +253,26 @@ def _next_adversary(state: FightState, taken: dict[int, int]):
     Ties are broken at random rather than by list position. The order an
     encounter happens to spawn its adversaries in carries no meaning and must
     never decide an outcome - the same rule `_next_pc` follows.
+
+    An adversary's spotlights can be used up by something other than this loop
+    choosing it: a Minion's Group Attack sweeps its whole swarm into one shared
+    attack, and each Minion in it has been spotlighted. Those are counted here
+    through `consumed_activations`, so a swept Minion doesn't come round again -
+    and, since they also count toward "who has gone least", the rest of the field
+    gets its turn before anything acts twice.
     """
+
+    def spent(adversary) -> int:
+        return taken.get(id(adversary), 0) + state.consumed_activations(adversary)
+
     available = [
         adversary
         for adversary in state.living_adversaries
-        if taken.get(id(adversary), 0)
+        if spent(adversary)
         < activations_allowed(adversary, state) + state.granted_activations(adversary)
     ]
     if not available:
         return None
 
-    fewest = min(taken.get(id(adversary), 0) for adversary in available)
-    return random.choice(
-        [a for a in available if taken.get(id(a), 0) == fewest]
-    )
+    fewest = min(spent(adversary) for adversary in available)
+    return random.choice([a for a in available if spent(a) == fewest])

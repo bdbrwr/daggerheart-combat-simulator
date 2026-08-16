@@ -23,6 +23,7 @@ MINION = {
     "hp_max": 1,
     "stress_max": 1,
     "attack_modifier": -4,
+    "range": "Melee",
     "damage_dice": "",
     "damage_modifier": 1,
 }
@@ -30,6 +31,27 @@ MINION = {
 
 def _entry(**overrides) -> dict:
     return {**MINION, **overrides}
+
+
+# --- The printed range -------------------------------------------------------
+
+
+def test_the_range_is_required_rather_than_defaulted():
+    """It decides how far an area-ified standard attack sweeps, so it must be stated."""
+    without = {key: value for key, value in MINION.items() if key != "range"}
+
+    with pytest.raises(ValueError, match="range"):
+        adversary_from_data(without, "SRD", "srd.json")
+
+
+def test_a_range_is_normalised_to_the_books_own_spelling():
+    rat = adversary_from_data(_entry(range="very close"), "SRD", "srd.json")
+    assert rat.range == "Very Close"
+
+
+def test_a_range_that_is_not_a_band_raises_and_names_the_entry():
+    with pytest.raises(ValueError, match="Giant Rat"):
+        adversary_from_data(_entry(range="Adjacent"), "SRD", "srd.json")
 
 
 def test_a_null_threshold_is_read_as_out_of_reach():

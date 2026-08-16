@@ -88,11 +88,11 @@ small to change an outcome), **not implemented** (work still to do).
 | Cave Ogre | Solo | 1 | Bone Breaker, Ramp Up, Hail of Boulders, Rampaging Fury *implemented* |
 | Construct | Solo | 1 | Relentless (2), Weak Structure, Trample, Overload, Death Quake *implemented* |
 | Deeproot Defender | Bruiser | 1 | Ground Slam, Grab and Drag *implemented* |
-| Dire Wolf | Skulk | 2 | Pack Tactics, Hobbling Strike *not implemented* |
-| Giant Mosquitoes | Horde (5/HP) | 2 | Horde (1d4+1), Flying, Bloodsucker *not implemented* |
-| Giant Rat | Minion | 2 | Minion (3), Group Attack *not implemented* |
-| Giant Scorpion | Bruiser | 2 | Momentum *implemented* · Double Strike, Venomous Stinger *not implemented* |
-| Glass Snake | Standard | 2 | Armor-Shredding Shards, Spinning Serpent, Spitter *not implemented* |
+| Dire Wolf | Skulk | 2 | Pack Tactics, Hobbling Strike *implemented* |
+| Giant Mosquitoes | Horde (5/HP) | 2 | Horde (1d4+1), Flying (2), Bloodsucker *implemented* |
+| Giant Rat | Minion | 2 | Minion (3), Group Attack *implemented* |
+| Giant Scorpion | Bruiser | 2 | Momentum, Double Strike, Venomous Stinger *implemented* |
+| Glass Snake | Standard | 2 | Armor-Shredding Shards, Spinning Serpent, Spitter *implemented* |
 | Jagged Knife Bandit | Standard | earlier | Climber *no combat effect* · From Above *irrelevant* |
 | Jagged Knife Sniper | Ranged | earlier | Unseen Strike *irrelevant* |
 
@@ -183,6 +183,33 @@ file doesn't carry eighty rows nobody is working from yet.
 - **Direct damage** skips the Armor Slot and nothing else.
 - **Reaction Rolls** are Duality Dice plus a trait, with the Hope/Fear outcome
   unread. A critical ignores the whole effect.
+- **Adversary Experiences will not be modelled.** Ruled out rather than left
+  outstanding. The SRD makes them optional and GM-facing - "the GM can spend a
+  Fear to add an adversary's relevant Experience to raise their attack roll or
+  increase the Difficulty of a roll made against them" - and the objection is
+  the Fear economy: this simulator already commits a lot of Fear to extra
+  activations, which an Experience competes with while buying a comparatively
+  minor bonus on one roll. They stay in each entry's `notes` so the entry is
+  still checkable against the page. Do not put this back on a list of work.
+- **Machinery batch 2 built, all reusable.** `standard_damage` /
+  `standard_attack_damage` swaps the dice a *printed* attack rolls, asked from
+  inside the damage roll so a feature that brought its own dice is never
+  touched - it serves `Horde (X)` and `Pack Tactics` at once. `on_attacked`
+  belongs to whoever was hit rather than whoever swung, and is handed the
+  attacker's weapon because range is what Armor-Shredding Shards keys on.
+  `on_spotlight` fires on the spotlight arriving rather than on a choice, which
+  is what lets the Spitter Die keep rolling however the Snake spends its turns.
+  `Condition.effect` has its first user and its first announced moment,
+  `BEFORE_AN_ACTION_ROLL`. `Adversary.attack` gained `direct=`, matching
+  `area_attack`, for a feature whose own attack is direct without a passive
+  granting it.
+- **`Flying (X)` resolves into `Adversary.difficulty` at spawn time**, via
+  `content/registry.py`'s `difficulty_bonus` hook - the only hook with no
+  `fight` in its signature, because it never runs during one. The four places
+  that read Difficulty are therefore already correct and none of them knows the
+  feature exists. The "while flying" qualifier moves to the author: the number
+  on the stat block is the *average* uplift, so a creature airborne half the
+  time is written `Flying (1)` rather than checked every round.
 
 ## Batch 2 rules rulings
 
@@ -225,51 +252,67 @@ a GM reaches for it.
   `activation_limit` (the `Relentless` shape). It stays inside the party size + 1
   cap and the extra activation still costs the usual Fear.
 
-## Usage policies awaiting a ruling
+## Usage policies — ruled
 
 Implementing a feature is two jobs: the **mechanics**, which come from the SRD,
 and the **usage policy** - when a GM would actually reach for it. The second is a
-judgement about the game and belongs to the user, so every feature below runs on
-a placeholder rather than a decision.
+judgement about the game and belongs to the user.
 
-**The placeholder is "use it whenever its cost can be paid."** It is the least
-inventive option available. Where a real policy is wanted, it's a one-line change
-at the top of each function.
+The rulings came back as **four general rules covering classes of feature**,
+rather than as a decision per feature. They live in `SIMULATION-RULES.md`; this
+is the summary and the per-feature mapping.
 
-| Feature | Cost | The choice a GM actually makes |
+1. **An Action costing Stress** is available once the adversary is hurt enough:
+   with X Stress slots still free, when `hp_unmarked <= X**2 + 1`. So 10 or fewer
+   unmarked HP at three slots, 5 at two, 2 at one - the last slot opening on the
+   same near-death line the party plays to. `Adversary.will_spend_stress`.
+2. **A Reaction costing Stress** fires on every trigger it can pay for. Rule 1
+   deliberately does not apply: a reaction has one moment, not a choice of them.
+   `Adversary.can_spend_stress`, called directly.
+3. **An attack feature worse than the standard attack by ≥ 2 expected damage
+   whose point is applying a condition** is used only against a target that
+   doesn't already have that condition. `CONDITION_ATTACK_EV_MARGIN`.
+4. **Everything else is random among the options whose costs can be paid** - the
+   same rule the party already plays by. This is the standing default, so a
+   feature with nothing special about it needs no policy written for it at all.
+
+### Batch 1
+
+| Feature | Cost | Ruled by |
 |---|---|---|
-| Earth Eruption | 1 Stress | Deals no damage. Worth a Stress for the Vulnerable, or hold it for a Bite-style attack? |
-| Spit Acid | free | Free, so nothing to weigh - unless it should be held when it reaches only one PC, where 2d6 is worse than the Burrower's 1d12+2 |
-| Bite | 1 Stress | 3d4+10 against a standard 1d8+3, and only two Stress on the sheet |
-| Hail of Boulders | 1 Stress (+ the Ramp Up Fear already paid) | Far reaches everyone, so this is the Ogre's real area threat |
-| Trample | 1 Stress | 1d8 to two, against 1d20 to one |
-| Overload | 1 Stress | +10 damage and an extra spotlight; four Stress means four of them |
-| Ground Slam | free | Deals no damage; drains party Stress instead |
-| Grab and Drag | 1 Fear on a hit | 1d6+2 against a standard 1d8+3. Lower damage, but that is a fact about damage alone - the Restrain that justifies it at a table has no representation here, and that is a gap of ours rather than evidence about the game |
+| Earth Eruption | 1 Stress | rule 1 |
+| Bite | 1 Stress | rule 1. The sharpest case in the catalogue: 7 HP against 2 Stress means the Bear can't Bite until 5 unmarked HP |
+| Hail of Boulders | 1 Stress (+ the Ramp Up Fear already paid) | rule 1 |
+| Trample | 1 Stress | rule 1 |
+| Overload | 1 Stress | rule 2 - a Reaction, so all four Stress ride the Construct's first four landed attacks, from full health |
+| Spit Acid | free | rule 4 |
+| Ground Slam | free | rule 4 |
+| Grab and Drag | 1 Fear on a hit | rule 3 catches it on the numbers (5.5 against 7.5, exactly the 2.0 margin) but the condition it applies is Restrained, which has no representation here - so there is nothing to check and it falls through to rule 4 |
 
-### Batch 2 — ruled on before the code is written
+### Batch 2
 
-**No feature code exists for any of these yet.** The stat blocks are ported and
-their numbers work; the features below are `not implemented` until these are
-answered.
+All eleven features are implemented. The policies are settled.
 
-| Feature | Cost | The choice |
+| Feature | Cost | Ruled by |
 |---|---|---|
-| Hobbling Strike (Dire Wolf) | 1 Stress | 3d4+10 **direct** plus Vulnerable, against a standard 1d6+2. The Wolf's whole threat, and 3 Stress on the sheet |
-| Bloodsucker (Mosquitoes) | 1 Stress | After a hit that marked HP, force one more. Spend on every hit, or hold for one that would drop a PC? |
-| Group Attack (Giant Rat) | 1 Fear | One shared roll across every Rat within Close, 1 damage each combined. Worth more the more Rats are alive |
-| Double Strike (Scorpion) | 1 Stress | The standard 1d12+2 against **two** Melee targets. Nothing gained against a lone PC |
-| Venomous Stinger (Scorpion) | 1 Fear on a hit | 1d4+4 plus Poison, against a standard 1d12+2. Lower damage, and now that Poison is modelled the trade is real rather than notional |
-| Spinning Serpent (Glass Snake) | 1 Stress | Area at Very Close for 1d6+1, against a standard 1d8+2 |
-| Spitter (Glass Snake) | 1 Fear, once | Buys a die that then rolls every spotlight, and an extra spotlight each turn. Worth far more early in a fight than late |
+| Hobbling Strike (Dire Wolf) | 1 Stress | rule 1 |
+| Double Strike (Scorpion) | 1 Stress | rule 1. Explicitly **no** target-count threshold, so it can be spent against a lone PC for nothing but the Stress |
+| Spinning Serpent (Glass Snake) | 1 Stress | rule 1. Explicitly no "only when it reaches 2+ PCs" threshold - though the AOE rules themselves may want revisiting |
+| Bloodsucker (Mosquitoes) | 1 Stress | rule 2 - a Reaction, so every hit that marked HP |
+| Venomous Stinger (Scorpion) | 1 Fear on a hit | rule 3. 1d4+4 at 6.5 against the standard 1d12+2 at 8.5, exactly the 2.0 margin, and Poison **is** modelled - so this is the first feature the rule actually acts on |
+| Group Attack (Giant Rat) | 1 Fear | Used when it beats what one Minion's standard attack would do, i.e. **2 or more** of that stat block in range. **Generalised to all Minion group attacks**, not written for the Rat |
+| Spitter (Glass Snake) | 1 Fear, once | Bought at the Snake's first spotlight the Fear allows - it is worth strictly more the earlier it lands |
+
+### The margin in rule 3 wants a validation check
+
+It is set at 2 from a sample of two, both sitting on exactly 2.0, so right now it
+separates nothing - and twelve of the SRD's ~129 adversaries are ported. Once
+enough condition-applying attack features exist, `validation/` should check the
+margin against the whole catalogue and the number should be revisited. Recorded
+here rather than treated as settled.
 
 ## Still open
 
-- **Adversary Experiences aren't modelled.** The SRD makes them optional and
-  GM-facing: "The GM can spend a Fear to add an adversary's relevant Experience
-  to raise their attack roll or increase the Difficulty of a roll made against
-  them." They're recorded in each entry's `notes` so the entry stays checkable
-  against the page, but there is no field and no mechanic behind them.
 - **Three PC cards still charge condition Fear the old way.** Slumber, Vicious
   Entangle and Tava's Armor spend the GM's Fear at the moment they apply a
   condition, rather than going through `Condition` and `when_the_gm_pays`. The

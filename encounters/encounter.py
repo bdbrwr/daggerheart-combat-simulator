@@ -13,23 +13,33 @@ knob being moved:
       "notes": "Four adversaries against one tier 1 PC. What does softening buy?",
 
       "party": ["example_character.json"],
-      "starting_fear": 0,
-      "starting_spotlight": "pcs",
-      "rest": "long",
 
       "variations": [
         { "name": "As printed",
           "groups": [{ "adversary": "Jagged Knife Bandit", "count": 3 }] },
 
-        { "name": "One fewer bandit",
+        { "name": "Walked into cold",
           "notes": "The obvious first thing to try.",
-          "groups": [{ "adversary": "Jagged Knife Bandit", "count": 2 }] }
+          "starting_fear": 3,
+          "starting_spotlight": "gm",
+          "rest": "none",
+          "groups": [{ "adversary": "Jagged Knife Bandit", "count": 3 }] }
       ]
     }
 
-Everything outside `variations` is the shared baseline. A variation may override
-any of it - `party`, `rest`, `starting_fear`, `starting_spotlight` - so "the same
-fight, but walked into with no rest" is a variation rather than a second file.
+## What is shared and what is not
+
+Outside `variations` sits the **party**, and only the party. It is what the
+variations are being compared for, so stating it once is the point, and a
+variation may still state its own.
+
+**The state a fight is walked into belongs to the variation** - `starting_fear`,
+`starting_spotlight` and `rest` are read there and nowhere else. They used to be
+shared settings a variation could override, which put three of the sharpest knobs
+in the file in the position that reads as "the experiment's constant" when they
+are exactly the sort of thing an experiment varies. A variation that states none
+of them gets the ordinary opening: no Fear banked, the party acting first, a long
+rest behind them. Writing one at the top level is now an unknown key and says so.
 
 Each variation becomes an `Encounter`: one runnable fight, which is what
 `combat/fight.py` and `simulation/runner.py` take. A Group names an adversary
@@ -70,7 +80,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from adversaries.adversary import Adversary
-from adversaries.catalogue import parse_dice
+from adversaries.catalogue import parse_dice, parse_range
 from adversaries.registry import find_adversary
 from characters.player_character import PlayerCharacter
 from combat.common import Side
@@ -80,10 +90,21 @@ from content.names import canonical
 CHARACTERS_DIR = Path(__file__).resolve().parent.parent / "characters"
 
 # Settings a variation may inherit from its experiment, or state for itself.
-_SHARED_KEYS = frozenset({"party", "starting_fear", "starting_spotlight", "rest"})
+# Only the party: it is what the variations are being compared *for*, so stating
+# it once is the point.
+_SHARED_KEYS = frozenset({"party"})
+
+# The state a fight is walked into, which belongs to the variation and nowhere
+# else. These are among the sharpest knobs in the file - a fight opened by the
+# GM holding 3 Fear is a different fight - so putting them in the shared baseline
+# made them look like the experiment's constant when they are exactly the sort of
+# thing an experiment varies. Stated per variation, defaulted where omitted.
+_VARIATION_ONLY_KEYS = frozenset({"starting_fear", "starting_spotlight", "rest"})
 
 _EXPERIMENT_KEYS = _SHARED_KEYS | {"name", "notes", "variations"}
-_VARIATION_KEYS = _SHARED_KEYS | {"name", "notes", "groups", "fights"}
+_VARIATION_KEYS = (
+    _SHARED_KEYS | _VARIATION_ONLY_KEYS | {"name", "notes", "groups", "fights"}
+)
 _GROUP_KEYS = frozenset({"adversary", "count", "overrides"})
 
 # Every stat a Group may override, taken from the dataclass rather than listed
@@ -149,12 +170,12 @@ class Group:
         misspelled knob fails while the file is being read rather than at spawn
         time - by which point a run is already under way.
 
-        `damage_dice` is the one override that isn't a bare number, so it goes
-        through the catalogue's own `parse_dice`: an encounter writes `"2d6"` or
-        `"2d6+1d4"` exactly the way a stat block does. Parsing here rather than
-        in `__init__` keeps the JSON path and the Python one honest - a Group
-        built in code passes `DiceGroup`s directly, the same way it passes an
-        Adversary object instead of a name.
+        Two overrides aren't bare numbers and go through the catalogue's own
+        parsers, so an encounter writes them exactly the way a stat block does:
+        `damage_dice` as `"2d6"` or `"2d6+1d4"`, and `range` as a printed band.
+        Both are validated here rather than at spawn, because a band nobody
+        recognises would otherwise surface mid-run, from whichever feature first
+        asked how far the standard attack sweeps.
         """
         _reject_unknown_keys(data, _GROUP_KEYS, "a group", source)
         if "adversary" not in data:
@@ -172,6 +193,10 @@ class Group:
         if "damage_dice" in overrides:
             overrides["damage_dice"] = parse_dice(
                 overrides["damage_dice"], source, data["adversary"]
+            )
+        if "range" in overrides:
+            overrides["range"] = parse_range(
+                overrides["range"], source, data["adversary"]
             )
 
         try:
@@ -320,18 +345,21 @@ def _variation(
             f"{source}: {data['name']!r} has no party, and the file states none."
         )
 
+    # The starting state is read from the variation alone - it is never inherited,
+    # because it isn't shared. A variation that says nothing gets the ordinary
+    # opening: no Fear banked, the party acting first, a long rest behind them.
     return Encounter(
         name=data["name"],
         experiment=experiment,
         party=[_character_path(entry, source) for entry in settings["party"]],
         groups=[Group.from_data(group, source) for group in data["groups"]],
-        starting_fear=settings.get("starting_fear", 0),
+        starting_fear=data.get("starting_fear", 0),
         starting_spotlight=_parse_enum(
             Side,
-            settings.get("starting_spotlight", Side.PCS.value),
+            data.get("starting_spotlight", Side.PCS.value),
             "starting_spotlight",
             source,
         ),
-        rest=_parse_enum(Rest, settings.get("rest", Rest.LONG.value), "rest", source),
+        rest=_parse_enum(Rest, data.get("rest", Rest.LONG.value), "rest", source),
         notes=" ".join(part for part in (shared_notes, data.get("notes", "")) if part),
     )

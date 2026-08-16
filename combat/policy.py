@@ -43,6 +43,7 @@ import random
 from content import (
     action_options,
     apply_on_hit,
+    apply_on_spotlight,
     find_shielder,
     hope_die_for,
     is_immune_to,
@@ -52,7 +53,7 @@ from content import (
     use_free_abilities,
 )
 from content.aoe import targets_in_area
-from content.conditions import VULNERABLE
+from content.conditions import BEFORE_AN_ACTION_ROLL, VULNERABLE
 from content.names import canonical
 from content.rolls import clear_experience_utilised, note_experience_utilised
 from dice.common import AdvantageState
@@ -257,6 +258,12 @@ def _make_the_roll(
     # Experience, and only the one that takes the roll ever does.
     clear_experience_utilised(pc, state)
 
+    # Conditions that charge their holder for making an action roll get paid
+    # first - the Giant Scorpion's Poison is "roll a d6 before you make an action
+    # roll". Announced generically; nothing here knows which conditions those
+    # are, or that any exist.
+    state.apply_condition_effects(pc, BEFORE_AN_ACTION_ROLL)
+
     def swing_the_weapon(attacker, at, fight):
         """The weapon as one option among the rest. It never declines.
 
@@ -314,13 +321,24 @@ def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult
 
     A Vulnerable PC (all Stress marked) is attacked with Advantage, per the
     SRD's condition - unless something the PC carries turns the condition off,
-    which is asked generically rather than by name. Adversary Fear features
-    aren't implemented, so an activation is always a standard attack for now.
+    which is asked generically rather than by name.
+
+    An activation resolves into exactly one of the adversary's Action features
+    or its standard attack, picked at random among those willing - which is the
+    standing policy for anything with no rule of its own. What makes a feature
+    willing is its own business: several consult the Stress-desperation rule
+    (`Adversary.will_spend_stress`) and decline while the adversary is healthy.
 
     The fight is handed to the attack so it reaches the target's damage
     responses: whether one applies can depend on state that only exists for the
     length of this fight.
     """
+    # Content that fires on the spotlight arriving rather than on anything the
+    # adversary chooses - the Glass Snake's Spitter Die rolls itself every time
+    # the Snake is up. Asked first, so it happens whatever the adversary then
+    # does, and it neither competes for the action nor consumes it.
+    apply_on_spotlight(adversary, state)
+
     target = choose_adversary_target(adversary, state)
     if target is None:
         return None

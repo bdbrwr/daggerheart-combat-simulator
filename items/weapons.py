@@ -36,6 +36,7 @@ from content import (
     total_extra_damage,
     total_roll_bonus,
 )
+from content.registry import apply_on_attacked
 from dice.common import AdvantageState
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import roll_duality
@@ -58,6 +59,10 @@ class Target(Protocol):
     """Anything a PC's weapon can attack - an adversary."""
 
     difficulty: int
+
+    # Scanned for content that punishes being hit, which belongs to whoever was
+    # attacked rather than to whoever swung.
+    named_features: list[str]
 
     def take_damage(self, amount: int, fight=None) -> int: ...
 
@@ -144,6 +149,14 @@ def attack_with(
         drop_lowest=pool.drop_lowest,
     )
     marked = target.take_damage(damage_roll.total)
+
+    # Content the *target* carries that punishes being hit - the Glass Snake's
+    # shards of glass. Asked after the damage lands, because the trigger is a
+    # successful attack rather than a wound, and handed the weapon because how
+    # far away the attacker was standing is the only thing such content has to
+    # read range off. Nothing here knows what any of it is.
+    apply_on_attacked(target, attacker, weapon, fight)
+
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
     )

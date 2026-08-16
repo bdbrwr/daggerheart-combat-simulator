@@ -26,6 +26,9 @@ class FakeTarget:
     def __init__(self, difficulty: int = 10):
         self.difficulty = difficulty
         self.damage_taken: list[int] = []
+        # Scanned for content that punishes being hit. Empty, so these stay
+        # about the extra-damage hook and nothing answers from the target's side.
+        self.named_features: list[str] = []
 
     def take_damage(self, amount: int, fight=None) -> int:
         self.damage_taken.append(amount)

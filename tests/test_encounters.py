@@ -88,16 +88,22 @@ def test_a_refreshed_registry_finds_the_same_definitions_again():
 # --- What a variation inherits -----------------------------------------------
 
 
-def test_a_variation_inherits_the_files_party_and_settings(tmp_path):
+def test_a_variation_inherits_the_files_party(tmp_path):
+    """The party is the only thing shared - it's what the variations compare."""
     variation = _one_variation(tmp_path / "fight.json")
 
     assert variation.party == [CHARACTERS_DIR / "example_character.json"]
+
+
+def test_a_variation_that_states_no_starting_state_gets_the_ordinary_opening(tmp_path):
+    variation = _one_variation(tmp_path / "fight.json")
+
     assert variation.starting_fear == 0
     assert variation.starting_spotlight is Side.PCS
     assert variation.rest is Rest.LONG
 
 
-def test_a_variation_overrides_what_it_states_itself(tmp_path):
+def test_a_variation_states_its_own_starting_state(tmp_path):
     """"The same fight, walked into cold" is a variation, not a second file."""
     variation = _one_variation(
         tmp_path / "fight.json",
@@ -109,6 +115,22 @@ def test_a_variation_overrides_what_it_states_itself(tmp_path):
     assert variation.starting_fear == 3
     assert variation.starting_spotlight is Side.GM
     assert variation.rest is Rest.NONE
+
+
+def test_the_starting_state_is_not_a_shared_setting(tmp_path):
+    """It used to be, and reading it there made three sharp knobs look constant.
+
+    Refused rather than quietly inherited: a file that still writes it at the top
+    level is asking for something the loader no longer does, and silently ignoring
+    it would run every variation on a starting state nobody set.
+    """
+    for key, value in (
+        ("starting_fear", 3),
+        ("starting_spotlight", "gm"),
+        ("rest", "none"),
+    ):
+        with pytest.raises(ValueError, match=key):
+            Experiment.from_json(_write(tmp_path / "fight.json", **{key: value}))
 
 
 def test_a_variation_is_titled_by_its_experiment_and_its_own_name(tmp_path):
@@ -272,7 +294,7 @@ def test_an_override_of_a_stat_adversaries_do_not_have_is_refused(tmp_path):
 
 def test_an_unparseable_rest_says_what_was_expected(tmp_path):
     with pytest.raises(ValueError, match="'long'"):
-        Experiment.from_json(_write(tmp_path / "fight.json", rest="overnight"))
+        _one_variation(tmp_path / "fight.json", rest="overnight")
 
 
 def test_a_missing_character_sheet_is_caught_while_reading(tmp_path):

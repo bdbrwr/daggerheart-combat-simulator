@@ -36,6 +36,7 @@ from dataclasses import fields
 from pathlib import Path
 
 from adversaries.adversary import Adversary
+from content.aoe import band_named
 from dice.damage import DiceGroup
 
 # Everything a catalogue entry may say, taken from the dataclass rather than
@@ -62,6 +63,12 @@ _REQUIRED = (
     "hp_max",
     "stress_max",
     "attack_modifier",
+    # Required rather than defaulted, even though no positioning is tracked and
+    # an ordinary attack never reads it. A feature that turns the standard attack
+    # into an area one sweeps *this* band, so an omitted range would quietly
+    # decide how many combatants such a feature reaches - the exact class of
+    # silent difference the rest of this list exists to prevent.
+    "range",
 )
 
 _FILE_KEYS = frozenset({"publication", "notes", "adversaries"})
@@ -104,6 +111,22 @@ def parse_threshold(value, source: str, entry: str) -> int:
             f"{source}: {entry!r} has a threshold of {value!r}, which is neither a "
             "number nor 'None'. The book prints 'None' for adversaries with too "
             "few HP for the threshold to matter; anything else has to be a number."
+        ) from None
+
+
+def parse_range(value, source: str, entry: str) -> str:
+    """The printed range band of a standard attack, validated and normalised.
+
+    Stored back as the band's canonical spelling, so a file writing "very close"
+    ends up carrying "Very Close" and a report prints the book's own wording
+    whatever the entry was typed as.
+    """
+    try:
+        return band_named(value).value
+    except ValueError as error:
+        raise ValueError(
+            f"{source}: {entry!r} has a range of {value!r}. {error} It is the band "
+            "printed beside the standard attack - 'Claws: Very Close, 1d12+2'."
         ) from None
 
 
@@ -174,6 +197,7 @@ def adversary_from_data(data: dict, publication: str, source: str) -> Adversary:
     stats = {key: data[key] for key in _STATS if key in data}
     for threshold in _THRESHOLDS:
         stats[threshold] = parse_threshold(data[threshold], source, entry)
+    stats["range"] = parse_range(data["range"], source, entry)
     stats["damage_dice"] = parse_dice(data.get("damage_dice"), source, entry)
     stats["features"] = list(features)
     # The file says which book it is once, rather than every entry repeating it.

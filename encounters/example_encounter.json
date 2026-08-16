@@ -1,12 +1,9 @@
 {
   "name": "Roadside Ambush",
 
-  "notes": "A worked example of an encounter file - copy it to start a new one. Four adversaries against a single tier 1 PC is a losing fight by a wide margin, so the question is what softening it actually buys. The variations below move one knob each; run them together and read the comparison table.",
+  "notes": "A worked example of an encounter file - copy it to start a new one. Four adversaries against a single tier 1 PC is a losing fight by a wide margin, so the question is what softening it actually buys. The variations below move one knob each; run them together and read the comparison table. Only the party is shared: the state a fight is walked into - starting_fear, starting_spotlight, rest - belongs to the variation, and a variation that says nothing gets the ordinary opening.",
 
   "party": ["example_character.json"],
-  "starting_fear": 0,
-  "starting_spotlight": "pcs",
-  "rest": "long",
 
   "variations": [
     {
@@ -39,7 +36,7 @@
     },
     {
       "name": "Ambushed, no rest",
-      "notes": "The same opposition, walked into cold: the GM opens with the spotlight and 3 Fear, and the party arrives with nothing refreshed. A variation can override any shared setting, which is what makes this one file rather than two.",
+      "notes": "The same opposition, walked into cold: the GM opens with the spotlight and 3 Fear, and the party arrives with nothing refreshed. The starting state is stated per variation, which is what makes this one file rather than two.",
       "starting_fear": 3,
       "starting_spotlight": "gm",
       "rest": "none",

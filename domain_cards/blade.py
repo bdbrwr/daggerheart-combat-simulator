@@ -68,9 +68,14 @@ def whirlwind(attacker: Holder, target, result, fight: Fight) -> None:
     and this is the reading the table plays. Half damage rounds down.
 
     The Hope is only spent when there is somebody else to hit. At Very Close the
-    area rule reaches `n // 3` adversaries in total, and the original target is
-    one of them, so in a fight with fewer than six adversaries this correctly
-    does nothing and costs nothing.
+    area rule reaches a third of the field in total - held to two unless the
+    field is unusually spread out - and the original target is one of them, so
+    in a fight with fewer than six adversaries this correctly does nothing and
+    costs nothing.
+
+    That reach is **rolled per cast**, not a fixed function of the field: the
+    same six adversaries can be bunched or strung out, so how far one Whirlwind
+    carries is not how far the next one does. See `content/aoe.py`.
     """
     others = [
         adversary

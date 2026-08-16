@@ -191,6 +191,7 @@ class Fight(Protocol):
     def note(self, message: str) -> None: ...
     def gain_fear(self, amount: int = 1) -> int: ...
     def grant_activation(self, holder) -> None: ...
+    def consume_activation(self, holder) -> None: ...
     def apply_condition(self, holder, condition) -> None: ...
     def has_condition(self, holder, name: str) -> bool: ...
     def clear_condition(self, holder, name: str) -> None: ...
@@ -247,6 +248,10 @@ _direct_damage: dict[str, Callable] = {}
 _spotlight_costs: dict[str, Callable] = {}
 _attack_areas: dict[str, Callable] = {}
 _on_damaged: dict[str, Callable] = {}
+_difficulty_bonuses: dict[str, Callable] = {}
+_standard_damage: dict[str, Callable] = {}
+_on_attacked: dict[str, Callable] = {}
+_on_spotlight: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -487,6 +492,111 @@ def attack_area(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_attack_areas, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def on_attacked(name: str, unmodelled: Iterable[str] = ()):
+    """Register content on a *target* that responds to being successfully attacked.
+
+    Signature: `(holder, attacker, weapon, fight) -> None`. The mirror of
+    `on_hit`, which belongs to whoever swung: this belongs to whoever was hit,
+    and it fires on a successful attack whether or not any HP was marked. The
+    Glass Snake's `Armor-Shredding Shards` ("after a successful attack against
+    the Snake within Melee range, the attacker must mark an Armor Slot") is the
+    reason it exists, and the attacker's *weapon* is in the signature because
+    that clause is the only handle the simulator has on range.
+
+    Distinct from `on_damaged`, which fires on damage arriving and can't see who
+    dealt it - "the attacker must mark an Armor Slot" needs the attacker.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_on_attacked, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def on_spotlight(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that fires whenever its holder takes the spotlight.
+
+    Signature: `(holder, fight) -> None`. Not an action and not a choice: it runs
+    before the holder picks what to do, and it can't decline the spotlight or
+    take it. The Glass Snake's Spitter Die - "when the Snake is in the spotlight,
+    roll this die" - is the case, and it keeps rolling every spotlight for the
+    rest of the fight however the Snake spends them.
+
+    Deliberately not an `action`: an action is one of the things a spotlight can
+    be spent on, and exactly one of them resolves. This is something that happens
+    *to* the spotlight, so it neither competes with the standard attack nor
+    consumes it.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_on_spotlight, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def standard_damage(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that replaces the dice its holder's *standard* attack rolls.
+
+    Signature: `(holder, target, fight) -> tuple[list[DiceGroup], int] | None` -
+    the dice and flat modifier to roll instead of the printed ones, or None to
+    decline. The SRD writes this shape often: the Giant Mosquitoes' `Horde (X)`
+    ("their standard attack deals 1d4+1 instead") and the Dire Wolf's `Pack
+    Tactics` ("deal 1d6+5 instead of their standard damage") are the first two,
+    and one hook serves both.
+
+    **Only the printed attack.** A feature that hits with dice of its own - the
+    Bear's Bite at 3d4+10 - passes them explicitly and is never asked, which is
+    right: "instead of their standard damage" says nothing about a different
+    attack the same adversary might make.
+
+    Asked from inside the damage roll, so by the time it runs the attack has
+    already landed. That matters for content whose trigger is a *successful*
+    standard attack - Pack Tactics hands the GM a Fear, and asking before the
+    roll would pay out on a miss.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_standard_damage, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def difficulty_bonus(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that raises its holder's Difficulty.
+
+    Signature: `(holder) -> int` - the bonus. **Resolved once, at spawn time**,
+    and added into `Adversary.difficulty`; it is never consulted during a fight,
+    which is why this is the one hook with no `fight` in its signature.
+
+    That is deliberate. Difficulty is read in four places that have no fight to
+    dispatch with - `items/weapons.py`, `content/aoe.py`'s `area_difficulty` and
+    `targets_beaten`, and `features/classes.py`'s Hold Them Off - and threading a
+    fight through all of them to move a number by 2 would be a great deal of
+    machinery for a constant. Resolving it into the stat block means every reader
+    is already correct without knowing this hook exists, which is the same
+    arrangement character sheets use for their own resolved values.
+
+    The cost is that a bonus the SRD qualifies - Flying is "*while* flying" -
+    can't switch off mid-fight. The qualifier moves to the author instead: the
+    number is written on the stat block, so an adversary airborne half the time
+    is written with half the bonus. Over a high-N run those come to the same
+    place, and the knob is in the JSON where it can be tuned per adversary.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_difficulty_bonuses, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -1235,6 +1345,58 @@ def apply_on_damaged(holder, amount: int, hp_marked: int, fight=None) -> None:
         respond = _registered(_on_damaged, name)
         if respond is not None:
             respond(holder, amount, hp_marked, fight)
+
+
+def apply_on_attacked(holder, attacker, weapon, fight=None) -> None:
+    """Let content the *target* carries respond to a successful attack on them."""
+    _discover()
+    for name in holder.named_features:
+        respond = _registered(_on_attacked, name)
+        if respond is not None:
+            respond(holder, attacker, weapon, fight)
+
+
+def apply_on_spotlight(holder, fight=None) -> None:
+    """Let content fire on its holder taking the spotlight, before they act."""
+    _discover()
+    for name in holder.named_features:
+        respond = _registered(_on_spotlight, name)
+        if respond is not None:
+            respond(holder, fight)
+
+
+def standard_attack_damage(holder, target, fight=None):
+    """The dice this combatant's standard attack should roll instead, if any.
+
+    Returns `(dice_groups, modifier)` or None. First answer wins: nothing in the
+    SRD gives one adversary two of these, and combining two replacements would be
+    inventing a rule rather than following one.
+    """
+    _discover()
+    for name in holder.named_features:
+        swap = _registered(_standard_damage, name)
+        if swap is not None:
+            replacement = swap(holder, target, fight)
+            if replacement is not None:
+                return replacement
+    return None
+
+
+def total_difficulty_bonus(holder) -> int:
+    """Everything this stat block carries that raises its Difficulty, summed.
+
+    Called once, by `Adversary.spawn`, and never during a fight - see
+    `difficulty_bonus` for why the bonus is resolved into the number rather than
+    asked for on every roll. No `fight` argument for the same reason: there is no
+    fight yet when this runs.
+    """
+    _discover()
+    total = 0
+    for name in holder.named_features:
+        contribute = _registered(_difficulty_bonuses, name)
+        if contribute is not None:
+            total += contribute(holder)
+    return total
 
 
 def deals_direct_damage(holder, fight=None) -> bool:

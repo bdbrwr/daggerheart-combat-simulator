@@ -69,6 +69,12 @@ class FightState:
     # turn, not a credit carried forward.
     granted: dict[int, int] = field(default_factory=dict)
 
+    # Spotlights content has *used up* on somebody other than whoever is acting,
+    # during the current GM turn. The mirror of `granted`, cleared with it. A
+    # Minion's Group Attack spotlights the whole swarm in one activation, and the
+    # rest of the swarm must not then act again in the same turn.
+    consumed: dict[int, int] = field(default_factory=dict)
+
     logging: bool = False
     log: list[str] = field(default_factory=list)
 
@@ -158,6 +164,25 @@ class FightState:
     def granted_activations(self, holder) -> int:
         return self.granted.get(id(holder), 0)
 
+    def consume_activation(self, holder) -> None:
+        """Use up one of `holder`'s spotlights without them choosing to act.
+
+        The mirror of `grant_activation`, and the piece that lets one feature
+        move several combatants. The SRD's Group Attack "spotlights all Giant
+        Rats within Close range" and resolves them as one shared attack: that is
+        a single activation as far as the GM turn's budget goes, but every Rat
+        in it has now been spotlighted and must not come round again this turn.
+
+        Deliberately separate from the loop's own tally of who has acted. That
+        tally is about who the loop *chose*; this is about spotlights content
+        spent on its own account, and keeping them apart means the loop never has
+        to know which feature did it.
+        """
+        self.consumed[id(holder)] = self.consumed.get(id(holder), 0) + 1
+
+    def consumed_activations(self, holder) -> int:
+        return self.consumed.get(id(holder), 0)
+
     # --- Conditions ----------------------------------------------------------
 
     def apply_condition(self, holder, condition: Condition) -> None:
@@ -193,6 +218,23 @@ class FightState:
                 self.clear_condition(holder, name)
                 ended.append(name)
         return ended
+
+    def apply_condition_effects(self, holder, moment: str) -> None:
+        """Let every condition on `holder` do whatever it does at `moment`.
+
+        The twin of `expire_conditions`, and announced the same way: the loop
+        says what is happening and each condition decides whether that is its
+        cue. Most have no `effect` at all, because their effect is already asked
+        for somewhere else - Vulnerable is read where Advantage is worked out.
+
+        The Giant Scorpion's Poison is the case this exists for: "roll a d6
+        before you make an action roll; on 4 or lower, mark a Stress" is a cost
+        nothing else in the simulator was already asking about.
+        """
+        for (holder_id, _), condition in list(self.conditions.items()):
+            if holder_id != id(holder) or condition.effect is None:
+                continue
+            condition.effect(holder, self, moment)
 
     def is_vulnerable(self, combatant) -> bool:
         """Whether rolls against `combatant` have Advantage right now.

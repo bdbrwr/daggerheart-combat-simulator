@@ -37,10 +37,21 @@ from typing import Callable
 VULNERABLE = "Vulnerable"
 RESTRAINED = "Restrained"
 
-# The moments a condition is offered a chance to end. The fight loop announces
-# these; a condition's `end` decides whether this one is its cue.
+# Poison is a *family* rather than one condition: the SRD prints several, and
+# they share a name while differing in both what they do and how they end. The
+# Giant Scorpion's ends on a Knowledge Roll at 16 and costs a Stress before an
+# action roll; the Druid beastforms' do something else and end another way. So
+# the name is shared - a target is Poisoned or not - and each source supplies its
+# own `end` and `effect`.
+POISONED = "Poisoned"
+
+# The moments a condition is announced at. A condition's `end` decides whether
+# one of them is its cue to lift, and its `effect` whether one is its cue to
+# fire. The same vocabulary serves both, so a condition that costs something at a
+# particular moment and one that ends at a particular moment are written alike.
 WHEN_THEY_ACT = "when they act"
 ON_A_GM_TURN = "on a GM turn"
+BEFORE_AN_ACTION_ROLL = "before an action roll"
 
 
 @dataclass(frozen=True)
@@ -51,12 +62,16 @@ class Condition:
     condition is over. None means it lasts the rest of the fight, which is what
     "until the scene ends" comes to here.
 
-    `effect` is for a condition whose effect isn't already asked for somewhere
-    else. Nothing sets it yet: the only modelled condition is Vulnerable, and the
-    one place that cares - whether an attack has Advantage - asks
-    `FightState.is_vulnerable` directly. It is here because the shape was asked
-    for, and it is worth knowing it is unused rather than discovering it half
-    wired in.
+    `effect` is for a condition that *does* something at an announced moment,
+    rather than one whose effect is already asked for somewhere else. It takes
+    the same `(holder, fight, moment)` as `end` and returns nothing, and it
+    checks the moment itself for the same reason `end` does.
+
+    Vulnerable doesn't use it - the one place that cares whether an attack has
+    Advantage asks `FightState.is_vulnerable` directly. The Giant Scorpion's
+    Poison is the first that does: it costs its holder a Stress on a d6 of 4 or
+    lower before each action roll, which nothing else in the simulator was
+    already asking about.
     """
 
     name: str
@@ -72,6 +87,28 @@ def when_they_act(holder, fight, moment: str) -> bool:
     it off - which is the point of being knocked over.
     """
     return moment == WHEN_THEY_ACT
+
+
+def until_they_clear_hp(marked_when_applied: int):
+    """Ends once the conditioned combatant has cleared any of the HP they had.
+
+    The SRD's "until they clear at least 1 HP", which the Dire Wolf's Hobbling
+    Strike uses. Unlike the other two enders this is *stateful* - "clear an HP"
+    is measured against how much was marked when the condition landed - so it is
+    a factory returning the predicate rather than a predicate itself.
+
+    Reading it against the mark at application time rather than against any later
+    change means a hit that marks *more* HP doesn't accidentally end it, and a
+    heal that undoes any part of the damage does. Checked at whichever moments
+    the loop announces, so it can outlast the heal by up to one of them; that is
+    a granularity the condition machinery has everywhere, not something specific
+    to this ender.
+    """
+
+    def ended(holder, fight, moment: str) -> bool:
+        return holder.hp_marked < marked_when_applied
+
+    return ended
 
 
 def when_the_gm_pays(holder, fight, moment: str) -> bool:

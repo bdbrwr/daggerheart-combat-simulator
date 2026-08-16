@@ -31,14 +31,16 @@ from typing import Protocol
 
 from combat.results import AttackResult
 from content.names import ADVERSARY, qualified
-from content.aoe import targets_hit
+from content.aoe import Range, band_named, targets_hit
 from content.registry import (
     apply_on_damaged,
     deals_direct_damage,
     force_adversary_reroll,
     harden_damage,
     soften_damage,
+    standard_attack_damage,
     total_damage_bonus,
+    total_difficulty_bonus,
 )
 from dice.common import AdvantageState
 from dice.d20 import roll_d20
@@ -76,6 +78,23 @@ class Adversary:
     attack_modifier: int
     damage_dice: list[DiceGroup] = field(default_factory=list)
     damage_modifier: int = 0
+
+    # The range band the stat block prints beside its standard attack - "Claws:
+    # Very Close, 1d12+2".
+    #
+    # No positioning is tracked, so this never decides whether an ordinary attack
+    # connects. It matters when a feature turns the standard attack into an area
+    # one: the SRD's Ramp Up is "their standard attack against all targets within
+    # range", and *within range* is this. Before it was a field, such a feature
+    # had to name a band itself, which meant the Cave Ogre's Very Close was
+    # written into the feature - so the same feature on a Melee adversary would
+    # have swept the wrong band, and every future one would need its own hand-
+    # entered copy of a number already printed on the page.
+    #
+    # Kept as the printed string, the way `items/catalogue.py` keeps a weapon's,
+    # so a catalogue entry and an encounter override are the same vocabulary.
+    # `attack_band` is the parsed form.
+    range: str = "Melee"
 
     # What this stat block does beyond a standard attack, by name. Implemented
     # in features/adversaries.py, reached through the same dispatch a PC's
@@ -127,6 +146,32 @@ class Adversary:
         """
         return self.hp_marked >= self.hp_max
 
+    @property
+    def attack_band(self) -> "Range":
+        """This adversary's printed range, as the band the area rule works in.
+
+        Content that sweeps "within range" reads this rather than naming a band,
+        so one feature is correct on every stat block that carries it. Raises on
+        an unrecognised band, which the catalogue has already rejected at load -
+        the check is here too because an `Adversary` built directly in code
+        never went through it.
+        """
+        return band_named(self.range)
+
+    @property
+    def hp_unmarked(self) -> int:
+        """HP not yet marked - the party side's vocabulary, on the GM side too.
+
+        Damage *marks* HP in Daggerheart, so both sides of the table answer the
+        question the same way and nothing anywhere says "HP left".
+        """
+        return max(self.hp_max - self.hp_marked, 0)
+
+    @property
+    def stress_unmarked(self) -> int:
+        """Stress slots still free - what a feature's cost has to fit into."""
+        return max(self.stress_max - self.stress_marked, 0)
+
     def spawn(self, **overrides) -> "Adversary":
         """An independent copy at starting state, with any stat overrides applied.
 
@@ -134,6 +179,17 @@ class Adversary:
         one needs its own HP/Stress to mark and its own damage_dice list.
         Overrides are how an encounter tunes a stat block without touching the
         definition - `JAGGED_KNIFE_BANDIT.spawn(hp_max=7, damage_modifier=3)`.
+
+        **Difficulty-modifying features are resolved here**, into the number,
+        rather than being consulted on every roll made against this adversary -
+        the SRD's `Flying (X)` is the case, and `content/registry.py`'s
+        `difficulty_bonus` says why. The bonus lands on top of whatever the
+        encounter overrode, so tuning the printed Difficulty and carrying the
+        feature are independent.
+
+        The consequence to know: this is a **definition-to-combatant** step and
+        spawning a combatant again would apply the bonus a second time. Nothing
+        does, and nothing should - `spawn` is called on a catalogue entry.
         """
         changes = {
             "damage_dice": list(self.damage_dice),
@@ -142,7 +198,9 @@ class Adversary:
             "stress_marked": 0,
         }
         changes.update(overrides)
-        return replace(self, **changes)
+        spawned = replace(self, **changes)
+        spawned.difficulty += total_difficulty_bonus(spawned)
+        return spawned
 
     def _damage_for(self, dice, modifier, is_critical, target, fight):
         """Roll this attack's damage, letting content add to it first.
@@ -151,10 +209,23 @@ class Adversary:
         with something other than the printed attack - the Bear's Bite at
         3d4+10 - passes its own rather than reimplementing the roll.
 
+        **That default is also the discriminator** for content that replaces the
+        standard attack's dice: `dice is None` means "the printed attack", which
+        is exactly what `Horde (X)` and `Pack Tactics` say they change. A feature
+        that brought its own dice is never asked, since "instead of their standard
+        damage" says nothing about a different attack.
+
         `total_damage_bonus` is asked here, which is "before rolling damage" and
         after the hit is known, exactly where the Construct's Overload wants to
-        be offered its Stress.
+        be offered its Stress. The standard-attack swap sits in the same window
+        for the same reason: Pack Tactics pays out a Fear on a *successful*
+        standard attack, and asking before the roll would pay for a miss.
         """
+        if dice is None:
+            swapped = standard_attack_damage(self, target, fight)
+            if swapped is not None:
+                dice, modifier = swapped
+
         bonus = total_damage_bonus(self, target, fight) if fight is not None else 0
         return roll_damage(
             dice_groups=self.damage_dice if dice is None else dice,
@@ -239,6 +310,7 @@ class Adversary:
         fight=None,
         damage_dice=None,
         damage_modifier=None,
+        direct: bool | None = None,
     ) -> AttackResult:
         """Standard attack: d20 + attack_modifier against the target's Evasion.
 
@@ -278,9 +350,14 @@ class Adversary:
         # Whether this attack is direct - no Armor Slot may be marked against it -
         # is a question for the attacker's features, asked generically. Nothing
         # here knows that the Cave Ogre's Bone Breaker is what answers it.
-        marked = target.take_damage(
-            damage_roll.total, fight, direct=deals_direct_damage(self, fight)
-        )
+        #
+        # Stated explicitly by a feature whose *own* attack is direct without any
+        # passive granting it, which is the Dire Wolf's Hobbling Strike. Unstated
+        # still means "whatever this adversary's features say", so the two don't
+        # interfere - the same arrangement `area_attack` already uses.
+        if direct is None:
+            direct = deals_direct_damage(self, fight)
+        marked = target.take_damage(damage_roll.total, fight, direct=direct)
         return AttackResult(
             attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
         )
@@ -310,6 +387,43 @@ class Adversary:
         Stress, which nothing does to an adversary here.
         """
         return self.stress_marked + amount <= self.stress_max
+
+    def will_spend_stress(self, amount: int = 1) -> bool:
+        """Whether this adversary is hurt enough to pay an **Action**'s Stress cost.
+
+        SIMULATION RULE - policy. `can_spend_stress` answers whether the slots
+        exist; this answers whether the GM would spend them, and the two are
+        deliberately separate questions. An adversary hoards its last Stress
+        while it is healthy and empties the track as it gets closer to going
+        down, so a stat block's Stress reads as how much desperation it has in
+        it rather than as a budget spent the moment a fight starts.
+
+        The rule, with X the Stress slots still free before this cost is paid:
+
+            hp_unmarked <= X ** 2 + 1
+
+        So with three slots free an adversary spends at 10 or fewer unmarked HP,
+        with two at 5 or fewer, and its last slot only at 2 or fewer - the same
+        line `NEAR_DEATH_HP_UNMARKED` draws on the party side, which is where
+        the +1 comes from. A cost of more than one slot is measured at the last
+        slot it would mark, since that is the one that has to be affordable.
+
+        In practice almost every ported tier 1 adversary clears the first
+        threshold immediately (three free slots against 9 HP or fewer) and then
+        has to be wounded for the rest, which is the intended shape. The Bear is
+        the exception worth knowing: 7 HP against only two Stress means it can't
+        Bite until it is down to 5 unmarked HP.
+
+        **Reactions do not consult this.** A reaction fires when its trigger
+        happens or not at all, so gating it on how hurt the adversary is would
+        mean discarding the trigger rather than choosing a moment - which is a
+        different decision from the one this rule is about. Reaction features
+        call `can_spend_stress` directly.
+        """
+        if not self.can_spend_stress(amount):
+            return False
+        slots_left_after = self.stress_unmarked - amount
+        return self.hp_unmarked <= (slots_left_after + 1) ** 2 + 1
 
     def spend_stress(self, amount: int = 1) -> bool:
         """Pay a feature's Stress cost; return whether it went through."""

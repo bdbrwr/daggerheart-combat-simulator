@@ -11,6 +11,7 @@ and `on_hit` hooks are exercised against the real Body Basher and Whirlwind.
 """
 
 import random
+from unittest.mock import patch
 
 import pytest
 
@@ -290,30 +291,73 @@ def test_whirlwind_costs_nothing_without_the_hope_for_it():
 
 
 # --- The area rule -----------------------------------------------------------
+#
+# Each band's reach is a base count from the field size and then a *spread roll*
+# that can cut it, written as `random.randint(1, N) == N`. So a patched roll
+# that always returns the top of its range makes the one-in-N case certain, and
+# one that always returns the bottom makes it impossible. Both branches are
+# pinned that way rather than sampled: these assert what the rule is, and a test
+# in tests/ may never depend on how a die landed.
 
 
-def test_far_reaches_everyone():
-    assert targets_reached(Range.FAR, 5) == 5
+def _spread_roll_fires(low: int, high: int) -> int:
+    """A `randint` that always rolls the top of its range - the 1-in-N case."""
+    return high
+
+
+def _spread_roll_does_not(low: int, high: int) -> int:
+    """A `randint` that always rolls the bottom - the ordinary case."""
+    return low
+
+
+def test_far_reaches_everyone_unless_the_field_is_strung_out():
+    with patch("content.aoe.random.randint", _spread_roll_does_not):
+        assert targets_reached(Range.FAR, 5) == 5
+    with patch("content.aoe.random.randint", _spread_roll_fires):
+        assert targets_reached(Range.FAR, 5) == 4
 
 
 def test_close_never_reaches_everyone():
-    for count in range(2, 12):
-        assert targets_reached(Range.CLOSE, count) < count
+    """True on either branch: the base is bounded by n-1 and capping only lowers it."""
+    for roll in (_spread_roll_fires, _spread_roll_does_not):
+        with patch("content.aoe.random.randint", roll):
+            for count in range(2, 12):
+                assert targets_reached(Range.CLOSE, count) < count
 
 
-def test_close_is_three_quarters():
-    assert targets_reached(Range.CLOSE, 8) == 6
-    assert targets_reached(Range.CLOSE, 4) == 3
+def test_close_is_three_quarters_until_the_cap_bites():
+    with patch("content.aoe.random.randint", _spread_roll_does_not):
+        assert targets_reached(Range.CLOSE, 8) == 6
+    with patch("content.aoe.random.randint", _spread_roll_fires):
+        assert targets_reached(Range.CLOSE, 8) == 3
+
+    # At four the base is already the cap, so the roll changes nothing.
+    for roll in (_spread_roll_fires, _spread_roll_does_not):
+        with patch("content.aoe.random.randint", roll):
+            assert targets_reached(Range.CLOSE, 4) == 3
 
 
-def test_very_close_is_a_third():
-    assert targets_reached(Range.VERY_CLOSE, 9) == 3
-    assert targets_reached(Range.VERY_CLOSE, 4) == 1
+def test_very_close_is_held_to_two_unless_the_field_spreads():
+    # The spread is the *one-in-ten*, so firing the roll is the rare case that
+    # lets the full third through - the opposite way round from the other bands.
+    with patch("content.aoe.random.randint", _spread_roll_fires):
+        assert targets_reached(Range.VERY_CLOSE, 9) == 3
+    with patch("content.aoe.random.randint", _spread_roll_does_not):
+        assert targets_reached(Range.VERY_CLOSE, 9) == 2
+
+    # At four a third is 1, under the cap either way.
+    for roll in (_spread_roll_fires, _spread_roll_does_not):
+        with patch("content.aoe.random.randint", roll):
+            assert targets_reached(Range.VERY_CLOSE, 4) == 1
 
 
-def test_melee_reaches_two_until_the_fight_is_crowded():
-    assert targets_reached(Range.MELEE, 4) == 2
-    assert targets_reached(Range.MELEE, MANY_ADVERSARIES) == 3
+def test_melee_reaches_one_fewer_unless_they_are_bunched():
+    with patch("content.aoe.random.randint", _spread_roll_fires):
+        assert targets_reached(Range.MELEE, 4) == 2
+        assert targets_reached(Range.MELEE, MANY_ADVERSARIES) == 3
+    with patch("content.aoe.random.randint", _spread_roll_does_not):
+        assert targets_reached(Range.MELEE, 4) == 1
+        assert targets_reached(Range.MELEE, MANY_ADVERSARIES) == 2
 
 
 # --- The same bands as odds --------------------------------------------------
@@ -337,9 +381,27 @@ def test_very_close_is_a_third_as_odds_too():
 
 
 def test_melee_odds_come_from_the_field_size():
-    """Melee's rule is a flat count, so it has no share to read off."""
-    assert chance_within(Range.MELEE, 4) == 0.5
-    assert chance_within(Range.MELEE, MANY_ADVERSARIES) == pytest.approx(0.5)
+    """Melee's rule is a count, so it has no share to read off.
+
+    The count is rolled, so the *expectation* stands in - the higher count less
+    a half, since the spread roll is an even one. Asking `targets_reached`
+    instead would hand back one sample of a random variable and call it a
+    likelihood, and the same question would answer differently each time.
+    """
+    assert chance_within(Range.MELEE, 4) == pytest.approx(1.5 / 4)
+    assert chance_within(Range.MELEE, MANY_ADVERSARIES) == pytest.approx(
+        2.5 / MANY_ADVERSARIES
+    )
+
+
+def test_melee_odds_do_not_move_when_the_spread_roll_does():
+    """The tell that this is an expectation rather than a sample."""
+    with patch("content.aoe.random.randint", _spread_roll_fires):
+        fired = chance_within(Range.MELEE, 4)
+    with patch("content.aoe.random.randint", _spread_roll_does_not):
+        did_not = chance_within(Range.MELEE, 4)
+
+    assert fired == did_not
 
 
 def test_a_proportional_band_is_not_certain_just_because_the_field_is_small():
