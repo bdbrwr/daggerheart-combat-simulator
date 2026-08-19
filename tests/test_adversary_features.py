@@ -895,7 +895,7 @@ def test_pack_tactics_swaps_the_standard_damage_and_pays_a_fear():
     fight = _fight(adversaries=wolves, fear=0)
 
     with _bunched():
-        dice, modifier = pack_tactics(wolves[0], fight.party[0], fight)
+        dice, modifier = pack_tactics(wolves[0], fight.party[0], None, fight)
 
     assert dice == [DiceGroup(count=1, sides=6)]
     assert modifier == 5
@@ -910,7 +910,7 @@ def test_a_scattered_pair_of_wolves_gets_nothing():
     fight = _fight(adversaries=wolves, fear=0)
 
     with _scattered():
-        assert pack_tactics(wolves[0], fight.party[0], fight) is None
+        assert pack_tactics(wolves[0], fight.party[0], None, fight) is None
     assert fight.fear == 0
 
 
@@ -923,7 +923,7 @@ def test_a_big_enough_pack_always_converges():
 
     for spread in (_bunched, _scattered):
         with spread():
-            assert pack_tactics(wolves[0], fight.party[0], fight) is not None
+            assert pack_tactics(wolves[0], fight.party[0], None, fight) is not None
 
 
 def test_a_lone_wolf_gets_nothing_from_pack_tactics():
@@ -934,7 +934,7 @@ def test_a_lone_wolf_gets_nothing_from_pack_tactics():
 
     for spread in (_bunched, _scattered):
         with spread():
-            assert pack_tactics(wolf, fight.party[0], fight) is None
+            assert pack_tactics(wolf, fight.party[0], None, fight) is None
     assert fight.fear == 0
 
 
@@ -945,7 +945,7 @@ def test_pack_tactics_does_not_count_a_bear_as_a_packmate():
     fight = _fight(adversaries=[wolf, bear], fear=0)
 
     with _bunched():
-        assert pack_tactics(wolf, fight.party[0], fight) is None
+        assert pack_tactics(wolf, fight.party[0], None, fight) is None
 
 
 def test_the_swap_reaches_the_standard_attack_through_dispatch():
@@ -1049,7 +1049,7 @@ def _mosquitoes(**overrides) -> Adversary:
 def test_a_horde_at_full_strength_uses_its_printed_attack():
     from features.adversaries import horde
 
-    assert horde(_mosquitoes(), None, _fight()) is None
+    assert horde(_mosquitoes(), None, None, _fight()) is None
 
 
 def test_a_horde_thinned_to_half_deals_its_parameter_instead():
@@ -1058,7 +1058,7 @@ def test_a_horde_thinned_to_half_deals_its_parameter_instead():
     swarm = _mosquitoes()
     swarm.mark_hp(3)  # half of 6
 
-    dice, modifier = horde(swarm, None, _fight())
+    dice, modifier = horde(swarm, None, None, _fight())
 
     assert dice == [DiceGroup(count=1, sides=4)]
     assert modifier == 1
@@ -1070,7 +1070,7 @@ def test_a_horde_without_a_parameter_guesses_nothing():
     swarm = _mosquitoes(features=["Horde"])
     swarm.mark_hp(6)
 
-    assert horde(swarm, None, _fight()) is None
+    assert horde(swarm, None, None, _fight()) is None
 
 
 # --- Flying ------------------------------------------------------------------
@@ -1342,7 +1342,7 @@ def test_shards_cost_a_melee_attacker_an_armor_slot():
     fight = _fight(adversaries=[snake])
     attacker = fight.party[0]
 
-    armor_shredding_shards(snake, attacker, find_weapon("Broadsword"), fight)
+    armor_shredding_shards(snake, attacker, find_weapon("Broadsword"), 7, fight)
 
     assert attacker.armor_marked == 1
 
@@ -1354,7 +1354,7 @@ def test_shards_do_not_reach_someone_attacking_from_further_off():
     fight = _fight(adversaries=[snake])
     attacker = fight.party[0]
 
-    armor_shredding_shards(snake, attacker, find_weapon("Shortbow"), fight)
+    armor_shredding_shards(snake, attacker, find_weapon("Shortbow"), 7, fight)
 
     assert attacker.armor_marked == 0
     assert attacker.hp_marked == 0
@@ -1367,7 +1367,7 @@ def test_shards_cost_an_hp_when_there_is_no_armor_left():
     fight = _fight(party=_party(armor_max=0), adversaries=[snake])
     attacker = fight.party[0]
 
-    armor_shredding_shards(snake, attacker, find_weapon("Broadsword"), fight)
+    armor_shredding_shards(snake, attacker, find_weapon("Broadsword"), 7, fight)
 
     assert attacker.hp_marked == 1
 
@@ -1562,3 +1562,1296 @@ def test_grab_and_drag_is_not_policied_into_never_firing():
 
     with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
         assert grab_and_drag(defender, fight.party[0], fight) is not None
+
+
+# --- Fall Back ---------------------------------------------------------------
+#
+# The Harrier's counter goes through `attack_with`, since the trigger is a PC
+# swinging at it - so these patch both rollers: the PC's duality roll in
+# items/weapons.py and the Harrier's d20 in adversaries/adversary.py.
+
+
+def _harrier(**overrides) -> Adversary:
+    """The printed Harrier: 3 HP, 3 Stress, a 1d6+2 javelin at Close."""
+    defaults = dict(
+        features=["Maintain Distance", "Fall Back"],
+        hp_max=3,
+        stress_max=3,
+        difficulty=12,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=6)],
+        damage_modifier=2,
+        range="Close",
+    )
+    defaults.update(overrides)
+    return _adversary("Harrier", **defaults)
+
+
+def test_fall_back_counters_a_melee_attacker_for_a_stress():
+    from items.weapons import attack_with
+
+    harrier = _harrier()
+    fight = _fight(party=_party(armor_max=0), adversaries=[harrier])
+    attacker = fight.party[0]
+
+    with patch(
+        "items.weapons.roll_duality", return_value=_duality(succeeds=True)
+    ), patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        attack_with(
+            attacker, find_weapon("Broadsword"), harrier, fight=fight
+        )
+
+    assert harrier.stress_marked == 1
+    assert attacker.hp_marked >= 1
+
+
+def test_the_attack_fall_back_interrupts_still_happens():
+    """The ruling: a Reaction that gives ground doesn't veto the swing."""
+    from items.weapons import attack_with
+
+    harrier = _harrier()
+    fight = _fight(party=_party(armor_max=0), adversaries=[harrier])
+
+    with patch(
+        "items.weapons.roll_duality", return_value=_duality(succeeds=True)
+    ), patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = attack_with(
+            fight.party[0], find_weapon("Broadsword"), harrier, fight=fight
+        )
+
+    assert result.damage_roll is not None
+    assert harrier.hp_marked >= 1
+
+
+def test_fall_back_ignores_an_attacker_who_never_closed():
+    """Read off the weapon: a Shortbow reaches Far, so nobody moved into Melee."""
+    from items.weapons import attack_with
+
+    harrier = _harrier()
+    fight = _fight(party=_party(armor_max=0), adversaries=[harrier])
+
+    with patch(
+        "items.weapons.roll_duality", return_value=_duality(succeeds=True)
+    ), patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        attack_with(fight.party[0], find_weapon("Shortbow"), harrier, fight=fight)
+
+    assert harrier.stress_marked == 0
+    assert not any(pc.hp_marked for pc in fight.party)
+
+
+def test_fall_back_is_not_gated_on_how_hurt_the_harrier_is():
+    """A Reaction, so the Stress-desperation rule deliberately doesn't apply."""
+    from features.adversaries import fall_back
+
+    harrier = _harrier()
+    harrier.spend_stress(2)  # one slot left, and 3 unmarked HP against a threshold of 2
+    fight = _fight(party=_party(armor_max=0), adversaries=[harrier])
+
+    assert harrier.will_spend_stress(1) is False, "an Action could not spend this slot"
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        fall_back(harrier, fight.party[0], find_weapon("Broadsword"), fight)
+
+    assert harrier.stress_marked == 3
+
+
+def test_fall_back_declines_when_the_stress_is_gone():
+    from features.adversaries import fall_back
+
+    harrier = _harrier(stress_max=1)
+    harrier.spend_stress(1)
+    fight = _fight(party=_party(armor_max=0), adversaries=[harrier])
+
+    fall_back(harrier, fight.party[0], find_weapon("Broadsword"), fight)
+
+    assert not any(pc.hp_marked for pc in fight.party)
+
+
+def test_maintain_distance_is_declared_as_having_no_combat_effect():
+    assert assess("adversary:Maintain Distance").status is Status.NO_COMBAT_EFFECT
+    assert assess("adversary:Maintain Distance").reason
+
+
+# --- Hobbling Shot, and a condition that hobbles a trait ----------------------
+
+
+def _archer(**overrides) -> Adversary:
+    """The printed Archer Guard: 3 HP, 2 Stress, a 1d8+3 longbow at Far."""
+    defaults = dict(
+        features=["Hobbling Shot"],
+        hp_max=3,
+        stress_max=2,
+        difficulty=10,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=3,
+        range="Far",
+    )
+    defaults.update(overrides)
+    return _adversary("Archer Guard", **defaults)
+
+
+def test_hobbling_shot_costs_a_stress_and_hobbles_whoever_it_wounds():
+    from features.adversaries import HOBBLED, hobbling_shot
+
+    archer = _archer()
+    fight = _fight(party=_party(armor_max=0), adversaries=[archer])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        hobbling_shot(archer, target, fight)
+
+    assert archer.stress_marked == 1
+    assert fight.has_condition(target, HOBBLED)
+    assert fight.disadvantaged_on(target, "agility") is True
+    assert fight.disadvantaged_on(target, "strength") is False
+
+
+def test_a_healthy_archer_still_takes_the_shot():
+    """3 HP against two Stress: the desperation rule never holds this back."""
+    from features.adversaries import hobbling_shot
+
+    archer = _archer()
+    fight = _fight(party=_party(armor_max=0), adversaries=[archer])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        assert hobbling_shot(archer, fight.party[0], fight) is not None
+
+
+def test_hobbling_shot_pays_nothing_on_a_miss():
+    from features.adversaries import HOBBLED, hobbling_shot
+
+    archer = _archer()
+    fight = _fight(adversaries=[archer])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(1)):
+        hobbling_shot(archer, fight.party[0], fight)
+
+    assert archer.stress_marked == 0
+    assert not fight.has_condition(fight.party[0], HOBBLED)
+
+
+def test_a_hit_that_marked_no_hp_hobbles_nobody():
+    """"If the target marks HP from this attack" - armor can swallow it whole."""
+    from features.adversaries import HOBBLED, hobbling_shot
+
+    archer = _archer()
+    # Thresholds out of reach, so 1d12+3 lands in the lowest band and marks 1 HP
+    # - which the free Armor Slot then takes back down to none.
+    fight = _fight(
+        party=_party(armor_max=2, major_threshold=100, severe_threshold=200),
+        adversaries=[archer],
+    )
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        hobbling_shot(archer, target, fight)
+
+    assert target.hp_marked == 0
+    assert archer.stress_marked == 1, "the Stress is still paid for the hit"
+    assert not fight.has_condition(target, HOBBLED)
+
+
+def test_the_hobble_lifts_only_once_an_hp_is_cleared():
+    from features.adversaries import HOBBLED, hobbling_shot
+
+    archer = _archer()
+    fight = _fight(party=_party(armor_max=0), adversaries=[archer])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        hobbling_shot(archer, target, fight)
+
+    fight.expire_conditions(target, WHEN_THEY_ACT)
+    fight.expire_conditions(target, ON_A_GM_TURN)
+    assert fight.has_condition(target, HOBBLED)
+
+    target.clear_hp(1)
+    assert fight.expire_conditions(target, WHEN_THEY_ACT) == [HOBBLED]
+
+
+def test_a_hobbled_pc_rolls_an_agility_weapon_at_disadvantage():
+    """The condition has to reach the roll, or it is a record of nothing."""
+    from features.adversaries import HOBBLED
+    from items.weapons import attack_with
+
+    fight = _fight()
+    attacker = fight.party[0]
+    fight.apply_condition(
+        attacker, Condition(name=HOBBLED, disadvantage_on=("agility",))
+    )
+
+    with patch(
+        "items.weapons.roll_duality", return_value=_duality(succeeds=True)
+    ) as rolled:
+        attack_with(
+            attacker, find_weapon("Shortbow"), fight.adversaries[0], fight=fight
+        )
+
+    assert rolled.call_args.kwargs["advantage_state"] is AdvantageState.DISADVANTAGE
+
+
+def test_advantage_and_a_hobble_cancel_each_other_out():
+    from features.adversaries import HOBBLED
+    from items.weapons import attack_with
+
+    fight = _fight()
+    attacker = fight.party[0]
+    fight.apply_condition(
+        attacker, Condition(name=HOBBLED, disadvantage_on=("agility",))
+    )
+
+    with patch(
+        "items.weapons.roll_duality", return_value=_duality(succeeds=True)
+    ) as rolled:
+        attack_with(
+            attacker,
+            find_weapon("Shortbow"),
+            fight.adversaries[0],
+            AdvantageState.ADVANTAGE,
+            fight=fight,
+        )
+
+    assert rolled.call_args.kwargs["advantage_state"] is AdvantageState.NONE
+
+
+def test_an_unhobbled_pc_rolls_as_normal():
+    from items.weapons import attack_with
+
+    fight = _fight()
+
+    with patch(
+        "items.weapons.roll_duality", return_value=_duality(succeeds=True)
+    ) as rolled:
+        attack_with(
+            fight.party[0], find_weapon("Shortbow"), fight.adversaries[0], fight=fight
+        )
+
+    assert rolled.call_args.kwargs["advantage_state"] is AdvantageState.NONE
+
+
+# --- Detain ------------------------------------------------------------------
+
+
+def _bladed_guard(**overrides) -> Adversary:
+    """A Bladed Guard whose printed attack is unmistakable.
+
+    1d4+10 rather than the page's 1d6+1, deliberately: the point of these tests
+    is that Detain rolls the *standard* damage, and a number no feature's own
+    dice could produce is what shows it.
+    """
+    defaults = dict(
+        features=["Shield Wall", "Detain"],
+        hp_max=5,
+        stress_max=2,
+        difficulty=12,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=4)],
+        damage_modifier=10,
+    )
+    defaults.update(overrides)
+    return _adversary("Bladed Guard", **defaults)
+
+
+def test_detain_deals_the_adversarys_standard_damage():
+    from features.adversaries import detain
+
+    guard = _bladed_guard()
+    fight = _fight(party=_party(armor_max=0), adversaries=[guard])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = detain(guard, fight.party[0], fight)
+
+    assert result.damage_roll.total >= 11
+    assert guard.stress_marked == 1
+
+
+def test_detain_keeps_its_stress_on_a_miss():
+    from features.adversaries import detain
+
+    guard = _bladed_guard()
+    fight = _fight(adversaries=[guard])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(1)):
+        detain(guard, fight.party[0], fight)
+
+    assert guard.stress_marked == 0
+
+
+def test_shield_wall_is_declared_as_having_no_combat_effect():
+    assert assess("adversary:Shield Wall").status is Status.NO_COMBAT_EFFECT
+    assert assess("adversary:Shield Wall").reason
+
+
+# --- Rally Guards ------------------------------------------------------------
+
+
+def _head_guard(**overrides) -> Adversary:
+    """The printed Head Guard: 7 HP, 3 Stress, a 1d10+4 mace."""
+    defaults = dict(
+        features=["Rally Guards", "On My Signal (5)", "Momentum"],
+        hp_max=7,
+        stress_max=3,
+        difficulty=15,
+        attack_modifier=4,
+        damage_dice=[DiceGroup(count=1, sides=10)],
+        damage_modifier=4,
+    )
+    defaults.update(overrides)
+    return _adversary("Head Guard", **defaults)
+
+
+def test_rally_guards_spends_two_fear_and_hands_out_spotlights():
+    from features.adversaries import rally_guards
+
+    head, allies = _head_guard(), [_archer() for _ in range(3)]
+    fight = _fight(adversaries=[head, *allies], fear=3)
+
+    result = rally_guards(head, fight.party[0], fight)
+
+    assert fight.fear == 1
+    assert result.made_an_attack is False
+    assert fight.granted_activations(head) == 1
+    assert sum(fight.granted_activations(ally) for ally in allies) >= 1
+
+
+def test_rally_guards_declines_without_the_fear():
+    from features.adversaries import rally_guards
+
+    head = _head_guard()
+    fight = _fight(adversaries=[head, _archer()], fear=1)
+
+    assert rally_guards(head, fight.party[0], fight) is None
+    assert fight.fear == 1
+
+
+# --- On My Signal ------------------------------------------------------------
+#
+# The countdown ticks from the party's rolls, so these drive it through the
+# dispatch rather than calling the feature's halves in sequence. Far reaches
+# everyone unless the spread roll falls short (1 in 4), so it is pinned rather
+# than sampled wherever the count matters.
+
+
+def _all_in_range():
+    """Pin the spread roll so Far reaches the whole field.
+
+    Worth knowing what this does beyond the band: `content.aoe.random` *is* the
+    `random` module, so pinning it pins every unpatched die in the test - which
+    is why the volley's own roller has to be patched alongside it, and patched
+    where the feature calls it (`features.adversaries.roll_d20`) rather than
+    where an ordinary adversary attack does.
+    """
+    return patch("content.aoe.random.randint", lambda low, high: low)
+
+
+def _archers_that_deal(flat: int, count: int) -> list[Adversary]:
+    """Archer Guards whose damage is a flat number, so a total can be asserted."""
+    return [
+        _archer(damage_dice=[], damage_modifier=flat, attack_modifier=0)
+        for _ in range(count)
+    ]
+
+
+def test_the_countdown_arms_once_on_the_first_spotlight():
+    from features.adversaries import (
+        ON_MY_SIGNAL_COUNTDOWN,
+        on_my_signal_arms,
+    )
+
+    head = _head_guard()
+    fight = _fight(adversaries=[head])
+
+    on_my_signal_arms(head, fight)
+    assert fight.token_count(head, ON_MY_SIGNAL_COUNTDOWN) == 5
+
+    fight.set_token(head, ON_MY_SIGNAL_COUNTDOWN, 2)
+    on_my_signal_arms(head, fight)
+    assert fight.token_count(head, ON_MY_SIGNAL_COUNTDOWN) == 2, "it does not re-arm"
+
+
+def test_a_head_guard_without_a_number_arms_nothing():
+    from features.adversaries import ON_MY_SIGNAL_COUNTDOWN, on_my_signal_arms
+
+    head = _head_guard(features=["On My Signal"])
+    fight = _fight(adversaries=[head])
+
+    on_my_signal_arms(head, fight)
+
+    assert fight.token_count(head, ON_MY_SIGNAL_COUNTDOWN) == 0
+
+
+def test_the_countdown_ticks_on_a_pc_attack_roll_and_fires_at_zero():
+    from content.registry import apply_on_party_attack_roll
+    from features.adversaries import on_my_signal_arms
+
+    head = _head_guard()
+    archers = _archers_that_deal(flat=5, count=2)
+    # Thresholds set so a combined volley crosses a band two separate hits
+    # could not: 5 apiece marks 1 HP each, while 10 at once is Severe.
+    fight = _fight(
+        party=_party(armor_max=0, major_threshold=6, severe_threshold=10),
+        adversaries=[head, *archers],
+    )
+    target = fight.party[0]
+    fight.last_pc_to_attack = target
+
+    on_my_signal_arms(head, fight)
+    roll = _duality(succeeds=True)
+
+    with _all_in_range(), patch(
+        "features.adversaries.roll_d20", return_value=_d20(19)
+    ):
+        for _ in range(4):
+            apply_on_party_attack_roll(target, roll, fight)
+        assert target.hp_marked == 0, "four ticks is not five"
+
+        apply_on_party_attack_roll(target, roll, fight)
+
+    assert target.hp_marked == 3, "two hits of 5, combined into one Severe 10"
+
+
+def test_the_countdown_fires_only_once():
+    from content.registry import apply_on_party_attack_roll
+    from features.adversaries import on_my_signal_arms
+
+    head = _head_guard()
+    archers = _archers_that_deal(flat=5, count=2)
+    fight = _fight(
+        party=_party(armor_max=0, major_threshold=6, severe_threshold=10),
+        adversaries=[head, *archers],
+    )
+    target = fight.party[0]
+    fight.last_pc_to_attack = target
+
+    on_my_signal_arms(head, fight)
+    roll = _duality(succeeds=True)
+
+    with _all_in_range(), patch(
+        "features.adversaries.roll_d20", return_value=_d20(19)
+    ):
+        for _ in range(8):
+            apply_on_party_attack_roll(target, roll, fight)
+
+    assert target.hp_marked == 3, "the whistle is spent, not re-armed"
+
+
+def test_the_signal_does_nothing_with_no_archers_to_answer_it():
+    from content.registry import apply_on_party_attack_roll
+    from features.adversaries import on_my_signal_arms
+
+    head = _head_guard()
+    fight = _fight(party=_party(armor_max=0), adversaries=[head])
+    fight.last_pc_to_attack = fight.party[0]
+
+    on_my_signal_arms(head, fight)
+    roll = _duality(succeeds=True)
+
+    # Nothing to patch: with no archers on the field the signal never rolls.
+    for _ in range(5):
+        apply_on_party_attack_roll(fight.party[0], roll, fight)
+
+    assert not any(pc.hp_marked for pc in fight.party)
+
+
+def test_a_volley_that_misses_entirely_costs_nothing():
+    from content.registry import apply_on_party_attack_roll
+    from features.adversaries import on_my_signal_arms
+
+    head = _head_guard()
+    archers = _archers_that_deal(flat=5, count=2)
+    fight = _fight(party=_party(armor_max=0), adversaries=[head, *archers])
+    target = fight.party[0]
+    fight.last_pc_to_attack = target
+
+    on_my_signal_arms(head, fight)
+    roll = _duality(succeeds=True)
+
+    with _all_in_range(), patch(
+        "features.adversaries.roll_d20", return_value=_d20(1)
+    ):
+        for _ in range(5):
+            apply_on_party_attack_roll(target, roll, fight)
+
+    assert target.hp_marked == 0
+
+
+# --- Curse -------------------------------------------------------------------
+
+
+def _hexer(**overrides) -> Adversary:
+    """The printed Jagged Knife Hexer: 4 HP, 4 Stress, a 1d6+2 staff at Far."""
+    defaults = dict(
+        features=["Curse", "Chaotic Flux"],
+        hp_max=4,
+        stress_max=4,
+        difficulty=13,
+        attack_modifier=2,
+        damage_dice=[DiceGroup(count=1, sides=6)],
+        damage_modifier=2,
+        range="Far",
+    )
+    defaults.update(overrides)
+    return _adversary("Jagged Knife Hexer", **defaults)
+
+
+def _rolled_with(hope: int, fear: int) -> DualityRollResult:
+    return DualityRollResult(
+        hope_die_result=hope,
+        fear_die_result=fear,
+        modifier=2,
+        advantage_state=AdvantageState.NONE,
+        advantage_die_result=None,
+        help_dice_results=None,
+        difficulty=10,
+    )
+
+
+def test_curse_applies_the_condition_without_attacking():
+    from features.adversaries import CURSED, curse
+
+    hexer = _hexer()
+    fight = _fight(adversaries=[hexer])
+    target = fight.party[0]
+
+    result = curse(hexer, target, fight)
+
+    assert fight.has_condition(target, CURSED)
+    assert result.made_an_attack is False
+    assert hexer.stress_marked == 0, "applying it costs nothing"
+
+
+def test_curse_declines_against_an_already_cursed_target():
+    from features.adversaries import curse
+
+    hexer = _hexer()
+    fight = _fight(adversaries=[hexer])
+    target = fight.party[0]
+
+    curse(hexer, target, fight)
+
+    assert curse(hexer, target, fight) is None
+
+
+def test_a_curse_lasts_the_rest_of_the_fight():
+    """Ruled: a temporary condition on a PC runs to their next rest."""
+    from features.adversaries import CURSED, curse
+
+    hexer = _hexer()
+    fight = _fight(adversaries=[hexer])
+    target = fight.party[0]
+
+    curse(hexer, target, fight)
+    fight.expire_conditions(target, WHEN_THEY_ACT)
+    fight.expire_conditions(target, ON_A_GM_TURN)
+
+    assert fight.has_condition(target, CURSED)
+
+
+def test_a_cursed_roll_with_hope_becomes_one_with_fear():
+    from content.registry import converted_party_roll
+    from dice.duality import DualityOutcome
+    from features.adversaries import curse
+
+    hexer = _hexer()
+    fight = _fight(adversaries=[hexer])
+    target = fight.party[0]
+    curse(hexer, target, fight)
+
+    rolled = _rolled_with(hope=9, fear=3)
+    converted = converted_party_roll(target, rolled, fight)
+
+    assert rolled.outcome is DualityOutcome.HOPE
+    assert converted.outcome is DualityOutcome.FEAR
+    assert converted.total == rolled.total, "the swap must not move the total"
+    assert converted.is_success == rolled.is_success
+    assert hexer.stress_marked == 1
+
+
+def test_a_roll_already_with_fear_is_left_alone():
+    from content.registry import converted_party_roll
+    from features.adversaries import curse
+
+    hexer = _hexer()
+    fight = _fight(adversaries=[hexer])
+    target = fight.party[0]
+    curse(hexer, target, fight)
+
+    rolled = _rolled_with(hope=3, fear=9)
+
+    assert converted_party_roll(target, rolled, fight) is rolled
+    assert hexer.stress_marked == 0
+
+
+def test_an_uncursed_pcs_roll_is_left_alone():
+    from content.registry import converted_party_roll
+
+    hexer = _hexer()
+    fight = _fight(adversaries=[hexer])
+
+    rolled = _rolled_with(hope=9, fear=3)
+
+    assert converted_party_roll(fight.party[0], rolled, fight) is rolled
+    assert hexer.stress_marked == 0
+
+
+def test_a_hexer_out_of_stress_cannot_convert():
+    from content.registry import converted_party_roll
+    from features.adversaries import curse
+
+    hexer = _hexer(stress_max=1)
+    fight = _fight(adversaries=[hexer])
+    target = fight.party[0]
+    curse(hexer, target, fight)
+    hexer.spend_stress(1)
+
+    rolled = _rolled_with(hope=9, fear=3)
+
+    assert converted_party_roll(target, rolled, fight) is rolled
+
+
+def test_the_conversion_is_not_gated_on_how_hurt_the_hexer_is():
+    """A Reaction, so the Stress-desperation rule deliberately doesn't apply."""
+    from content.registry import converted_party_roll
+    from dice.duality import DualityOutcome
+    from features.adversaries import curse
+
+    hexer = _hexer()
+    hexer.spend_stress(3)  # one slot left, and 4 unmarked HP against a threshold of 2
+    fight = _fight(adversaries=[hexer])
+    target = fight.party[0]
+    curse(hexer, target, fight)
+
+    assert hexer.will_spend_stress(1) is False, "an Action could not spend this slot"
+
+    converted = converted_party_roll(target, _rolled_with(hope=9, fear=3), fight)
+    assert converted.outcome is DualityOutcome.FEAR
+    assert hexer.stress_marked == 4
+
+
+# --- Chaotic Flux ------------------------------------------------------------
+
+
+def test_chaotic_flux_costs_a_stress_and_lands_on_whoever_it_reaches():
+    from features.adversaries import chaotic_flux
+
+    hexer = _hexer()
+    fight = _fight(party=_party(armor_max=0), adversaries=[hexer])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = chaotic_flux(hexer, fight.party[0], fight)
+
+    assert hexer.stress_marked == 1
+    # 2d6+3, so at least 5 - it brought dice of its own rather than the staff's.
+    assert result.damage_roll.total >= 5
+    assert any(pc.hp_marked for pc in fight.party)
+
+
+def test_chaotic_flux_reaches_at_most_three():
+    from features.adversaries import CHAOTIC_FLUX_TARGETS, chaotic_flux
+
+    hexer = _hexer()
+    fight = _fight(party=_party(size=12, armor_max=0), adversaries=[hexer])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        chaotic_flux(hexer, fight.party[0], fight)
+
+    hurt = sum(1 for pc in fight.party if pc.hp_marked)
+    assert 1 <= hurt <= CHAOTIC_FLUX_TARGETS
+
+
+def test_chaotic_flux_declines_without_the_stress():
+    from features.adversaries import chaotic_flux
+
+    hexer = _hexer(stress_max=0)
+    fight = _fight(adversaries=[hexer])
+
+    assert chaotic_flux(hexer, fight.party[0], fight) is None
+
+
+# --- Hold Them Down, and a Restrain that is recorded -------------------------
+#
+# Restrained still does nothing on its own. What these check is that it is
+# written down, with its source, so that content keying on it can ask - and that
+# both printed ways out of a hold work.
+
+
+def _kneebreaker(**overrides) -> Adversary:
+    """The printed Kneebreaker: 7 HP, 4 Stress, a 1d4+6 club."""
+    defaults = dict(
+        features=["I've Got 'Em", "Hold Them Down"],
+        hp_max=7,
+        stress_max=4,
+        difficulty=12,
+        major_threshold=7,
+        severe_threshold=14,
+        attack_modifier=-3,
+        damage_dice=[DiceGroup(count=1, sides=4)],
+        damage_modifier=6,
+    )
+    defaults.update(overrides)
+    return _adversary("Jagged Knife Kneebreaker", **defaults)
+
+
+def test_hold_them_down_deals_no_damage_and_applies_both_conditions():
+    from content.conditions import RESTRAINED
+    from features.adversaries import hold_them_down
+
+    kneebreaker = _kneebreaker()
+    fight = _fight(party=_party(armor_max=0), adversaries=[kneebreaker])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = hold_them_down(kneebreaker, target, fight)
+
+    assert result.damage_roll.total == 0, "the target takes no damage"
+    assert target.hp_marked == 0
+    assert fight.has_condition(target, RESTRAINED)
+    assert fight.has_condition(target, VULNERABLE)
+
+
+def test_hold_them_down_leaves_nothing_on_a_miss():
+    from content.conditions import RESTRAINED
+    from features.adversaries import hold_them_down
+
+    kneebreaker = _kneebreaker()
+    fight = _fight(adversaries=[kneebreaker])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(1)):
+        hold_them_down(kneebreaker, fight.party[0], fight)
+
+    assert not fight.has_condition(fight.party[0], RESTRAINED)
+
+
+def test_a_successful_strength_roll_breaks_both_conditions_at_once():
+    from content.conditions import RESTRAINED
+    from features.adversaries import hold_them_down
+
+    kneebreaker = _kneebreaker()
+    fight = _fight(party=_party(armor_max=0), adversaries=[kneebreaker])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        hold_them_down(kneebreaker, target, fight)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        assert fight.expire_conditions(target, WHEN_THEY_ACT) == []
+        assert fight.has_condition(target, RESTRAINED)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        assert fight.expire_conditions(target, WHEN_THEY_ACT) == [RESTRAINED]
+
+    assert not fight.has_condition(target, VULNERABLE), "both conditions lift together"
+
+
+def test_major_damage_to_the_kneebreaker_frees_everyone_it_holds():
+    from content.conditions import RESTRAINED
+    from features.adversaries import hold_them_down, hold_them_down_releases
+
+    kneebreaker = _kneebreaker()
+    fight = _fight(party=_party(armor_max=0), adversaries=[kneebreaker])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        hold_them_down(kneebreaker, target, fight)
+
+    hold_them_down_releases(kneebreaker, amount=6, hp_marked=1, fight=fight)
+    assert fight.has_condition(target, RESTRAINED), "6 is below the Major threshold"
+
+    hold_them_down_releases(kneebreaker, amount=7, hp_marked=2, fight=fight)
+    assert not fight.has_condition(target, RESTRAINED)
+    assert not fight.has_condition(target, VULNERABLE)
+
+
+def test_a_kneebreaker_only_frees_the_creatures_it_is_holding_itself():
+    from content.conditions import RESTRAINED
+    from features.adversaries import hold_them_down_releases
+
+    kneebreaker, other = _kneebreaker(), _kneebreaker()
+    fight = _fight(adversaries=[kneebreaker, other])
+    held_by_other = fight.party[0]
+    fight.apply_condition(
+        held_by_other, Condition(name=RESTRAINED, source=other)
+    )
+
+    hold_them_down_releases(kneebreaker, amount=14, hp_marked=3, fight=fight)
+
+    assert fight.has_condition(held_by_other, RESTRAINED)
+
+
+# --- I've Got 'Em ------------------------------------------------------------
+
+
+def test_ive_got_em_doubles_an_allys_damage_against_a_creature_it_holds():
+    from content.conditions import RESTRAINED
+    from features.adversaries import ive_got_em
+
+    kneebreaker, ally = _kneebreaker(), _adversary("Bear")
+    fight = _fight(adversaries=[kneebreaker, ally])
+    target = fight.party[0]
+    fight.apply_condition(target, Condition(name=RESTRAINED, source=kneebreaker))
+
+    assert ive_got_em(kneebreaker, target, ally, fight) == 2
+
+
+def test_ive_got_em_does_not_double_the_kneebreakers_own_attacks():
+    """"By other adversaries" - the Kneebreaker holds them for everyone else."""
+    from content.conditions import RESTRAINED
+    from features.adversaries import ive_got_em
+
+    kneebreaker = _kneebreaker()
+    fight = _fight(adversaries=[kneebreaker])
+    target = fight.party[0]
+    fight.apply_condition(target, Condition(name=RESTRAINED, source=kneebreaker))
+
+    assert ive_got_em(kneebreaker, target, kneebreaker, fight) is None
+
+
+def test_ive_got_em_ignores_a_creature_somebody_else_is_holding():
+    from content.conditions import RESTRAINED
+    from features.adversaries import ive_got_em
+
+    kneebreaker, other = _kneebreaker(), _adversary("Deeproot Defender")
+    fight = _fight(adversaries=[kneebreaker, other])
+    target = fight.party[0]
+    fight.apply_condition(target, Condition(name=RESTRAINED, source=other))
+
+    assert ive_got_em(kneebreaker, target, other, fight) is None
+
+
+def test_ive_got_em_ignores_a_creature_who_is_not_held():
+    from features.adversaries import ive_got_em
+
+    kneebreaker, ally = _kneebreaker(), _adversary("Bear")
+    fight = _fight(adversaries=[kneebreaker, ally])
+
+    assert ive_got_em(kneebreaker, fight.party[0], ally, fight) is None
+
+
+def test_the_doubling_reaches_an_allys_attack_through_dispatch():
+    """The point of the hook: the attacker knows nothing about the Kneebreaker."""
+    from content.conditions import RESTRAINED
+    from features.adversaries import ive_got_em  # noqa: F401 - registers the hook
+
+    kneebreaker = _kneebreaker()
+    ally = _adversary(
+        "Bear", damage_dice=[], damage_modifier=5, features=[]
+    )
+    # Thresholds set so 5 marks 1 HP and the doubled 10 marks 2.
+    fight = _fight(
+        party=_party(armor_max=0, major_threshold=6, severe_threshold=20),
+        adversaries=[kneebreaker, ally],
+    )
+    target = fight.party[0]
+    fight.apply_condition(target, Condition(name=RESTRAINED, source=kneebreaker))
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        ally.attack(target, fight=fight)
+
+    assert target.hp_marked == 2, "5 doubled to 10, which is Major"
+
+
+def test_an_unheld_target_takes_the_damage_as_rolled():
+    kneebreaker = _kneebreaker()
+    ally = _adversary("Bear", damage_dice=[], damage_modifier=5, features=[])
+    fight = _fight(
+        party=_party(armor_max=0, major_threshold=6, severe_threshold=20),
+        adversaries=[kneebreaker, ally],
+    )
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        ally.attack(fight.party[0], fight=fight)
+
+    assert fight.party[0].hp_marked == 1
+
+
+# --- The Lieutenant ----------------------------------------------------------
+
+
+def _lieutenant(**overrides) -> Adversary:
+    """The printed Lieutenant: 6 HP, 3 Stress, a 1d8+3 javelin at Close."""
+    defaults = dict(
+        features=["Tactician", "More Where That Came From", "Coup de Grace", "Momentum"],
+        hp_max=6,
+        stress_max=3,
+        difficulty=13,
+        major_threshold=7,
+        severe_threshold=14,
+        attack_modifier=2,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=3,
+        range="Close",
+    )
+    defaults.update(overrides)
+    return _adversary("Jagged Knife Lieutenant", **defaults)
+
+
+def test_tactician_spends_a_stress_to_hand_out_two_spotlights():
+    from features.adversaries import tactician
+
+    lieutenant = _lieutenant()
+    allies = [_adversary(f"Thug {index}") for index in range(4)]
+    fight = _fight(adversaries=[lieutenant, *allies])
+
+    tactician(lieutenant, fight)
+
+    assert lieutenant.stress_marked == 1
+    granted = sum(fight.granted_activations(ally) for ally in allies)
+    assert 1 <= granted <= 2
+
+
+def test_tactician_does_not_spend_the_lieutenants_own_action():
+    """Ruled: it fires on being spotlighted and the Lieutenant still attacks.
+
+    Which is a fact about *which hook* it registers on, so that is what this
+    checks - an Action would be one of the options competing for the spotlight,
+    and this must not be.
+    """
+    from content import action_options
+    from features.adversaries import tactician
+
+    assert tactician not in action_options(_lieutenant())
+
+
+def test_tactician_declines_with_nobody_to_direct():
+    from features.adversaries import tactician
+
+    lieutenant = _lieutenant()
+    fight = _fight(adversaries=[lieutenant])
+
+    tactician(lieutenant, fight)
+
+    assert lieutenant.stress_marked == 0
+
+
+def test_more_where_that_came_from_adds_three_lackeys_to_the_fight():
+    from features.adversaries import (
+        SUMMONED_COUNT,
+        SUMMONED_MINION,
+        more_where_that_came_from,
+    )
+
+    lieutenant = _lieutenant()
+    fight = _fight(adversaries=[lieutenant])
+
+    result = more_where_that_came_from(lieutenant, fight.party[0], fight)
+
+    assert result.made_an_attack is False
+    summoned = [a for a in fight.living_adversaries if a.name == SUMMONED_MINION]
+    assert len(summoned) == SUMMONED_COUNT
+    assert all(minion.hp_marked == 0 for minion in summoned)
+
+
+def test_each_summon_has_its_own_hp_track():
+    """Spawned, not shared - marking one must not defeat the rest."""
+    from features.adversaries import SUMMONED_MINION, more_where_that_came_from
+
+    lieutenant = _lieutenant()
+    fight = _fight(adversaries=[lieutenant])
+    more_where_that_came_from(lieutenant, fight.party[0], fight)
+
+    summoned = [a for a in fight.adversaries if a.name == SUMMONED_MINION]
+    summoned[0].mark_hp(1)
+
+    assert summoned[0].is_defeated
+    assert not any(minion.is_defeated for minion in summoned[1:])
+
+
+def test_a_summoned_minion_can_be_targeted_and_counts_toward_victory():
+    from features.adversaries import more_where_that_came_from
+
+    lieutenant = _lieutenant()
+    fight = _fight(adversaries=[lieutenant])
+    lieutenant.mark_hp(lieutenant.hp_max)
+
+    assert fight.adversaries_are_cleared
+
+    more_where_that_came_from(lieutenant, fight.party[0], fight)
+
+    assert not fight.adversaries_are_cleared
+
+
+def test_coup_de_grace_needs_a_vulnerable_target():
+    from features.adversaries import coup_de_grace
+
+    lieutenant = _lieutenant()
+    fight = _fight(adversaries=[lieutenant], fear=2)
+
+    assert coup_de_grace(lieutenant, fight.party[0], fight) is None
+    assert fight.fear == 2
+
+
+def test_coup_de_grace_spends_the_fear_and_hits_for_a_great_deal():
+    from features.adversaries import coup_de_grace
+
+    lieutenant = _lieutenant()
+    fight = _fight(party=_party(armor_max=0), adversaries=[lieutenant], fear=2)
+    target = fight.party[0]
+    fight.apply_condition(target, Condition(name=VULNERABLE))
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = coup_de_grace(lieutenant, target, fight)
+
+    assert fight.fear == 1
+    # 2d6+12, so at least 14 - far above the printed 1d8+3.
+    assert result.damage_roll.total >= 14
+    assert target.stress_marked == 1
+
+
+def test_coup_de_grace_pays_the_fear_even_on_a_miss():
+    """"Spend a Fear to make an attack" - the Fear buys the attempt."""
+    from features.adversaries import coup_de_grace
+
+    lieutenant = _lieutenant()
+    fight = _fight(adversaries=[lieutenant], fear=2)
+    target = fight.party[0]
+    fight.apply_condition(target, Condition(name=VULNERABLE))
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(1)):
+        coup_de_grace(lieutenant, target, fight)
+
+    assert fight.fear == 1
+    assert target.stress_marked == 0
+
+
+# --- The Shadow --------------------------------------------------------------
+
+
+def _shadow(**overrides) -> Adversary:
+    """The printed Shadow: 3 HP, 3 Stress, a 1d4+4 dagger."""
+    defaults = dict(
+        features=["Backstab", "Cloaked"],
+        hp_max=3,
+        stress_max=3,
+        difficulty=12,
+        major_threshold=4,
+        severe_threshold=8,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=4)],
+        damage_modifier=4,
+    )
+    defaults.update(overrides)
+    return _adversary("Jagged Knife Shadow", **defaults)
+
+
+def _d20_with(die: int, advantage: AdvantageState) -> D20RollResult:
+    return D20RollResult(
+        die_results=[die],
+        modifier=0,
+        advantage_state=advantage,
+        evasion=10,
+    )
+
+
+def test_backstab_swaps_the_damage_when_the_attack_had_advantage():
+    from features.adversaries import backstab
+
+    shadow = _shadow()
+    dice, modifier = backstab(
+        shadow, None, _d20_with(19, AdvantageState.ADVANTAGE), _fight()
+    )
+
+    assert dice == [DiceGroup(count=1, sides=6)]
+    assert modifier == 6
+
+
+def test_backstab_leaves_an_ordinary_attack_alone():
+    from features.adversaries import backstab
+
+    shadow = _shadow()
+
+    assert backstab(shadow, None, _d20_with(19, AdvantageState.NONE), _fight()) is None
+    assert backstab(shadow, None, None, _fight()) is None
+
+
+def test_cloaked_grants_advantage_to_exactly_one_attack():
+    from features.adversaries import CLOAKED_TOKEN, cloaked, cloaked_grants_advantage
+
+    shadow = _shadow()
+    fight = _fight(adversaries=[shadow])
+    target = fight.party[0]
+
+    assert cloaked(shadow, target, fight).made_an_attack is False
+    assert fight.token_count(shadow, CLOAKED_TOKEN) == 1
+
+    assert cloaked_grants_advantage(shadow, target, fight) is AdvantageState.ADVANTAGE
+    assert cloaked_grants_advantage(shadow, target, fight) is None, "spent on the attack"
+
+
+def test_cloaking_twice_over_buys_nothing():
+    from features.adversaries import cloaked
+
+    shadow = _shadow()
+    fight = _fight(adversaries=[shadow])
+
+    cloaked(shadow, fight.party[0], fight)
+
+    assert cloaked(shadow, fight.party[0], fight) is None
+
+
+def test_the_shared_advantage_rule_folds_both_sources():
+    from combat.policy import adversary_attack_advantage
+    from features.adversaries import cloaked
+
+    shadow = _shadow()
+    fight = _fight(adversaries=[shadow])
+    target = fight.party[0]
+
+    assert adversary_attack_advantage(shadow, target, fight) is AdvantageState.NONE
+
+    cloaked(shadow, target, fight)
+    assert adversary_attack_advantage(shadow, target, fight) is AdvantageState.ADVANTAGE
+
+    # And a Vulnerable target grants it without any cloak at all.
+    fight.apply_condition(target, Condition(name=VULNERABLE))
+    assert adversary_attack_advantage(shadow, target, fight) is AdvantageState.ADVANTAGE
+
+
+# --- The Minor Chaos Elemental -----------------------------------------------
+
+
+def _elemental(**overrides) -> Adversary:
+    """The printed Minor Chaos Elemental: 7 HP, 3 Stress, a 1d12+6 blast."""
+    defaults = dict(
+        features=[
+            "Arcane Form",
+            "Sickening Flux",
+            "Remake Reality",
+            "Magical Reflection",
+            "Momentum",
+        ],
+        hp_max=7,
+        stress_max=3,
+        difficulty=14,
+        major_threshold=7,
+        severe_threshold=14,
+        attack_modifier=3,
+        damage_dice=[DiceGroup(count=1, sides=12)],
+        damage_modifier=6,
+        range="Close",
+    )
+    defaults.update(overrides)
+    return _adversary("Minor Chaos Elemental", **defaults)
+
+
+def test_an_adversary_spends_its_own_hp_but_never_its_last():
+    elemental = _elemental(hp_max=7)
+
+    assert elemental.will_spend_hp(1) is True
+
+    elemental.mark_hp(6)  # one unmarked HP left
+    assert elemental.will_spend_hp(1) is False
+
+
+def test_sickening_flux_costs_an_hp_and_leaves_the_party_vulnerable():
+    from features.adversaries import sickening_flux
+
+    elemental = _elemental()
+    fight = _fight(party=_party(armor_max=0), adversaries=[elemental])
+
+    result = sickening_flux(elemental, fight.party[0], fight)
+
+    assert elemental.hp_marked == 1
+    assert result.made_an_attack is False
+    caught = [pc for pc in fight.party if fight.has_condition(pc, VULNERABLE)]
+    assert caught
+    assert all(pc.stress_marked == 1 for pc in caught)
+
+
+def test_sickening_flux_declines_on_the_elementals_last_hp():
+    from features.adversaries import sickening_flux
+
+    elemental = _elemental()
+    elemental.mark_hp(6)
+    fight = _fight(adversaries=[elemental])
+
+    assert sickening_flux(elemental, fight.party[0], fight) is None
+    assert elemental.hp_marked == 6
+
+
+def test_the_flux_vulnerable_outlasts_acting_and_the_gm_turn():
+    from features.adversaries import sickening_flux
+
+    elemental = _elemental()
+    fight = _fight(party=_party(armor_max=0), adversaries=[elemental])
+    sickening_flux(elemental, fight.party[0], fight)
+
+    caught = [pc for pc in fight.party if fight.has_condition(pc, VULNERABLE)][0]
+    fight.expire_conditions(caught, WHEN_THEY_ACT)
+    fight.expire_conditions(caught, ON_A_GM_TURN)
+
+    assert fight.has_condition(caught, VULNERABLE)
+
+
+def test_remake_reality_spends_a_fear_for_direct_damage():
+    from features.adversaries import remake_reality
+
+    elemental = _elemental()
+    fight = _fight(party=_party(armor_max=2), adversaries=[elemental], fear=1)
+
+    result = remake_reality(elemental, fight.party[0], fight)
+
+    assert fight.fear == 0
+    assert result.made_an_attack is False
+    hurt = [pc for pc in fight.party if pc.hp_marked]
+    assert hurt and all(pc.armor_marked == 0 for pc in hurt), "direct marks no slot"
+
+
+def test_remake_reality_declines_without_the_fear():
+    from features.adversaries import remake_reality
+
+    elemental = _elemental()
+    fight = _fight(adversaries=[elemental], fear=0)
+
+    assert remake_reality(elemental, fight.party[0], fight) is None
+
+
+def test_magical_reflection_costs_a_close_attacker_half_of_what_they_dealt():
+    from features.adversaries import magical_reflection
+
+    elemental = _elemental()
+    fight = _fight(party=_party(armor_max=0), adversaries=[elemental])
+    attacker = fight.party[0]
+
+    magical_reflection(elemental, attacker, find_weapon("Broadsword"), 9, fight)
+
+    assert attacker.hp_marked >= 1
+
+
+def test_magical_reflection_does_not_reach_an_archer():
+    from features.adversaries import magical_reflection
+
+    elemental = _elemental()
+    fight = _fight(party=_party(armor_max=0), adversaries=[elemental])
+    attacker = fight.party[0]
+
+    magical_reflection(elemental, attacker, find_weapon("Shortbow"), 9, fight)
+
+    assert attacker.hp_marked == 0
+
+
+def test_magical_reflection_halves_downward_and_ignores_a_scratch():
+    from features.adversaries import magical_reflection
+
+    elemental = _elemental()
+    # Thresholds chosen so the reflected 4 marks 1 HP and nothing else would.
+    fight = _fight(
+        party=_party(armor_max=0, major_threshold=5, severe_threshold=20),
+        adversaries=[elemental],
+    )
+    attacker = fight.party[0]
+
+    magical_reflection(elemental, attacker, find_weapon("Broadsword"), 9, fight)
+    assert attacker.hp_marked == 1, "half of 9 is 4, which is below Major"
+
+    magical_reflection(elemental, attacker, find_weapon("Broadsword"), 1, fight)
+    assert attacker.hp_marked == 1, "half of 1 rounds down to nothing"
+
+
+def test_arcane_form_is_left_unimplemented_rather_than_dismissed():
+    """Damage types *are* recorded on the catalogues, so this is a real gap."""
+    assert assess("adversary:Arcane Form").status is Status.UNIMPLEMENTED

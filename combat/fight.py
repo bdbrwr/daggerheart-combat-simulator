@@ -25,7 +25,13 @@ from combat.common import FightOutcome, Side
 from combat.policy import take_adversary_turn, take_pc_turn
 from combat.report import FightResult
 from combat.state import FightState
-from content import activations_allowed, apply_on_roll, extra_spotlight_cost
+from content import (
+    activations_allowed,
+    apply_on_party_attack_roll,
+    apply_on_roll,
+    converted_party_roll,
+    extra_spotlight_cost,
+)
 from content.conditions import ON_A_GM_TURN, WHEN_THEY_ACT
 from dice.duality import DualityOutcome
 
@@ -103,12 +109,18 @@ def _check_finished(state: FightState) -> FightOutcome | None:
     Defeat is "everyone unconscious", not "everyone dead" - simulated PCs
     always take Avoid Death, so a party is beaten when nobody is left standing.
 
-    Later: it would be worth spotting the point where the rest of a fight is a
-    formality - every adversary that could still threaten the party is down,
-    and the remaining rounds only add turns to the count. A GM would narrate
-    that ending rather than roll it out, and since one of the questions this
-    tool is meant to answer is whether an encounter drags, counting those
-    turns as though they were real fighting would bias the length metrics.
+    **There is deliberately no third ending.** Spotting the point where the rest
+    of a fight is a formality - every adversary that could still threaten the
+    party is down, only Minions left standing - was considered and ruled out.
+    The same field means different things in different encounters: a few bandit
+    Lackeys after their Lieutenant falls really is over, while a plague of rats
+    *is* the encounter, and no rule written here can tell those apart. So a fight
+    is played to the end, and the extra rounds are counted as what they are.
+
+    That also settles the shape of a feature that adds adversaries mid-fight -
+    the Lieutenant's More Where That Came From - which needs no cap of its own.
+    Minions die to any damage, so a summoned field clears quickly; `MAX_PC_ACTIONS`
+    remains the only backstop, and it is scaffolding rather than a rule.
     """
     if state.adversaries_are_cleared:
         return FightOutcome.PARTY_VICTORY
@@ -136,13 +148,24 @@ def _take_pc_spotlight(state: FightState) -> None:
         return
 
     state.pc_actions += 1
-    _apply_duality_outcome(pc, result.attack_roll, state)
+
+    # The GM's side gets to rewrite how the roll came out before anything reads
+    # it - the Jagged Knife Hexer's Curse turns a roll with Hope into one with
+    # Fear. Asked here, once, because this is where a duality outcome is spent:
+    # the Hope it hands the PC, the Fear it hands the GM, and whether the party
+    # keeps the spotlight all follow from the same answer.
+    roll = converted_party_roll(pc, result.attack_roll, state)
+    _apply_duality_outcome(pc, roll, state)
+
+    # GM-side content that only watches the party roll - the Head Guard's
+    # countdown ticks on every PC attack roll. After the conversion, so both see
+    # the same roll, and guarded on there having been an attack at all.
+    if result.made_an_attack:
+        apply_on_party_attack_roll(pc, roll, state)
 
     # The spotlight swings on a failure or on Fear. A success with Hope - and a
     # critical, which is a success and never "with Fear" - keeps it.
-    passes = not result.attack_roll.is_success or (
-        result.attack_roll.outcome is DualityOutcome.FEAR
-    )
+    passes = not roll.is_success or (roll.outcome is DualityOutcome.FEAR)
     if passes:
         state.spotlight = Side.GM
 

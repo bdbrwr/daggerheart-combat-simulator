@@ -69,6 +69,7 @@ from enum import Enum
 from typing import Callable, Iterable, NamedTuple, Protocol
 
 from content.names import base_name, canonical, parameter
+from dice.common import AdvantageState, combined
 
 # Packages holding content definitions. Adding a content type is adding a line
 # here plus the package; nothing else in the codebase changes.
@@ -194,8 +195,11 @@ class Fight(Protocol):
     def consume_activation(self, holder) -> None: ...
     def apply_condition(self, holder, condition) -> None: ...
     def has_condition(self, holder, name: str) -> bool: ...
+    def condition_on(self, holder, name: str): ...
     def clear_condition(self, holder, name: str) -> None: ...
+    def summon(self, adversary) -> None: ...
     def is_vulnerable(self, combatant) -> bool: ...
+    def disadvantaged_on(self, holder, trait: str) -> bool: ...
     def token_count(self, holder, name: str) -> int: ...
     def add_token(self, holder, name: str, cap: int) -> bool: ...
     def set_token(self, holder, name: str, value: int) -> None: ...
@@ -251,7 +255,12 @@ _on_damaged: dict[str, Callable] = {}
 _difficulty_bonuses: dict[str, Callable] = {}
 _standard_damage: dict[str, Callable] = {}
 _on_attacked: dict[str, Callable] = {}
+_before_attacked: dict[str, Callable] = {}
 _on_spotlight: dict[str, Callable] = {}
+_on_party_attack_rolls: dict[str, Callable] = {}
+_party_roll_conversions: dict[str, Callable] = {}
+_attack_advantages: dict[str, Callable] = {}
+_damage_multipliers: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -501,7 +510,7 @@ def attack_area(name: str, unmodelled: Iterable[str] = ()):
 def on_attacked(name: str, unmodelled: Iterable[str] = ()):
     """Register content on a *target* that responds to being successfully attacked.
 
-    Signature: `(holder, attacker, weapon, fight) -> None`. The mirror of
+    Signature: `(holder, attacker, weapon, damage, fight) -> None`. The mirror of
     `on_hit`, which belongs to whoever swung: this belongs to whoever was hit,
     and it fires on a successful attack whether or not any HP was marked. The
     Glass Snake's `Armor-Shredding Shards` ("after a successful attack against
@@ -509,12 +518,149 @@ def on_attacked(name: str, unmodelled: Iterable[str] = ()):
     reason it exists, and the attacker's *weapon* is in the signature because
     that clause is the only handle the simulator has on range.
 
+    `damage` is the total the attack dealt, before this holder's own thresholds
+    turned it into marked HP. The Minor Chaos Elemental's Magical Reflection
+    needs it ("deal an amount of damage to the attacker equal to half the damage
+    they dealt"), and it is the one figure `on_damaged` can see but this hook
+    could not - the two hooks each knew half of what that feature asks for.
+
     Distinct from `on_damaged`, which fires on damage arriving and can't see who
     dealt it - "the attacker must mark an Armor Slot" needs the attacker.
     """
 
     def register(function: Callable) -> Callable:
         _claim(_on_attacked, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def before_attacked(name: str, unmodelled: Iterable[str] = ()):
+    """Register content on a *target* that fires before an incoming attack is rolled.
+
+    Signature: `(holder, attacker, weapon, fight) -> None`, identical to
+    `on_attacked` and belonging to the same combatant - what differs is the
+    moment. That hook fires once an attack has succeeded; this one fires before
+    the dice are thrown at all, which is where the SRD puts its interrupting
+    Reactions: the Harrier's Fall Back is "when a creature moves into Melee
+    range to make an attack, you can mark a Stress **before the attack roll**".
+
+    **The attack goes ahead regardless.** The return value is ignored and there
+    is no way to say "and it never happens": a Reaction whose fiction is
+    stepping out of reach is modelled as the counterattack it comes with, not as
+    a veto, because a PC can move within Close range as part of their own action
+    and would simply follow. See SIMULATION-RULES.md.
+
+    The attacker's `weapon` is passed for the reason `on_attacked` takes it -
+    it is the only handle the simulator has on how far away they were standing.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_before_attacked, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def attack_advantage(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that grants its holder Advantage on the attack they're making.
+
+    Signature: `(holder, target, fight) -> AdvantageState | None` - the state this
+    content contributes, or None to decline. Everything that answers is folded
+    together with `dice/common.py`'s `combined`, so Advantage and Disadvantage
+    cancel rather than stack.
+
+    Asked once, immediately before the standard attack is rolled, which makes
+    **being asked the commitment** - the same contract `hope_die` and `roll_bonus`
+    keep. The Jagged Knife Shadow's Cloaked is why: it grants Advantage "until
+    after the Shadow's next attack", so it spends its token when consulted rather
+    than needing to be told afterwards that the attack happened.
+
+    Only the *standard* attack consults this. A feature that rolls an attack of
+    its own passes whatever state it means to roll in, which is usually none.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_attack_advantages, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def damage_multiplier(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that multiplies damage dealt to one of the party.
+
+    Signature: `(holder, target, attacker, fight) -> int | None` - the multiplier,
+    or None to decline. Scanned across the living adversaries rather than across
+    the attacker or the target, because the content belongs to neither: the
+    Jagged Knife Kneebreaker's `I've Got 'Em` says creatures **it** has Restrained
+    take double damage from attacks by *other* adversaries, so the feature is a
+    third party to every attack it changes.
+
+    Applied to the damage total before the target's thresholds see it, which is
+    what "take double damage" means in a game where damage becomes HP through
+    bands - doubling afterwards would double the HP instead, which is a much
+    larger and quite different effect.
+
+    Multipliers from several sources multiply together. Nothing in the SRD stacks
+    two of these yet; multiplying is the reading that doesn't privilege whichever
+    adversary happened to be listed first.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_damage_multipliers, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def on_party_attack_roll(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that watches a PC make an attack roll.
+
+    Signature: `(holder, roller, roll, fight) -> None`. Scanned across the living
+    adversaries rather than across the roller's own sheet, because the content
+    belongs to the other side of the table - the mirror of `force_reroll`, which
+    is party content watching an adversary's roll.
+
+    The Head Guard's countdown is the reason it exists: "it ticks down when a PC
+    makes an attack roll". Watching only - anything that needs to *change* the
+    roll belongs on `convert_party_roll`, which is asked first.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_on_party_attack_rolls, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def convert_party_roll(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that rewrites how a PC's action roll came out.
+
+    Signature: `(holder, roller, roll, fight) -> DualityRollResult | None` - the
+    roll as it should now read, or None to decline. The first conversion offered
+    wins, on the same reasoning `remake_action_roll` gives for stopping at one:
+    a chain of rewrites off a single trigger is not what any of this content
+    describes.
+
+    The Jagged Knife Hexer's Curse is the case - "mark a Stress when that target
+    rolls with Hope to make the roll be with Fear instead" - and it is worth
+    seeing what that rewrites, because a duality outcome is not just a token: it
+    decides whether the PC gains a Hope or the GM gains a Fear, *and* whether the
+    party keeps the spotlight. So one Stress here can cost the party their turn.
+
+    Distinct from `on_party_attack_roll`, which only watches. Kept separate for
+    the reason `severity_response` and `on_damaged` are separate: one is asked
+    while an outcome is still being settled, the other after it is.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_party_roll_conversions, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -547,9 +693,13 @@ def on_spotlight(name: str, unmodelled: Iterable[str] = ()):
 def standard_damage(name: str, unmodelled: Iterable[str] = ()):
     """Register content that replaces the dice its holder's *standard* attack rolls.
 
-    Signature: `(holder, target, fight) -> tuple[list[DiceGroup], int] | None` -
-    the dice and flat modifier to roll instead of the printed ones, or None to
-    decline. The SRD writes this shape often: the Giant Mosquitoes' `Horde (X)`
+    Signature: `(holder, target, roll, fight) -> tuple[list[DiceGroup], int] | None`
+    - the dice and flat modifier to roll instead of the printed ones, or None to
+    decline. `roll` is the attack roll that has just landed, passed for the same
+    reason `extra_damage` takes one: the SRD writes swaps conditional on *how*
+    the attack came out, and the Jagged Knife Shadow's Backstab ("when the Shadow
+    succeeds on a standard attack that **has advantage**") is the first. Content
+    that only cares who is being hit ignores it. The SRD writes this shape often: the Giant Mosquitoes' `Horde (X)`
     ("their standard attack deals 1d4+1 instead") and the Dire Wolf's `Pack
     Tactics` ("deal 1d6+5 instead of their standard damage") are the first two,
     and one hook serves both.
@@ -1173,6 +1323,92 @@ def _party_offers(fight: Fight, table: dict[str, Callable]) -> list[tuple[Holder
     return offers
 
 
+def _gm_offers(fight: Fight, table: dict[str, Callable]) -> list[tuple[object, Callable]]:
+    """Every (adversary, content) pair in `table` the GM's side can offer, shuffled.
+
+    The mirror of `_party_offers`, for content that reaches across the table in
+    the other direction, and shuffled for the same reason: which of two Hexers
+    pays the Stress to curse a roll must not be decided by the order an encounter
+    happened to list them in.
+
+    The shuffle is skipped when there is nothing to choose between, exactly as
+    `_party_offers` skips it - drawing from the global RNG when no choice exists
+    would shift the dice for every fight containing an adversary that carries
+    none of this content.
+    """
+    if fight is None:
+        return []
+
+    offers: list[tuple[object, Callable]] = [
+        (adversary, found)
+        for adversary in fight.living_adversaries
+        for name in adversary.named_features
+        if (found := _registered(table, name)) is not None
+    ]
+    if len(offers) > 1:
+        random.shuffle(offers)
+    return offers
+
+
+def granted_attack_advantage(holder, target, fight=None):
+    """Everything this combatant carries that changes the state of their attack.
+
+    Returns an `AdvantageState`, `NONE` when nothing answers. Folded together
+    rather than first-answer-wins, so a holder with two sources of Advantage and
+    one of Disadvantage lands where the SRD puts them.
+    """
+    _discover()
+    states = []
+    for name in holder.named_features:
+        grants = _registered(_attack_advantages, name)
+        if grants is not None:
+            state = grants(holder, target, fight)
+            if state is not None:
+                states.append(state)
+    return combined(*states) if states else AdvantageState.NONE
+
+
+def incoming_damage_multiplier(target, attacker, fight: Fight = None) -> int:
+    """How much the GM's side multiplies this damage by before thresholds.
+
+    One, unless something on the field says otherwise. Asked of the living
+    adversaries rather than of either combatant in the attack - see
+    `damage_multiplier` for why the content is a third party to it.
+    """
+    _discover()
+    multiplier = 1
+    for adversary, contribute in _gm_offers(fight, _damage_multipliers):
+        answer = contribute(adversary, target, attacker, fight)
+        if answer:
+            multiplier *= answer
+    return multiplier
+
+
+def apply_on_party_attack_roll(roller: Holder, roll, fight: Fight = None) -> None:
+    """Let GM-side content respond to a PC's attack roll. Everything gets its say."""
+    _discover()
+    for adversary, respond in _gm_offers(fight, _on_party_attack_rolls):
+        respond(adversary, roller, roll, fight)
+
+
+def converted_party_roll(roller: Holder, roll, fight: Fight = None):
+    """Give the GM's side a chance to rewrite how a PC's roll came out.
+
+    Returns the roll to carry on with - the rewritten one if anything offered a
+    rewrite, otherwise the roll it was given, so the caller can use the result
+    unconditionally. At most one conversion applies.
+
+    Called once, at the point the outcome is spent, so everything that reads a
+    roll's Hope or Fear reads the same answer.
+    """
+    _discover()
+    for adversary, convert in _gm_offers(fight, _party_roll_conversions):
+        replacement = convert(adversary, roller, roll, fight)
+        if replacement is not None:
+            return replacement
+    return roll
+
+
 def remake_action_roll(roller: Holder, roll, remake: Callable, fight: Fight = None):
     """Give the party a chance to replace an action roll that has just resolved.
 
@@ -1347,11 +1583,23 @@ def apply_on_damaged(holder, amount: int, hp_marked: int, fight=None) -> None:
             respond(holder, amount, hp_marked, fight)
 
 
-def apply_on_attacked(holder, attacker, weapon, fight=None) -> None:
+def apply_on_attacked(holder, attacker, weapon, damage=0, fight=None) -> None:
     """Let content the *target* carries respond to a successful attack on them."""
     _discover()
     for name in holder.named_features:
         respond = _registered(_on_attacked, name)
+        if respond is not None:
+            respond(holder, attacker, weapon, damage, fight)
+
+
+def apply_before_attacked(holder, attacker, weapon, fight=None) -> None:
+    """Let content the *target* carries interrupt an attack about to be rolled.
+
+    Nothing it does can stop the attack; see `before_attacked` for why.
+    """
+    _discover()
+    for name in holder.named_features:
+        respond = _registered(_before_attacked, name)
         if respond is not None:
             respond(holder, attacker, weapon, fight)
 
@@ -1365,18 +1613,20 @@ def apply_on_spotlight(holder, fight=None) -> None:
             respond(holder, fight)
 
 
-def standard_attack_damage(holder, target, fight=None):
+def standard_attack_damage(holder, target, roll=None, fight=None):
     """The dice this combatant's standard attack should roll instead, if any.
 
     Returns `(dice_groups, modifier)` or None. First answer wins: nothing in the
     SRD gives one adversary two of these, and combining two replacements would be
     inventing a rule rather than following one.
+
+    `roll` is the attack roll that landed, for content keyed on how it came out.
     """
     _discover()
     for name in holder.named_features:
         swap = _registered(_standard_damage, name)
         if swap is not None:
-            replacement = swap(holder, target, fight)
+            replacement = swap(holder, target, roll, fight)
             if replacement is not None:
                 return replacement
     return None

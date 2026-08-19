@@ -37,6 +37,7 @@ from content.registry import (
     deals_direct_damage,
     force_adversary_reroll,
     harden_damage,
+    incoming_damage_multiplier,
     soften_damage,
     standard_attack_damage,
     total_damage_bonus,
@@ -202,7 +203,7 @@ class Adversary:
         spawned.difficulty += total_difficulty_bonus(spawned)
         return spawned
 
-    def _damage_for(self, dice, modifier, is_critical, target, fight):
+    def _damage_for(self, dice, modifier, attack_roll, target, fight):
         """Roll this attack's damage, letting content add to it first.
 
         `dice`/`modifier` default to the stat block's, so a feature that hits
@@ -222,7 +223,7 @@ class Adversary:
         standard attack, and asking before the roll would pay for a miss.
         """
         if dice is None:
-            swapped = standard_attack_damage(self, target, fight)
+            swapped = standard_attack_damage(self, target, attack_roll, fight)
             if swapped is not None:
                 dice, modifier = swapped
 
@@ -230,8 +231,24 @@ class Adversary:
         return roll_damage(
             dice_groups=self.damage_dice if dice is None else dice,
             modifier=(self.damage_modifier if modifier is None else modifier) + bonus,
-            is_critical=is_critical,
+            is_critical=attack_roll is not None and attack_roll.is_critical,
         )
+
+    def _dealt(self, damage_roll, target, fight) -> int:
+        """The damage this roll actually delivers, after anything multiplies it.
+
+        Separate from the roll because the roll is what was *thrown* and this is
+        what *lands*: the Jagged Knife Kneebreaker's `I've Got 'Em` doubles what
+        its allies deal to a creature it has Restrained, and that doubling has to
+        happen before the target's thresholds see the number - doubling after
+        would double the HP marked instead, which is a far larger effect.
+
+        Asked of the field rather than of either combatant, since the content
+        doing it belongs to neither. See `content/registry.py`'s
+        `damage_multiplier`.
+        """
+        multiplier = incoming_damage_multiplier(target, self, fight)
+        return damage_roll.total * multiplier
 
     def area_attack(
         self,
@@ -285,7 +302,7 @@ class Adversary:
             return AttackResult(attack_roll=attack_roll, damage_roll=None), []
 
         damage_roll = self._damage_for(
-            damage_dice, damage_modifier, attack_roll.is_critical, struck[0], fight
+            damage_dice, damage_modifier, attack_roll, struck[0], fight
         )
         # Unstated means "whatever this adversary's features say", so Bone
         # Breaker reaches a swept attack the same way it reaches a single one.
@@ -294,7 +311,11 @@ class Adversary:
 
         marked = 0
         for target in struck:
-            marked += target.take_damage(damage_roll.total, fight, direct=direct)
+            # Asked per target: a multiplier keyed on a condition applies to
+            # whoever carries it, not to everyone the sweep caught.
+            marked += target.take_damage(
+                self._dealt(damage_roll, target, fight), fight, direct=direct
+            )
 
         return (
             AttackResult(
@@ -345,7 +366,7 @@ class Adversary:
             return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
         damage_roll = self._damage_for(
-            damage_dice, damage_modifier, attack_roll.is_critical, target, fight
+            damage_dice, damage_modifier, attack_roll, target, fight
         )
         # Whether this attack is direct - no Armor Slot may be marked against it -
         # is a question for the attacker's features, asked generically. Nothing
@@ -357,7 +378,9 @@ class Adversary:
         # interfere - the same arrangement `area_attack` already uses.
         if direct is None:
             direct = deals_direct_damage(self, fight)
-        marked = target.take_damage(damage_roll.total, fight, direct=direct)
+        marked = target.take_damage(
+            self._dealt(damage_roll, target, fight), fight, direct=direct
+        )
         return AttackResult(
             attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
         )
@@ -424,6 +447,30 @@ class Adversary:
             return False
         slots_left_after = self.stress_unmarked - amount
         return self.hp_unmarked <= (slots_left_after + 1) ** 2 + 1
+
+    def will_spend_hp(self, amount: int = 1) -> bool:
+        """Whether this adversary would pay a feature's cost in its **own HP**.
+
+        SIMULATION RULE - policy. The Minor Chaos Elemental's Sickening Flux is
+        the first feature in the catalogue that costs HP rather than Stress or
+        Fear, and the Stress-desperation rule doesn't reach it.
+
+        The ruling is that HP is spent on the same reading as Stress, with one
+        guard: **never the last HP**. Worth being plain about what that comes to,
+        because the two halves are not equally load-bearing. The desperation test
+        asks whether `hp_unmarked` has fallen to `X**2 + 1` with X the slots left
+        after paying - and when the pool being spent *is* the HP track, that
+        reduces to `hp_unmarked <= hp_unmarked**2 + 1`, which is true of every
+        adversary alive. So the rule that actually bites is the guard: an
+        adversary will spend HP freely, from full health, and stops one short of
+        killing itself.
+
+        That is deliberate rather than a degenerate case. Such a feature is a
+        trade the stat block offers - the Elemental buys the whole party going
+        Vulnerable with a slice of its own life - and a GM would take it early,
+        when there is still a fight left to win with it.
+        """
+        return self.hp_unmarked - amount >= 1
 
     def spend_stress(self, amount: int = 1) -> bool:
         """Pay a feature's Stress cost; return whether it went through."""

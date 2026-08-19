@@ -36,8 +36,8 @@ from content import (
     total_extra_damage,
     total_roll_bonus,
 )
-from content.registry import apply_on_attacked
-from dice.common import AdvantageState
+from content.registry import apply_before_attacked, apply_on_attacked
+from dice.common import AdvantageState, combined
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import roll_duality
 from items.catalogue import Weapon
@@ -89,6 +89,20 @@ def attack_with(
     can change how many HP a hit marks and not just the number printed. So is
     everything the two dispatch calls below contribute, for the same reason.
     """
+    # Content the *target* carries that interrupts an attack before it is rolled -
+    # the Harrier's Fall Back, which counterattacks the moment somebody closes to
+    # Melee. Fired first, because "before the attack roll" is the trigger, and it
+    # cannot stop what follows: the swing happens either way. Nothing here knows
+    # what any of it is.
+    apply_before_attacked(target, attacker, weapon, fight)
+
+    # A condition can hobble the trait this weapon rolls - the Archer Guard's
+    # Hobbling Shot leaves its target with disadvantage on Agility Rolls. Folded
+    # in rather than overwriting, so a PC attacking with Advantage and hobbled at
+    # once ends up where the SRD puts them: the two cancel.
+    if fight is not None and fight.disadvantaged_on(attacker, weapon.trait):
+        advantage_state = combined(advantage_state, AdvantageState.DISADVANTAGE)
+
     # Worked out once, before the roll, and *outside* the closure below: asking
     # content for a roll bonus is the commitment, so several of them spend Hope
     # or mark Stress on being asked. A reroll re-makes the dice, not the
@@ -155,7 +169,7 @@ def attack_with(
     # successful attack rather than a wound, and handed the weapon because how
     # far away the attacker was standing is the only thing such content has to
     # read range off. Nothing here knows what any of it is.
-    apply_on_attacked(target, attacker, weapon, fight)
+    apply_on_attacked(target, attacker, weapon, damage_roll.total, fight)
 
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked

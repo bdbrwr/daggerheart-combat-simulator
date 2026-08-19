@@ -7,15 +7,23 @@ the same word. So a condition here is a small record carrying both.
 
 ## What is actually modelled
 
-**Vulnerable only.** It hands every roll against its holder Advantage, which is
-a real and large effect, so content that applies it has something to apply.
+**Vulnerable**, which hands every roll against its holder Advantage - a real and
+large effect, so content that applies it has something to apply.
 
-**Restrained is ruled to have no combat effect here.** Being Restrained stops a
-combatant moving and does nothing else, and no movement is modelled - so a
-feature that Restrains is implemented for whatever *else* it does, with the
-Restrain declared as a gap where it's registered. That is the user's ruling, and
-it is about this simulation rather than about the game: at a table, being held in
-place matters a great deal.
+**A condition that hobbles one trait**, through `disadvantage_on`. The SRD writes
+several of these without giving them a keyword - the Archer Guard's Hobbling Shot
+leaves its target "with disadvantage on Agility Rolls until they clear at least
+1 HP" - so the field is on `Condition` rather than being a named condition of its
+own, and whoever applies one names it whatever the page calls it.
+
+**Restrained is recorded, and does nothing by itself.** Being Restrained stops a
+combatant moving, and no movement is modelled - so the condition still has no
+effect of its own here, exactly as ruled. What changed is that it is now *written
+down* when a feature applies one, because other content asks about it: the Jagged
+Knife Kneebreaker's `I've Got 'Em` doubles the damage its allies deal to
+creatures it has Restrained, and a condition nobody recorded is one nothing can
+key on. So a feature that Restrains applies the record, with its own printed way
+out, and the movement half stays declared as a gap where it's registered.
 
 The rest of the SRD's conditions - Hidden, On Fire, Stunned - have no
 representation at all and no content applies one yet.
@@ -72,11 +80,26 @@ class Condition:
     Poison is the first that does: it costs its holder a Stress on a d6 of 4 or
     lower before each action roll, which nothing else in the simulator was
     already asking about.
+
+    `disadvantage_on` names the traits whose rolls this condition hobbles, in the
+    lowercase spelling a character sheet writes them - `("agility",)`. Data
+    rather than a callable, unlike its two neighbours, because the effect isn't
+    something that *happens* at an announced moment: it is a standing fact about
+    every roll of that trait, read where the roll is made. `FightState`
+    answers for it, the way it already answers for Vulnerable.
+
+    `source` is whoever applied it, when that matters. Most content only asks
+    whether a condition is present, but some asks whose it is: the Jagged Knife
+    Kneebreaker doubles damage against creatures **it** has Restrained, which is
+    a different question from whether the target is held at all. Read through
+    `FightState.condition_on` rather than `has_condition`.
     """
 
     name: str
     end: Callable[..., bool] | None = None
     effect: Callable | None = None
+    disadvantage_on: tuple[str, ...] = ()
+    source: object | None = None
 
 
 def when_they_act(holder, fight, moment: str) -> bool:

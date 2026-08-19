@@ -45,6 +45,7 @@ from content import (
     apply_on_hit,
     apply_on_spotlight,
     find_shielder,
+    granted_attack_advantage,
     hope_die_for,
     is_immune_to,
     standard_attack_area,
@@ -56,7 +57,7 @@ from content.aoe import targets_in_area
 from content.conditions import BEFORE_AN_ACTION_ROLL, VULNERABLE
 from content.names import canonical
 from content.rolls import clear_experience_utilised, note_experience_utilised
-from dice.common import AdvantageState
+from dice.common import AdvantageState, combined
 from items.registry import find_consumable, find_weapon
 from items.weapons import attack_with
 
@@ -316,6 +317,31 @@ def _make_the_roll(
     return result
 
 
+def adversary_attack_advantage(
+    adversary: Adversary, target: PlayerCharacter, state: FightState
+) -> AdvantageState:
+    """The state an adversary's attack on `target` is rolled in.
+
+    Two sources, folded together rather than either winning outright. A
+    Vulnerable PC hands every roll against them Advantage per the SRD - unless
+    something they carry turns the condition off, which is asked generically
+    rather than by name. On top of that, content the *attacker* carries can grant
+    its own: the Jagged Knife Shadow's Cloaked does.
+
+    One function because two callers have to agree. The standard attack rolls in
+    whatever this returns, and a feature that needs to know whether the attack
+    *had* Advantage reads it off the roll rather than working it out again -
+    asking twice would consume Cloaked's token twice.
+    """
+    vulnerable = state.is_vulnerable(target) and not is_immune_to(
+        target, VULNERABLE, state
+    )
+    return combined(
+        AdvantageState.ADVANTAGE if vulnerable else AdvantageState.NONE,
+        granted_attack_advantage(adversary, target, state),
+    )
+
+
 def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult | None:
     """Spotlight one adversary: pick a PC and swing at them.
 
@@ -348,14 +374,14 @@ def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult
     def standard_attack(attacker, at, fight):
         """The stat block's printed attack - what an adversary does by default.
 
-        Two sources of Vulnerable - a full Stress track, and content that applied
-        the condition - which the fight state answers for as one question.
+        Whether it rolls with Advantage is `adversary_attack_advantage`'s answer,
+        which folds the target being Vulnerable together with anything the
+        attacker carries that grants it.
 
         Never declines, exactly like the PC's weapon swing, so a spotlight always
         resolves into something.
         """
-        vulnerable = fight.is_vulnerable(at) and not is_immune_to(at, VULNERABLE, fight)
-        advantage = AdvantageState.ADVANTAGE if vulnerable else AdvantageState.NONE
+        advantage = adversary_attack_advantage(attacker, at, fight)
 
         # A passive can turn the printed attack into an area one - the Cave
         # Ogre's Ramp Up. Asked here rather than being an action option, because

@@ -93,8 +93,18 @@ small to change an outcome), **not implemented** (work still to do).
 | Giant Rat | Minion | 2 | Minion (3), Group Attack *implemented* |
 | Giant Scorpion | Bruiser | 2 | Momentum, Double Strike, Venomous Stinger *implemented* |
 | Glass Snake | Standard | 2 | Armor-Shredding Shards, Spinning Serpent, Spitter *implemented* |
+| Harrier | Standard | 3 | Fall Back *implemented* · Maintain Distance *no combat effect* |
+| Archer Guard | Ranged | 3 | Hobbling Shot *implemented* |
+| Bladed Guard | Standard | 3 | Detain *implemented* · Shield Wall *no combat effect* |
+| Head Guard | Leader | 3 | Rally Guards, On My Signal (5), Momentum *implemented* |
 | Jagged Knife Bandit | Standard | earlier | Climber *no combat effect* · From Above *irrelevant* |
+| Jagged Knife Hexer | Support | 3 | Curse, Chaotic Flux *implemented* |
+| Jagged Knife Kneebreaker | Bruiser | 4 | I've Got 'Em, Hold Them Down *implemented* |
+| Jagged Knife Lackey | Minion | 4 | Minion (3), Group Attack *implemented* — both were already generic, so this stat block needed no new code at all |
+| Jagged Knife Lieutenant | Leader | 4 | Tactician, More Where That Came From, Coup de Grace, Momentum *implemented* |
+| Jagged Knife Shadow | Skulk | 4 | Backstab, Cloaked *implemented* |
 | Jagged Knife Sniper | Ranged | earlier | Unseen Strike *irrelevant* |
+| Minor Chaos Elemental | Solo | 4 | Sickening Flux, Remake Reality, Magical Reflection, Momentum *implemented* · **Arcane Form *not implemented*** — it needs damage-type resistance, which is real outstanding work rather than a dismissal |
 
 ---
 
@@ -107,45 +117,41 @@ printed page as each batch is read, so a blank one is unknown rather than
 unknown-to-be-blank - and a Social found there is skipped rather than ported.
 
 1. Courtier — **Social, skipped**
-2. Harrier — Standard
-3. Archer Guard — Ranged
-4. Bladed Guard — Standard
-5. Head Guard — Leader
-6. Jagged Knife Hexer — Support
-7. Jagged Knife Kneebreaker — Bruiser
-8. Jagged Knife Lackey — Minion
-9. Jagged Knife Lieutenant
-10. Jagged Knife Shadow
-11. Merchant
-12. Minor Chaos Elemental
-13. Minor Fire Elemental
-14. Minor Demon
-15. Minor Treant
-16. Green Ooze
-17. Tiny Green Ooze
-18. Red Ooze
-19. Tiny Red Ooze
-20. Petty Noble
-21. Pirate Captain
-22. Pirate Raiders
-23. Pirate Tough
-24. Sellsword
-25. Skeleton Archer
-26. Skeleton Dredge
-27. Skeleton Knight
-28. Skeleton Warrior
-29. Spellblade
-30. Swarm of Rats
-31. Sylvan Soldier
-32. Tangle Bramble Swarm
-33. Tangle Bramble
-34. Weaponmaster
-35. Young Dryad
-36. Brawny Zombie
-37. Patchwork Zombie Hulk
-38. Rotted Zombie
-39. Shambling Zombie
-40. Zombie Pack
+2. Merchant — **Social, skipped**
+3. Minor Fire Elemental — Solo
+4. Minor Demon — Solo
+5. Minor Treant — Minion
+6. Green Ooze — Skulk
+7. Tiny Green Ooze — Skulk
+8. Red Ooze — Skulk
+9. Tiny Red Ooze — Skulk
+10. Petty Noble — **Social, skipped**
+11. Pirate Captain — Leader
+12. Pirate Raiders — Horde (3/HP)
+13. Pirate Tough — Bruiser
+14. Sellsword — Minion
+15. Skeleton Archer — Ranged
+16. Skeleton Dredge — Minion
+17. Skeleton Knight
+18. Skeleton Warrior
+19. Spellblade
+20. Swarm of Rats
+21. Sylvan Soldier
+22. Tangle Bramble Swarm
+23. Tangle Bramble
+24. Weaponmaster
+25. Young Dryad
+26. Brawny Zombie
+27. Patchwork Zombie Hulk
+28. Rotted Zombie
+29. Shambling Zombie
+30. Zombie Pack
+
+Types down to Skeleton Dredge were confirmed against the printed page (SRD
+pp. 78–81) while batch 3 was being read, which is also where the three Socials
+above were spotted. **Batch 5 therefore starts at the Minor Fire Elemental**, and
+the next five are the Minor Fire Elemental, Minor Demon, Minor Treant, Green Ooze
+and Tiny Green Ooze.
 
 ### Tiers 2-4
 
@@ -302,6 +308,121 @@ All eleven features are implemented. The policies are settled.
 | Venomous Stinger (Scorpion) | 1 Fear on a hit | rule 3. 1d4+4 at 6.5 against the standard 1d12+2 at 8.5, exactly the 2.0 margin, and Poison **is** modelled - so this is the first feature the rule actually acts on |
 | Group Attack (Giant Rat) | 1 Fear | Used when it beats what one Minion's standard attack would do, i.e. **2 or more** of that stat block in range. **Generalised to all Minion group attacks**, not written for the Rat |
 | Spitter (Glass Snake) | 1 Fear, once | Bought at the Snake's first spotlight the Fear allows - it is worth strictly more the earlier it lands |
+
+### Batch 3
+
+Ten features across five stat blocks, and the four rules covered every one of
+them — no feature in this batch needed a policy of its own. The rulings that had
+to be made were **rules readings** instead — what a feature *is*, not when a GM
+reaches for it — and all four are now in `SIMULATION-RULES.md` §2.
+
+| Feature | Cost | Ruled by |
+|---|---|---|
+| Fall Back (Harrier) | 1 Stress | rule 2 — a Reaction, so all three Stress ride the first three melee attackers, from full health |
+| Hobbling Shot (Archer Guard) | 1 Stress, paid on a success | rule 1, which never bites here: 3 HP against two Stress puts the Archer inside the line from full health |
+| Detain (Bladed Guard) | 1 Stress, paid on a success | rule 1 to gate, then rule 4. Rule 3 doesn't reach it — the damage is the *standard* damage rather than worse |
+| Chaotic Flux (Hexer) | 1 Stress | rule 1, capped at three targets at Very Close |
+| Curse — applying it (Hexer) | free | rule 4, with the one check that the target isn't Cursed already |
+| Curse — each conversion | 1 Stress | rule 2 — every Hope roll it can pay for |
+| On My Signal (Head Guard) | free | No policy: nothing about it is a choice. It arms on the first spotlight and ticks on its own |
+| Momentum (Head Guard) | — | already modelled for the Bear |
+| Rally Guards (Head Guard) | 2 Fear | rule 4. The proposal to hold it back below 2 allies in range — the `GROUP_ATTACK_WORTH_IT` shape — was put and declined, so a Head Guard with nobody in range will still spend 2 Fear on an activation the GM could have had for 1. Ruled, not an oversight; nothing new was added to `SIMULATION-RULES.md` because rule 4 already covers it |
+
+The four rules readings, in short: an attack feature printing no damage deals the
+adversary's **standard** damage; an interrupting Reaction **doesn't cancel** the
+attack it interrupts, and its "moves into Melee range" is read off the attacker's
+weapon; a countdown triggers **once**, with every Archer Guard firing at the same
+PC and their successes **combined into one damage roll**; and a condition an
+adversary applies to a PC lasts **until their next rest** unless the feature says
+otherwise, which inside one fight means it never lifts.
+
+**Machinery batch 3 built, all reusable.** `before_attacked` is `on_attacked`'s
+earlier twin — same signature, same holder, fired before the roll instead of
+after a hit — and deliberately cannot cancel what follows. `on_party_attack_roll`
+and `convert_party_roll` are the GM-side mirrors of the party's reroll hooks:
+both scan the living adversaries rather than a sheet, one watching a PC's roll
+(the countdown) and one rewriting it (Curse). `Condition.disadvantage_on` gives a
+condition a way to hobble one trait, answered by `FightState.disadvantaged_on`
+and read where a roll knows its trait, and `dice/common.py`'s `combined` folds it
+against whatever Advantage the roll already had. Curse's conversion itself needed
+nothing new: swapping the two duality dice leaves the total, the success and the
+critical exactly as they fell and flips only which die came up higher.
+
+Two consequences worth knowing before reading any numbers. **A Curse conversion
+is worth more than a Hope** — the party loses the Hope, the GM gains a Fear, and
+the spotlight passes instead of staying — so the Hexer's four Stress are four
+stolen turns. And **the Harrier punishes a front line specifically**: its
+counterattack is 1d10+2 against its own printed 1d6+2, and a party of archers
+never triggers it at all.
+
+### Batch 4
+
+Eleven features, and the **Lackey needed no code at all** — `Minion (3)` and
+`Group Attack` were written generically in batch 2, so a whole stat block came
+online the moment its entry was typed. That is what the generic-first rule buys.
+
+The rulings were again mostly rules readings, and one of them reopened a
+standing decision.
+
+| Feature | Cost | Ruled by |
+|---|---|---|
+| Hold Them Down (Kneebreaker) | free | rule 4 |
+| I've Got 'Em (Kneebreaker) | — | Passive. Doubles what *other* adversaries deal to a creature it has Restrained |
+| Tactician (Lieutenant) | 1 Stress | rule 1, and it does **not** cost the Lieutenant its action |
+| More Where That Came From (Lieutenant) | free | rule 4, with **no cap** — see below |
+| Coup de Grace (Lieutenant) | 1 Fear | rule 4, plus the printed requirement that the target be Vulnerable |
+| Backstab (Shadow) | — | Passive, on an attack rolled with Advantage |
+| Cloaked (Shadow) | free | rule 4 |
+| Sickening Flux (Elemental) | 1 **HP** | A new cost class: spent freely, never the last HP |
+| Remake Reality (Elemental) | 1 Fear | rule 4 |
+| Magical Reflection (Elemental) | free | Reaction, fires on every triggering hit |
+
+**Restrained is now recorded.** The standing ruling that being Restrained has no
+effect of its own is unchanged — but a condition nobody writes down is one
+nothing can key on, and `I've Got 'Em` keys on it. So a feature that Restrains
+applies the record, tagged with `Condition.source` so "Restrained **by the
+Kneebreaker**" can be read strictly, and Bite, Grab and Drag and Detain were
+retrofitted to do the same. The movement it stops is still declared as a gap.
+
+**A printed escape roll is modelled.** Where the SRD ends a hold on a Strength
+Roll, the held PC attempts it at each announced moment, using the best of
+whatever traits the text offers — the Scorpion Poison's shape, generalised into
+`_breaks_free`. Where it ends on the holder taking damage, `_release_held` frees
+everyone that adversary holds. Neither is a gap any more.
+
+**Machinery batch 4 built.** `damage_multiplier` is the first hook consulted from
+*neither* side of an attack — it scans the field, because `I've Got 'Em` belongs
+to a third party. `attack_advantage` lets content grant Advantage to its holder's
+standard attack, with `combat/policy.py`'s `adversary_attack_advantage` as the
+one place both the loop and Backstab read the answer from. `standard_damage` now
+receives the attack roll, so content keyed on how the attack came out doesn't
+have to work it out again. `on_attacked` now carries the damage dealt, which it
+and `on_damaged` previously knew only half of each. `FightState.summon` adds an
+adversary mid-fight, and `Adversary.will_spend_hp` prices a feature paid for in
+HP.
+
+**Two things to watch when reading numbers.** A Kneebreaker beside anything else
+roughly doubles that thing's output against whoever it is holding, so the pair is
+worth far more than the two stat blocks read separately — which is the SRD's
+intent and the reason a Jagged Knife band is priced the way it is. And Sickening
+Flux makes most of a party Vulnerable for the rest of a fight for one HP, which
+is the largest single effect in tier 1 so far.
+
+### More Where That Came From is uncapped, deliberately
+
+It costs nothing and can fire on any of the Lieutenant's spotlights, and it is
+the only feature in the catalogue that makes the field **bigger**. A cap was
+proposed — once per fight, or only below N live Lackeys — and declined: Minions
+are defeated by any damage, so a summoned field clears about as fast as it
+arrives, and bounding it would have priced the feature below what the page
+describes.
+
+The same ruling settled a second question that had been sitting in
+`combat/fight.py`: **there is no early-victory end state**, and there will not be
+one. Calling a fight over once only Minions are left would be right in a bandit
+encounter and wrong in a rat plague, and nothing in the loop can tell those
+apart. Fights are played to the end and the extra rounds are counted as what they
+are; `MAX_PC_ACTIONS` stays as scaffolding rather than becoming a rule.
 
 ### The margin in rule 3 wants a validation check
 

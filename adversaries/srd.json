@@ -272,7 +272,75 @@
       "damage_dice": "1d6",
       "damage_modifier": 2,
       "features": ["Curse", "Chaotic Flux"],
-      "notes": "Staff: Far, 1d6+2 magic. Experience: Magical Knowledge +2. Damage types aren't tracked anywhere, so the magic damage resolves like any other - the same gap Weak Structure already declares."
+      "notes": "Staff: Far, 1d6+2 magic. Experience: Magical Knowledge +2. Damage types are recorded on the catalogues but nothing reads them yet, so the magic damage resolves like any other - the same gap Weak Structure already declares."
+    },
+
+    {
+      "name": "Jagged Knife Kneebreaker",
+      "tier": 1,
+      "type": "Bruiser",
+      "difficulty": 12,
+      "major_threshold": 7,
+      "severe_threshold": 14,
+      "hp_max": 7,
+      "stress_max": 4,
+      "attack_modifier": -3,
+      "range": "Melee",
+      "damage_dice": "1d4",
+      "damage_modifier": 6,
+      "features": ["I've Got 'Em", "Hold Them Down"],
+      "notes": "Club: Melee, 1d4+6 physical. Experience: Thief +2, Unveiled Threats +3. The apostrophes in the first feature name are straight ones: canonical matching folds case and whitespace but deliberately not punctuation, so a typographic apostrophe here would silently never reach the code. Both features are built on Restrained, which is ruled to have no combat effect - see PORTED.md for what is left of them."
+    },
+
+    {
+      "name": "Jagged Knife Lackey",
+      "tier": 1,
+      "type": "Minion",
+      "difficulty": 9,
+      "major_threshold": null,
+      "severe_threshold": null,
+      "hp_max": 1,
+      "stress_max": 1,
+      "attack_modifier": -2,
+      "range": "Melee",
+      "damage_dice": "",
+      "damage_modifier": 2,
+      "features": ["Minion (3)", "Group Attack"],
+      "notes": "Daggers: Melee, a flat 2 physical - no dice at all, so damage_dice is empty and the whole attack sits in damage_modifier, exactly as the Giant Rat's does. Thresholds print as 'None'. Experience: Thief +2. Both features are already modelled and needed no new code: Minion (X) reads its own number off this stat block, and Group Attack was deliberately written for Minions in general rather than for the Giant Rat."
+    },
+
+    {
+      "name": "Jagged Knife Lieutenant",
+      "tier": 1,
+      "type": "Leader",
+      "difficulty": 13,
+      "major_threshold": 7,
+      "severe_threshold": 14,
+      "hp_max": 6,
+      "stress_max": 3,
+      "attack_modifier": 2,
+      "range": "Close",
+      "damage_dice": "1d8",
+      "damage_modifier": 3,
+      "features": ["Tactician", "More Where That Came From", "Coup de Grace", "Momentum"],
+      "notes": "Javelin: Close, 1d8+3 physical. Experience: Local Knowledge +2. More Where That Came From summons three Jagged Knife Lackeys, so this entry is only complete because that stat block is in the catalogue too. Momentum is already modelled."
+    },
+
+    {
+      "name": "Jagged Knife Shadow",
+      "tier": 1,
+      "type": "Skulk",
+      "difficulty": 12,
+      "major_threshold": 4,
+      "severe_threshold": 8,
+      "hp_max": 3,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "range": "Melee",
+      "damage_dice": "1d4",
+      "damage_modifier": 4,
+      "features": ["Backstab", "Cloaked"],
+      "notes": "Daggers: Melee, 1d4+4 physical. Experience: Intrusion +3. Both features turn on an adversary attacking with Advantage, which in this simulator has exactly one source today - the target being Vulnerable."
     },
 
     {
@@ -290,6 +358,23 @@
       "damage_modifier": 2,
       "features": ["Unseen Strike"],
       "notes": "Shortbow: Far, 1d10+2 physical."
+    },
+
+    {
+      "name": "Minor Chaos Elemental",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 14,
+      "major_threshold": 7,
+      "severe_threshold": 14,
+      "hp_max": 7,
+      "stress_max": 3,
+      "attack_modifier": 3,
+      "range": "Close",
+      "damage_dice": "1d12",
+      "damage_modifier": 6,
+      "features": ["Arcane Form", "Sickening Flux", "Remake Reality", "Magical Reflection", "Momentum"],
+      "notes": "Warp Blast: Close, 1d12+6 magic. No Experience printed. Sickening Flux is the first feature in the catalogue whose cost is the adversary's own HP rather than Stress or Fear, and Magical Reflection the first that needs to know both who attacked and how hard. Momentum is already modelled."
     }
   ]
 }

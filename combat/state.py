@@ -14,6 +14,7 @@ from characters.player_character import PlayerCharacter
 from combat.common import Side
 from combat.rest import Rest
 from content.conditions import VULNERABLE, Condition
+from content.names import canonical
 
 # Per the SRD the GM can hold up to 12 Fear at once. Fear generated past the
 # cap is simply lost, which matters for balance: a party that rolls badly for
@@ -183,6 +184,26 @@ class FightState:
     def consumed_activations(self, holder) -> int:
         return self.consumed.get(id(holder), 0)
 
+    def summon(self, adversary: Adversary) -> None:
+        """Add an adversary to the fight already under way.
+
+        The Jagged Knife Lieutenant's *More Where That Came From* is the first
+        thing that does this, and it is a bigger change than it looks: until now
+        the field an encounter spawned was the field the fight ended with, and
+        several places assume only that it can shrink.
+
+        What follows from adding one here rather than anywhere else: it is a
+        living adversary immediately, so it can be targeted and can be
+        spotlighted this same GM turn (the loop re-reads `living_adversaries`
+        each time it picks). It has no activations spent, so it goes before
+        anything that has already acted. And it counts toward victory - the
+        party has to clear it like anything else.
+
+        The caller passes a **spawned** combatant, not a catalogue definition, so
+        summoning twice never shares one HP track.
+        """
+        self.adversaries.append(adversary)
+
     # --- Conditions ----------------------------------------------------------
 
     def apply_condition(self, holder, condition: Condition) -> None:
@@ -196,6 +217,16 @@ class FightState:
 
     def has_condition(self, holder, name: str) -> bool:
         return (id(holder), name) in self.conditions
+
+    def condition_on(self, holder, name: str) -> Condition | None:
+        """The condition record itself, for content that needs more than its name.
+
+        `has_condition` answers the usual question. This one exists because a
+        condition knows **who applied it**, and some content asks: the Jagged
+        Knife Kneebreaker's `I've Got 'Em` doubles damage against creatures
+        *it* has Restrained, not against anyone who happens to be held.
+        """
+        return self.conditions.get((id(holder), name))
 
     def clear_condition(self, holder, name: str) -> None:
         self.conditions.pop((id(holder), name), None)
@@ -235,6 +266,26 @@ class FightState:
             if holder_id != id(holder) or condition.effect is None:
                 continue
             condition.effect(holder, self, moment)
+
+    def disadvantaged_on(self, holder, trait: str) -> bool:
+        """Whether a condition on `holder` hobbles rolls made with `trait`.
+
+        The counterpart to `is_vulnerable`, for conditions that reach a roll
+        rather than the rolls made against one. The Archer Guard's Hobbling Shot
+        is the first: "disadvantage on Agility Rolls until they clear at least
+        1 HP".
+
+        Matched canonically, like every other name in the project - a condition
+        written with "Agility" and a sheet keyed "agility" are the same trait,
+        and a lookup that missed on capitalisation would leave the condition
+        sitting on the PC doing nothing at all.
+        """
+        wanted = canonical(trait)
+        return any(
+            holder_id == id(holder)
+            and any(canonical(hobbled) == wanted for hobbled in condition.disadvantage_on)
+            for (holder_id, _), condition in self.conditions.items()
+        )
 
     def is_vulnerable(self, combatant) -> bool:
         """Whether rolls against `combatant` have Advantage right now.

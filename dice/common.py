@@ -15,3 +15,21 @@ class AdvantageState(Enum):
     DISADVANTAGE = -1
     NONE = 0
     ADVANTAGE = 1
+
+
+def combined(*states: AdvantageState) -> AdvantageState:
+    """Several sources of Advantage/Disadvantage collapsed into one state.
+
+    Per the SRD the two cancel: "if you have both advantage and disadvantage,
+    they cancel each other out". Neither side stacks, so three sources of
+    Advantage and one of Disadvantage still come to plain Advantage rather than
+    to anything bigger.
+
+    Summing the signed values and clamping expresses exactly that, and it means a
+    caller with a state in hand can fold another in without knowing what the
+    first one was. The first caller is a weapon attack, which now has two
+    sources to reconcile: the state its holder was handed, and any condition
+    sitting on them that hobbles the trait they're rolling.
+    """
+    total = sum(state.value for state in states)
+    return AdvantageState(max(-1, min(1, total)))
