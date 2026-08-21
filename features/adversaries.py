@@ -107,20 +107,19 @@ def _damage_spec(written: str) -> tuple[list[DiceGroup], int]:
             dice_terms.append(term)
     return parse_dice(dice_terms, "a feature's parameter", written), modifier
 
-# SIMULATION RULE - policy. How much worse than the standard attack a feature's
-# damage has to be before "it's really for the condition" is the honest reading
-# of it. An attack feature past this margin whose point is applying a condition
-# is held back against a target that already has that condition; below it, the
-# feature is just another attack and the random-among-viable default applies.
+# SIMULATION RULE - policy. A feature whose point is applying a condition is not
+# used against a target that already has it: re-applying changes nothing, and
+# whether somebody is already Poisoned or Cursed is plainly visible at a table.
+# The check lives in each such feature rather than in shared machinery, because
+# *which* features those are is a reading of the printed text - the feature knows
+# it about itself.
 #
-# A knob, and a thinly-evidenced one: it is set from the only two features that
-# currently qualify - Venomous Stinger (1d4+4 at 6.5 against the Scorpion's
-# 1d12+2 at 8.5) and Grab and Drag (1d6+2 at 5.5 against 1d8+3 at 7.5) - which
-# both sit at exactly 2.0, so the margin separates nothing yet. Twelve of the
-# SRD's ~129 adversaries are ported; this wants revisiting, and a validation
-# check over the whole catalogue, once there are enough features to test it
-# against. See SIMULATION-RULES.md.
-CONDITION_ATTACK_EV_MARGIN = 2
+# There used to be a `CONDITION_ATTACK_EV_MARGIN` here, gating that check on the
+# feature being worse than the standard attack by 2 or more expected damage. It
+# is gone, on the user's ruling: nothing at a table computes the expected value
+# of two damage pools and compares them, so a policy may not turn on it. That is
+# the same principle that keeps the Faerie's Wings unmodelled, applied to the
+# GM's side. See SIMULATION-RULES.md.
 
 # --- Parameterised features --------------------------------------------------
 #
@@ -877,17 +876,16 @@ def grab_and_drag(adversary, target, fight: Fight):
     landed one is paid for - which is what the card's "on a success" says.
 
     USAGE POLICY - ruled. Used whenever the GM can afford the Fear, and among
-    the options that pass the choice is random.
+    the options that pass the choice is random. Nothing holds it back for dealing
+    less than the Defender's standard attack (1d6+2 at 5.5 against 1d8+3 at 7.5):
+    a feature is only ever "strictly worse" with respect to damage, and damage is
+    not the whole of why a GM reaches for something.
 
-    This is the one batch 1 feature the condition-attack rule reaches and then
-    can't act on. That rule holds back an attack that is worse than the standard
-    one by 2 or more expected damage and exists mainly to apply a condition,
-    unless the target is free of that condition - and Grab and Drag qualifies on
-    the numbers exactly (1d6+2 at 5.5 against the Defender's 1d8+3 at 7.5). But
-    the condition it applies is Restrained, which has no representation here, so
-    "does the target already have it?" has no answer to read and the rule
-    collapses to no condition at all. That is our gap rather than a judgement
-    about the feature - declared above, where it is registered.
+    It carries no already-has-the-condition check either, unlike Venomous
+    Stinger. What it applies is Restrained, which has no effect of its own here,
+    so declining to re-apply it would be holding back an attack over a condition
+    that does nothing - the hold's own gap, declared above, rather than a
+    judgement about the feature.
     """
     if fight.fear < GRAB_AND_DRAG_FEAR:
         return None
@@ -1341,11 +1339,15 @@ def venomous_stinger(adversary, target, fight: Fight):
     The Fear is spent on a success, so the attack is rolled first and only a
     landed one is paid for.
 
-    USAGE POLICY - ruled, and this is the first feature the condition-attack rule
-    actually acts on. 1d4+4 averages 6.5 against the Scorpion's printed 1d12+2 at
-    8.5 - exactly the `CONDITION_ATTACK_EV_MARGIN` of 2 - and what the trade buys
-    is the Poison. So it is held back against a target already Poisoned, where it
-    would be strictly worse than simply stinging them again.
+    USAGE POLICY - ruled. The sting's point is the Poison, so it is held back
+    against a target who is already Poisoned - there it would buy nothing at all,
+    and whether somebody is poisoned is visible to everyone at the table.
+    Otherwise it joins the shuffled pool of options like anything else.
+
+    What it is *not* gated on is a comparison of expected damage. 1d4+4 averages
+    6.5 against the Scorpion's printed 1d12+2 at 8.5, and that used to be the
+    test for whether this counted as a condition attack at all; the ruling is
+    that no combatant computes such a thing, so no policy may turn on it.
     """
     if fight.fear < VENOMOUS_STINGER_FEAR:
         return None

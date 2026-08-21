@@ -57,7 +57,8 @@ the balance numbers, and none of them is wrong in a rules sense.
 | An adversary's spotlight is **one action feature or the standard attack**, chosen at random among those willing | `combat/policy.py` → `take_adversary_turn` | The SRD calls these Actions and says they're what an adversary does when the spotlight is on them, but nothing says which to pick. Same random-among-viable stand-in the party already uses, and for the same reason: the order a stat block lists its features in carries no meaning. |
 | **An adversary spends Stress on an Action only once hurt**: with X Stress slots still free, when `hp_unmarked <= X**2 + 1` | `adversaries/adversary.py` → `will_spend_stress` | Nothing; spending an adversary's Stress is the GM's choice every time. See "Adversary desperation" below for the whole rule. |
 | **A Reaction costing Stress fires on every trigger it can pay for** — the desperation rule above deliberately does not apply | `adversaries/adversary.py` → `can_spend_stress`, called directly by reaction features | Nothing. A reaction has a moment rather than a choice of moment; gating it on how hurt the adversary is would mean throwing the trigger away instead of picking a better time. |
-| **An attack feature that is worse than the standard attack by ≥ `2` expected damage and exists mainly to apply a condition is used only against a target that doesn't already have that condition** | `features/adversaries.py` → `CONDITION_ATTACK_EV_MARGIN` | Nothing. The margin is a knob and is deliberately a single named number rather than a per-feature threshold. It is set from two examples only (Venomous Stinger and Grab and Drag, both at exactly 2.0), which is thin — see the open validation note below. |
+| **A feature whose point is applying a condition is not used against a target that already has that condition** | `features/adversaries.py` → `venomous_stinger`, `curse` | Nothing. Re-applying buys nothing, and who is already Poisoned or Cursed is visible at a table. Which features these *are* is a reading of the printed text, so the check sits in each one rather than in shared machinery. |
+| **No policy may turn on a comparison of expected damage** | `features/adversaries.py`, module comment above the parameterised features | Nothing — and that is the point. This struck out `CONDITION_ATTACK_EV_MARGIN`, which had gated the row above on a feature being worse than the standard attack by ≥ 2 expected damage. Nothing at a table computes the expected value of two damage pools and compares them, on either side of the screen. It is the same principle that leaves the Faerie's Wings unmodelled, applied to the GM: see "Imperfect information is not modelled" below, which now covers policies as well as whether to implement. |
 | **Anything with no policy of its own is chosen at random among the options whose costs can be paid** | `combat/policy.py` → `take_adversary_turn`; `content/registry.py` → `action_options` | Nothing. The same rule the party already plays by, and the standing default rather than a per-feature placeholder: a feature is a candidate when it can be afforded and reaches somebody, and the shuffle picks among the candidates. |
 | **A Minion Group Attack is used when it reaches 2 or more Minions of that stat block** | `features/adversaries.py` → `GROUP_ATTACK_WORTH_IT` | Nothing; spending the Fear is the GM's choice. Below the threshold the feature buys nothing - it is one shared roll for the combined damage of everyone swept, so at one Minion it *is* that Minion's standard attack, bought with a Fear. Written for Minions in general rather than for the Giant Rat, since the shape recurs across the SRD's Minions. |
 | **Spitter is bought at the first spotlight the Fear allows**, and its extra activation is granted **once**, on that turn | `features/adversaries.py` → `spitter` | Nothing. The die keeps rolling every spotlight for the rest of the fight, so it is worth strictly more the earlier it lands and there is no reason to hold it. The one-off grant is the Overload shape (`grant_activation`) rather than the Relentless one: the Fear buys the die *and* one extra activation that turn, and every turn afterwards the die rolls and buys nothing. |
@@ -159,21 +160,27 @@ intended consequence of a uniform rule, not an oversight.
 Which adversaries get picked is a separate policy question. Focus fire already
 governs single-target selection, so an AOE takes the most wounded first.
 
-The same fractions do second duty as **odds that one particular combatant is in
+The same rule does second duty as the **odds that one particular combatant is in
 range**, via `content/aoe.py` → `chance_within`. Some content isn't sweeping an
 area at all but needs one named person to be close by — Luckbender rescues "a
 willing ally within Close range". With no positions tracked the simulator has to
-put a number on that. At Close that's a 3-in-4 chance the ally is reachable.
+put a number on that, and **the number follows the area rules**: if a band
+reaches `r` of a field of `n`, any one member of that field is within it `r / n`
+of the time.
 
-> **These three shares are now out of step with the counts above, and that is
-> flagged rather than fixed.** The spread rolls cut every band's expected reach,
-> but `_BAND_SHARE` still reads Far 1.0, Close 3/4, Very Close 1/3. Re-deriving
-> them would make Far n-dependent (`1 - 0.25/n`) instead of certain and would
-> change how often Luckbender can rescue an ally, which is a balance decision
-> rather than a tidy-up — so it is left for a ruling. Melee is the exception and
-> was fixed: its count is rolled, so `chance_within` uses the *expectation*
-> (the higher count less a half) rather than asking the roller, which would have
-> returned one sample of a random variable and called it a likelihood.
+Both readings come from `reach_outcomes`, which is the single definition of what
+a band does — the roller draws from it, `chance_within` takes its expectation.
+They were two sets of numbers until this change, a rolled count beside three
+hand-written shares (Far 1.0, Close 3/4, Very Close 1/3), and adding the spread
+rolls moved one and not the other. Sharing one definition is what stops that
+happening again.
+
+> **The field is whoever the band has to reach, and that is not always the
+> adversaries.** "Is my ally close by?" is measured over **the rest of the
+> party** — how many adversaries happen to be alive says nothing about where the
+> Faerie's allies are standing, and Luckbender previously asked the question that
+> way. The effect on the numbers is small but real: over a four-PC party, Close
+> now comes out at 2/3 rather than a flat 3/4.
 
 ### Imperfect information is not modelled
 
@@ -196,6 +203,19 @@ choice is made, not content that is merely hard to optimise. A trigger the playe
 can see (their own failed roll, an announced critical, an ally already down) is
 ordinary content and gets modelled with a stated policy. That's exactly why
 **Not This Time** is implemented and Wings is not.
+
+**It governs how a policy is written, too, and it applies to the GM.** The rule
+above decides whether to implement something; the same test then decides what a
+policy may look at. An expected-damage comparison fails it on both sides of the
+screen — nobody at a table works out the mean of `1d4+4` and the mean of `1d12+2`
+and subtracts them — which is what removed `CONDITION_ATTACK_EV_MARGIN`. What a
+policy may read is what the combatant can see: their own resources and wounds, a
+condition already announced on a target, a roll that has resolved, and the GM's
+Fear pool, which is open at this table. The Fear pool is worth naming explicitly,
+because two PC cards depend on it — **Slumber** declines below 3 Fear and
+**Vicious Entangle** only buys its second Restrain while the GM has one to lose.
+The SRD does not say whether the pool is public; this table plays it face up, so
+both checks stand.
 
 ### How much a PC can do before passing the spotlight
 

@@ -37,6 +37,7 @@ from pathlib import Path
 
 from adversaries.adversary import Adversary
 from content.aoe import band_named
+from content.damage_types import damage_type_named
 from dice.damage import DiceGroup
 
 # Everything a catalogue entry may say, taken from the dataclass rather than
@@ -130,6 +131,30 @@ def parse_range(value, source: str, entry: str) -> str:
         ) from None
 
 
+def parse_damage_type(value, source: str, entry: str) -> str:
+    """The printed type of a standard attack, validated and normalised.
+
+    Stored back as the type's canonical spelling, so an entry typed the way the
+    page abbreviates it - "1d12+6 **mag**" - ends up carrying "magic" and a
+    report prints one vocabulary rather than two.
+
+    Unlike `range`, an omitted type is allowed and comes back as "". A stat block
+    with no type simply never has anyone's resistance applied to its attack,
+    which is the behaviour every fight had before types existed. A type that is
+    *stated and unrecognised* raises, because that is the case where a resistance
+    would silently never fire - indistinguishable from one nobody implemented.
+    """
+    try:
+        matched = damage_type_named(value)
+    except ValueError as error:
+        raise ValueError(
+            f"{source}: {entry!r} has a damage type of {value!r}. {error} It is "
+            "what the stat block prints beside the standard attack's dice - "
+            "'Warp Blast: Close, 1d12+6 mag'."
+        ) from None
+    return matched.value if matched is not None else ""
+
+
 def parse_dice(spec, source: str, entry: str) -> list[DiceGroup]:
     """Damage dice from `"1d8"`, or `["2d6", "1d4"]`, or nothing at all.
 
@@ -198,6 +223,7 @@ def adversary_from_data(data: dict, publication: str, source: str) -> Adversary:
     for threshold in _THRESHOLDS:
         stats[threshold] = parse_threshold(data[threshold], source, entry)
     stats["range"] = parse_range(data["range"], source, entry)
+    stats["damage_type"] = parse_damage_type(data.get("damage_type"), source, entry)
     stats["damage_dice"] = parse_dice(data.get("damage_dice"), source, entry)
     stats["features"] = list(features)
     # The file says which book it is once, rather than every entry repeating it.

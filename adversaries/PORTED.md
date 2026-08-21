@@ -275,9 +275,12 @@ is the summary and the per-feature mapping.
 2. **A Reaction costing Stress** fires on every trigger it can pay for. Rule 1
    deliberately does not apply: a reaction has one moment, not a choice of them.
    `Adversary.can_spend_stress`, called directly.
-3. **An attack feature worse than the standard attack by ≥ 2 expected damage
-   whose point is applying a condition** is used only against a target that
-   doesn't already have that condition. `CONDITION_ATTACK_EV_MARGIN`.
+3. **A feature whose point is applying a condition** is used only against a
+   target that doesn't already have that condition. The check lives in each such
+   feature, because which ones they are is a reading of the printed text.
+   Deliberately **not** gated on expected damage: a policy may not turn on a
+   comparison nobody at the table performs, which is what removed
+   `CONDITION_ATTACK_EV_MARGIN`.
 4. **Everything else is random among the options whose costs can be paid** - the
    same rule the party already plays by. This is the standing default, so a
    feature with nothing special about it needs no policy written for it at all.
@@ -293,7 +296,7 @@ is the summary and the per-feature mapping.
 | Overload | 1 Stress | rule 2 - a Reaction, so all four Stress ride the Construct's first four landed attacks, from full health |
 | Spit Acid | free | rule 4 |
 | Ground Slam | free | rule 4 |
-| Grab and Drag | 1 Fear on a hit | rule 3 catches it on the numbers (5.5 against 7.5, exactly the 2.0 margin) but the condition it applies is Restrained, which has no representation here - so there is nothing to check and it falls through to rule 4 |
+| Grab and Drag | 1 Fear on a hit | rule 4. The condition it applies is Restrained, which has no effect of its own here, so there is nothing for rule 3's check to protect and declining would hold back an attack over nothing |
 
 ### Batch 2
 
@@ -305,7 +308,7 @@ All eleven features are implemented. The policies are settled.
 | Double Strike (Scorpion) | 1 Stress | rule 1. Explicitly **no** target-count threshold, so it can be spent against a lone PC for nothing but the Stress |
 | Spinning Serpent (Glass Snake) | 1 Stress | rule 1. Explicitly no "only when it reaches 2+ PCs" threshold - though the AOE rules themselves may want revisiting |
 | Bloodsucker (Mosquitoes) | 1 Stress | rule 2 - a Reaction, so every hit that marked HP |
-| Venomous Stinger (Scorpion) | 1 Fear on a hit | rule 3. 1d4+4 at 6.5 against the standard 1d12+2 at 8.5, exactly the 2.0 margin, and Poison **is** modelled - so this is the first feature the rule actually acts on |
+| Venomous Stinger (Scorpion) | 1 Fear on a hit | rule 3, and the only feature it acts on: the sting's point is the Poison, so it is held back against a target already Poisoned. Poison **is** modelled, so the check has something to read |
 | Group Attack (Giant Rat) | 1 Fear | Used when it beats what one Minion's standard attack would do, i.e. **2 or more** of that stat block in range. **Generalised to all Minion group attacks**, not written for the Rat |
 | Spitter (Glass Snake) | 1 Fear, once | Bought at the Snake's first spotlight the Fear allows - it is worth strictly more the earlier it lands |
 
@@ -320,7 +323,7 @@ reaches for it — and all four are now in `SIMULATION-RULES.md` §2.
 |---|---|---|
 | Fall Back (Harrier) | 1 Stress | rule 2 — a Reaction, so all three Stress ride the first three melee attackers, from full health |
 | Hobbling Shot (Archer Guard) | 1 Stress, paid on a success | rule 1, which never bites here: 3 HP against two Stress puts the Archer inside the line from full health |
-| Detain (Bladed Guard) | 1 Stress, paid on a success | rule 1 to gate, then rule 4. Rule 3 doesn't reach it — the damage is the *standard* damage rather than worse |
+| Detain (Bladed Guard) | 1 Stress, paid on a success | rule 1 to gate, then rule 4. Rule 3 doesn't reach it — the Restrain isn't the point of the attack, it is a Stress spent on top of an ordinary swing |
 | Chaotic Flux (Hexer) | 1 Stress | rule 1, capped at three targets at Very Close |
 | Curse — applying it (Hexer) | free | rule 4, with the one check that the target isn't Cursed already |
 | Curse — each conversion | 1 Stress | rule 2 — every Hope roll it can pay for |
@@ -424,13 +427,20 @@ encounter and wrong in a rat plague, and nothing in the loop can tell those
 apart. Fights are played to the end and the extra rounds are counted as what they
 are; `MAX_PC_ACTIONS` stays as scaffolding rather than becoming a rule.
 
-### The margin in rule 3 wants a validation check
+### Rule 3's expected-damage margin is gone
 
-It is set at 2 from a sample of two, both sitting on exactly 2.0, so right now it
-separates nothing - and twelve of the SRD's ~129 adversaries are ported. Once
-enough condition-applying attack features exist, `validation/` should check the
-margin against the whole catalogue and the number should be revisited. Recorded
-here rather than treated as settled.
+It was set at 2 from a sample of two, both sitting on exactly 2.0, and it has
+since been struck rather than tuned: **no usage policy may turn on a comparison
+of expected damage**, because nothing at a table computes one. That is the
+imperfect-information principle - the one that leaves the Faerie's Wings
+unmodelled - applied to the GM's side of the screen.
+
+What survives is the visible half: a feature whose point is a condition doesn't
+apply one the target already has. Nothing else changed. Venomous Stinger keeps
+its check because the Poison is what the sting is for; Grab and Drag never had
+one, and still doesn't, because Restrained does nothing here for the check to
+protect. Neither behaves differently from before - a knob and its justification
+were removed, not a decision.
 
 ## Still open
 

@@ -32,12 +32,14 @@ from typing import Protocol
 from combat.results import AttackResult
 from content.names import ADVERSARY, qualified
 from content.aoe import Range, band_named, targets_hit
+from content.damage_types import damage_type_named, reduced
 from content.registry import (
     apply_on_damaged,
     deals_direct_damage,
     force_adversary_reroll,
     harden_damage,
     incoming_damage_multiplier,
+    resistance_to,
     soften_damage,
     standard_attack_damage,
     total_damage_bonus,
@@ -58,7 +60,9 @@ class Target(Protocol):
     # ordinary hit is worth paying for.
     is_near_death: bool
 
-    def take_damage(self, amount: int, fight=None, direct: bool = False) -> int: ...
+    def take_damage(
+        self, amount: int, fight=None, direct: bool = False, damage_type=None
+    ) -> int: ...
 
 
 @dataclass
@@ -79,6 +83,18 @@ class Adversary:
     attack_modifier: int
     damage_dice: list[DiceGroup] = field(default_factory=list)
     damage_modifier: int = 0
+
+    # The type the stat block prints beside its standard attack - "Warp Blast:
+    # Close, 1d12+6 mag". Either of the SRD's two, spelled as the book spells it
+    # or with the book's own abbreviation; `content/damage_types.py` matches both.
+    #
+    # Optional rather than required, which is the one place this differs from
+    # `range`. An omitted range would quietly decide how many combatants an area
+    # feature reaches - a silent difference in the numbers. An omitted type can
+    # only ever fail to apply somebody's resistance, so it leaves the fight
+    # exactly as it was before types existed. Every entry states one anyway; the
+    # default is a floor, not a licence.
+    damage_type: str = ""
 
     # The range band the stat block prints beside its standard attack - "Claws:
     # Very Close, 1d12+2".
@@ -234,6 +250,17 @@ class Adversary:
             is_critical=attack_roll is not None and attack_roll.is_critical,
         )
 
+    def _type_for(self, damage_type):
+        """The type this attack deals, defaulting to the stat block's own.
+
+        The same arrangement `damage_dice` and `direct` already use, and it says
+        the same rule the SRD writes for damage: a feature that states its own
+        type on the page passes it - the Minor Chaos Elemental's Remake Reality
+        is magic whatever the Elemental's staff is - and one that says nothing is
+        the printed attack, so it deals the printed attack's type.
+        """
+        return self.damage_type if damage_type is None else damage_type
+
     def _dealt(self, damage_roll, target, fight) -> int:
         """The damage this roll actually delivers, after anything multiplies it.
 
@@ -258,6 +285,7 @@ class Adversary:
         damage_dice=None,
         damage_modifier=None,
         direct: bool | None = None,
+        damage_type=None,
     ) -> tuple[AttackResult, list]:
         """One attack roll measured against every target's Evasion.
 
@@ -314,7 +342,10 @@ class Adversary:
             # Asked per target: a multiplier keyed on a condition applies to
             # whoever carries it, not to everyone the sweep caught.
             marked += target.take_damage(
-                self._dealt(damage_roll, target, fight), fight, direct=direct
+                self._dealt(damage_roll, target, fight),
+                fight,
+                direct=direct,
+                damage_type=self._type_for(damage_type),
             )
 
         return (
@@ -332,6 +363,7 @@ class Adversary:
         damage_dice=None,
         damage_modifier=None,
         direct: bool | None = None,
+        damage_type=None,
     ) -> AttackResult:
         """Standard attack: d20 + attack_modifier against the target's Evasion.
 
@@ -379,7 +411,10 @@ class Adversary:
         if direct is None:
             direct = deals_direct_damage(self, fight)
         marked = target.take_damage(
-            self._dealt(damage_roll, target, fight), fight, direct=direct
+            self._dealt(damage_roll, target, fight),
+            fight,
+            direct=direct,
+            damage_type=self._type_for(damage_type),
         )
         return AttackResult(
             attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
@@ -491,7 +526,9 @@ class Adversary:
         """
         return False
 
-    def take_damage(self, amount: int, fight=None, direct: bool = False) -> int:
+    def take_damage(
+        self, amount: int, fight=None, direct: bool = False, damage_type=None
+    ) -> int:
         """Mark HP per the SRD's Damage Thresholds rule; return the HP marked.
 
         Same rule, and same threshold-to-HP-marked math, as
@@ -512,7 +549,16 @@ class Adversary:
         `direct` is accepted and ignored: direct damage means no Armor Slot may
         be marked against it, and adversaries have no Armor Slots to begin with.
         It's in the signature so both sides satisfy one Target protocol.
+
+        `damage_type` is consulted first and works exactly as it does for a PC -
+        halved for a resistance, gone for an immunity, and before the thresholds
+        either way. This is the side that currently has content for it: the Minor
+        Chaos Elemental's `Arcane Form` is resistant to magic damage, so what a
+        party's spellcasters are carrying starts to matter.
         """
+        amount = reduced(
+            amount, resistance_to(self, damage_type_named(damage_type), fight)
+        )
         if amount <= 0:
             hp_to_mark = 0
         elif amount >= self.severe_threshold:

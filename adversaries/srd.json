@@ -1,6 +1,6 @@
 {
   "publication": "Daggerheart SRD",
-  "notes": "Adversaries as printed in the SRD. Numbers here match the book exactly - per-encounter tuning belongs in encounters/, so these stay checkable against the printed page. Entries are in the book's own tier-then-print order, and PORTED.md tracks which of the SRD's 129 are in and which are still out.",
+  "notes": "Adversaries as printed in the SRD. Numbers here match the book exactly - per-encounter tuning belongs in encounters/, so these stay checkable against the printed page. Entries are in the book's own tier-then-print order, and PORTED.md tracks which of the SRD's 129 are in and which are still out. Every entry states the damage_type printed beside its standard attack; the field accepts the book's own 'phy' and 'mag' too, and an entry that omitted it would simply never have anyone's resistance applied to it.",
 
   "adversaries": [
     {
@@ -16,6 +16,7 @@
       "range": "Very Close",
       "damage_dice": "1d12",
       "damage_modifier": 2,
+      "damage_type": "physical",
       "features": ["Relentless (3)", "Earth Eruption", "Spit Acid", "Acid Bath"],
       "notes": "Claws: Very Close, 1d12+2 physical. Experience: Tremor Sense +2."
     },
@@ -33,6 +34,7 @@
       "range": "Melee",
       "damage_dice": "1d8",
       "damage_modifier": 3,
+      "damage_type": "physical",
       "features": ["Overwhelming Force", "Bite", "Momentum"],
       "notes": "Claws: Melee, 1d8+3 physical. Experience: Ambusher +3, Keen Senses +2."
     },
@@ -50,6 +52,7 @@
       "range": "Very Close",
       "damage_dice": "1d10",
       "damage_modifier": 2,
+      "damage_type": "physical",
       "features": ["Ramp Up", "Bone Breaker", "Hail of Boulders", "Rampaging Fury"],
       "notes": "Club: Very Close, 1d10+2 physical. Experience: Throw +2."
     },
@@ -67,8 +70,9 @@
       "range": "Melee",
       "damage_dice": "1d20",
       "damage_modifier": 0,
+      "damage_type": "physical",
       "features": ["Relentless (2)", "Weak Structure", "Trample", "Overload", "Death Quake"],
-      "notes": "Fist Slam: Melee, 1d20 physical - the one tier 1 standard attack with no flat bonus. No Experience printed."
+      "notes": "Fist Slam: Melee, 1d20 physical - the one tier 1 standard attack with no flat bonus. No Experience printed. Weak Structure worsens physical damage only, which the code now enforces; Death Quake's blast is magic and is typed where the feature rolls it."
     },
 
     {
@@ -84,6 +88,7 @@
       "range": "Close",
       "damage_dice": "1d8",
       "damage_modifier": 3,
+      "damage_type": "physical",
       "features": ["Ground Slam", "Grab and Drag"],
       "notes": "Vines: Close, 1d8+3 physical. Experience: Huge +3."
     },
@@ -101,6 +106,7 @@
       "range": "Melee",
       "damage_dice": "1d6",
       "damage_modifier": 2,
+      "damage_type": "physical",
       "features": ["Pack Tactics", "Hobbling Strike"],
       "notes": "Claws: Melee, 1d6+2 physical. Experience: Keen Senses +3."
     },
@@ -118,6 +124,7 @@
       "range": "Melee",
       "damage_dice": "1d8",
       "damage_modifier": 3,
+      "damage_type": "physical",
       "features": ["Horde (1d4+1)", "Flying (2)", "Bloodsucker"],
       "notes": "Proboscis: Melee, 1d8+3 physical. Experience: Camouflage +2. The type reads 'Horde (5/HP)' on the page - that is the Battle Points shorthand, not the feature's number, which is the 1d4+1 in the feature name."
     },
@@ -135,6 +142,7 @@
       "range": "Melee",
       "damage_dice": "",
       "damage_modifier": 1,
+      "damage_type": "physical",
       "features": ["Minion (3)", "Group Attack"],
       "notes": "Claws: Melee, a flat 1 physical - no dice at all, which is why damage_dice is empty and the whole attack sits in damage_modifier. Thresholds print as 'None'; a Minion is defeated by any damage, so there is no second HP for a threshold to matter for. Experience: Keen Senses +3."
     },
@@ -152,6 +160,7 @@
       "range": "Melee",
       "damage_dice": "1d12",
       "damage_modifier": 2,
+      "damage_type": "physical",
       "features": ["Double Strike", "Venomous Stinger", "Momentum"],
       "notes": "Pincers: Melee, 1d12+2 physical. Experience: Camouflage +2. Momentum is the same feature the Bear carries and is already modelled."
     },
@@ -169,6 +178,7 @@
       "range": "Very Close",
       "damage_dice": "1d8",
       "damage_modifier": 2,
+      "damage_type": "physical",
       "features": ["Armor-Shredding Shards", "Spinning Serpent", "Spitter"],
       "notes": "Glass Fangs: Very Close, 1d8+2 physical. No Experience printed."
     },
@@ -186,6 +196,7 @@
       "range": "Close",
       "damage_dice": "1d6",
       "damage_modifier": 2,
+      "damage_type": "physical",
       "features": ["Maintain Distance", "Fall Back"],
       "notes": "Javelin: Close, 1d6+2 physical. Experience: Camouflage +2. Fall Back is the first Reaction that interrupts an incoming attack rather than responding to one that landed."
     },
@@ -203,6 +214,7 @@
       "range": "Far",
       "damage_dice": "1d8",
       "damage_modifier": 3,
+      "damage_type": "physical",
       "features": ["Hobbling Shot"],
       "notes": "Longbow: Far, 1d8+3 physical. Experience: Local Knowledge +3. Three HP against two Stress means the Stress-desperation rule never holds Hobbling Shot back - the Archer is always inside the line."
     },
@@ -220,6 +232,7 @@
       "range": "Melee",
       "damage_dice": "1d6",
       "damage_modifier": 1,
+      "damage_type": "physical",
       "features": ["Shield Wall", "Detain"],
       "notes": "Longsword: Melee, 1d6+1 physical. Experience: Local Knowledge +3."
     },
@@ -237,6 +250,7 @@
       "range": "Melee",
       "damage_dice": "1d10",
       "damage_modifier": 4,
+      "damage_type": "physical",
       "features": ["Rally Guards", "On My Signal (5)", "Momentum"],
       "notes": "Mace: Melee, 1d10+4 physical. Experience: Commander +2, Local Knowledge +2. The first Leader ported - type carries no mechanics, so nothing in the loop reads it. The book prints the second feature as 'On My Signal - Reaction: Countdown (5)'; the 5 is the countdown's starting value and is carried as the feature's parameter, the way Flying (X) and Horde (X) carry theirs. Momentum is already modelled for the Bear."
     },
@@ -254,6 +268,7 @@
       "range": "Melee",
       "damage_dice": "1d8",
       "damage_modifier": 1,
+      "damage_type": "physical",
       "features": ["Climber", "From Above"],
       "notes": "Daggers: Melee, 1d8+1 physical. Experience: Thief +2."
     },
@@ -271,8 +286,9 @@
       "range": "Far",
       "damage_dice": "1d6",
       "damage_modifier": 2,
+      "damage_type": "magic",
       "features": ["Curse", "Chaotic Flux"],
-      "notes": "Staff: Far, 1d6+2 magic. Experience: Magical Knowledge +2. Damage types are recorded on the catalogues but nothing reads them yet, so the magic damage resolves like any other - the same gap Weak Structure already declares."
+      "notes": "Staff: Far, 1d6+2 magic. Experience: Magical Knowledge +2. One of the two tier 1 stat blocks whose standard attack is magic, so it is the one a resistant target actually notices. Chaotic Flux is magic too and is typed where the feature rolls it."
     },
 
     {
@@ -288,6 +304,7 @@
       "range": "Melee",
       "damage_dice": "1d4",
       "damage_modifier": 6,
+      "damage_type": "physical",
       "features": ["I've Got 'Em", "Hold Them Down"],
       "notes": "Club: Melee, 1d4+6 physical. Experience: Thief +2, Unveiled Threats +3. The apostrophes in the first feature name are straight ones: canonical matching folds case and whitespace but deliberately not punctuation, so a typographic apostrophe here would silently never reach the code. Both features are built on Restrained, which is ruled to have no combat effect - see PORTED.md for what is left of them."
     },
@@ -305,6 +322,7 @@
       "range": "Melee",
       "damage_dice": "",
       "damage_modifier": 2,
+      "damage_type": "physical",
       "features": ["Minion (3)", "Group Attack"],
       "notes": "Daggers: Melee, a flat 2 physical - no dice at all, so damage_dice is empty and the whole attack sits in damage_modifier, exactly as the Giant Rat's does. Thresholds print as 'None'. Experience: Thief +2. Both features are already modelled and needed no new code: Minion (X) reads its own number off this stat block, and Group Attack was deliberately written for Minions in general rather than for the Giant Rat."
     },
@@ -322,6 +340,7 @@
       "range": "Close",
       "damage_dice": "1d8",
       "damage_modifier": 3,
+      "damage_type": "physical",
       "features": ["Tactician", "More Where That Came From", "Coup de Grace", "Momentum"],
       "notes": "Javelin: Close, 1d8+3 physical. Experience: Local Knowledge +2. More Where That Came From summons three Jagged Knife Lackeys, so this entry is only complete because that stat block is in the catalogue too. Momentum is already modelled."
     },
@@ -339,6 +358,7 @@
       "range": "Melee",
       "damage_dice": "1d4",
       "damage_modifier": 4,
+      "damage_type": "physical",
       "features": ["Backstab", "Cloaked"],
       "notes": "Daggers: Melee, 1d4+4 physical. Experience: Intrusion +3. Both features turn on an adversary attacking with Advantage, which in this simulator has exactly one source today - the target being Vulnerable."
     },
@@ -356,6 +376,7 @@
       "range": "Far",
       "damage_dice": "1d10",
       "damage_modifier": 2,
+      "damage_type": "physical",
       "features": ["Unseen Strike"],
       "notes": "Shortbow: Far, 1d10+2 physical."
     },
@@ -373,8 +394,9 @@
       "range": "Close",
       "damage_dice": "1d12",
       "damage_modifier": 6,
+      "damage_type": "magic",
       "features": ["Arcane Form", "Sickening Flux", "Remake Reality", "Magical Reflection", "Momentum"],
-      "notes": "Warp Blast: Close, 1d12+6 magic. No Experience printed. Sickening Flux is the first feature in the catalogue whose cost is the adversary's own HP rather than Stress or Fear, and Magical Reflection the first that needs to know both who attacked and how hard. Momentum is already modelled."
+      "notes": "Warp Blast: Close, 1d12+6 magic. No Experience printed. Arcane Form makes this the first adversary in the catalogue that is resistant to a damage type, so a party's weapon choices start to matter against it. Sickening Flux is the first feature whose cost is the adversary's own HP rather than Stress or Fear, and Magical Reflection the first that needs to know both who attacked and how hard. Momentum is already modelled."
     }
   ]
 }

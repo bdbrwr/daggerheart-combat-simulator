@@ -89,9 +89,11 @@ def luckbender(faerie: Holder, roller: Holder, roll, remake, fight: Fight):
         fight than one reroll.
       * For an **ally's** roll, whether they are within Close range is decided by
         the odds in `content/aoe.py` - no positions are tracked, so the area
-        rule's Close fraction stands in as a probability. The Faerie's own roll
-        needs no such check: "within Close range" qualifies the ally in the card
-        text, not you.
+        rule answers it, measured over **the rest of the party**. That is the
+        field the band has to reach: how many adversaries happen to be alive
+        says nothing about where the Faerie's allies are standing. The Faerie's
+        own roll needs no such check: "within Close range" qualifies the ally in
+        the card text, not you.
 
     Declining is side-effect free, as the reroll contract requires: the Hope and
     the per-rest use are both claimed only once the reroll is definitely
@@ -107,8 +109,8 @@ def luckbender(faerie: Holder, roller: Holder, roll, remake, fight: Fight):
         return None
 
     if roller is not faerie:
-        in_range = chance_within(Range.CLOSE, len(fight.living_adversaries))
-        if random.random() >= in_range:
+        allies = len(fight.conscious_party) - 1
+        if random.random() >= chance_within(Range.CLOSE, allies):
             return None
 
     # Claimed last - everything above could still have declined.

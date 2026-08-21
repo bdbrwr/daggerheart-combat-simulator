@@ -121,61 +121,85 @@ def targets_hit(roll, targets: list) -> list:
     ]
 
 
-# The share of the field each band covers, as a probability. These are the same
-# numbers `targets_reached` below works in - keep the two in step by hand. They
-# are not derived from it, and the reason is the floor: `targets_reached` never
-# returns zero, because an area effect that caught nobody would be a rounding
-# artefact rather than a decision. As a *count* that floor is right. As a
-# *probability* it is badly wrong - against a single adversary it would say any
-# given ally is certainly within Close range.
-#
-# KNOWN OUT OF STEP, awaiting a ruling. The spread rolls above cut the expected
-# reach of every band, and these three numbers have deliberately not been moved
-# with them, because they answer a different question for different content -
-# "is one named ally close by?" (Luckbender) rather than "how much of the field
-# does this sweep?". Re-deriving them from the new expected reach would make Far
-# n-dependent (1 - 0.25/n) rather than certain, and would change how often
-# Luckbender can rescue an ally, which is a balance decision rather than a
-# tidy-up. Recorded here so the gap is visible rather than silent.
-_BAND_SHARE = {
-    Range.FAR: 1.0,
-    Range.CLOSE: 3 / 4,
-    Range.VERY_CLOSE: 1 / 3,
-}
+def reach_outcomes(band: Range, combatants: int) -> list[tuple[float, int]]:
+    """Every reach `band` can produce over a field this size, with its odds.
+
+    **One definition of the band rules, read two ways.** `targets_reached` draws
+    from it and `chance_within` takes its expectation, so the count and the
+    probability can never disagree about what a band means. They used to be two
+    sets of numbers - a rolled count here and three hand-written shares beside
+    it - and they drifted apart the moment the spread rolls were added.
+
+    Each outcome is already floored at 1 and capped at the field size, so no
+    caller has to re-apply either. The floor is why an area effect never catches
+    nobody: a sweep that fizzled entirely would be a rounding artefact rather
+    than a decision.
+    """
+    if combatants <= 0:
+        return [(1.0, 0)]
+
+    def clamped(reached: int) -> int:
+        return min(max(reached, 1), combatants)
+
+    if band is Range.FAR:
+        # Everyone, but one short a quarter of the time. Far used to mean
+        # "the whole field, always", which made every Far ability worth its
+        # ceiling on every cast.
+        short = 1 / FAR_FALLS_SHORT_ONE_IN
+        return [(short, clamped(combatants - 1)), (1 - short, clamped(combatants))]
+
+    if band is Range.CLOSE:
+        # Three quarters and never all of them, and held to CLOSE_CAP half the
+        # time - so the band's advantage over Very Close only really shows on a
+        # big field, and even there not every time.
+        base = min(combatants * 3 // 4, combatants - 1)
+        held = 1 / CLOSE_HELD_TO_ITS_CAP_ONE_IN
+        return [(held, clamped(min(base, CLOSE_CAP))), (1 - held, clamped(base))]
+
+    if band is Range.VERY_CLOSE:
+        # A third, held to VERY_CLOSE_CAP unless the field is unusually spread
+        # out - which is the one-in-ten case, not the common one.
+        base = combatants // 3
+        spread = 1 / VERY_CLOSE_SPREADS_ONE_IN
+        return [
+            (spread, clamped(base)),
+            (1 - spread, clamped(min(base, VERY_CLOSE_CAP))),
+        ]
+
+    # Melee: 3 on a crowded field and 2 otherwise, less one unless they're
+    # bunched. So Melee below MANY_ADVERSARIES is 1 or 2 rather than a flat 2.
+    best = 3 if combatants >= MANY_ADVERSARIES else 2
+    clustered = 1 / MELEE_CLUSTERS_ONE_IN
+    return [(clustered, clamped(best)), (1 - clustered, clamped(best - 1))]
 
 
-def chance_within(band: Range, adversaries: int) -> float:
+def chance_within(band: Range, others: int) -> float:
     """The odds that one particular other combatant is within `band`.
-
-    The area rule already answers "how much of the field does this band cover?".
-    This reuses the same shares as a *probability* for a single named combatant:
-    if an area effect at Close range reaches three quarters of the field, then
-    any one combatant is within Close range about three quarters of the time.
 
     SIMULATION RULE - policy. It exists for content whose condition is that one
     specific other person is in range rather than that an area is swept: the
     Faerie's Luckbender can rescue "a willing ally within Close range", and with
     no positions tracked the simulator has to put a number on that.
 
-    Melee is the odd one out. Its rule is a count rather than a share of the
-    field, so there is no fraction to read off and it is worked out from the
-    field size instead, capped at certainty.
+    **Derived from the area rule rather than written beside it.** If a band
+    reaches `r` of a field of `n`, then any one member of that field is within
+    it `r / n` of the time. The reach is rolled, so the *expectation* is what's
+    divided - asking `targets_reached` would hand back one sample of a random
+    variable and call it a likelihood, which would make the same question answer
+    differently each time it was asked.
 
-    That count is now **rolled**, so its *expected* value is used rather than
-    `targets_reached` itself: asking the roller would hand back one sample of a
-    random variable and call it a likelihood, which would make the same question
-    answer differently each time it was asked. The expectation is the higher
-    count less a half, since the spread roll is an even one.
-
-    Returns 0.0 on an empty field: there is nothing to measure against, and
-    content should decline rather than treat that as certainty.
+    `others` is the field the question is asked about, and it is not always the
+    adversaries: "is my ally close by?" is measured over the rest of the party,
+    since that is who the band has to reach. Returns 0.0 on an empty field -
+    there is nothing to measure against, and content should decline rather than
+    treat that as certainty.
     """
-    if adversaries <= 0:
+    if others <= 0:
         return 0.0
-    if band in _BAND_SHARE:
-        return _BAND_SHARE[band]
-    best = 3 if adversaries >= MANY_ADVERSARIES else 2
-    return min((best - 0.5) / adversaries, 1.0)
+    expected = sum(
+        probability * reached for probability, reached in reach_outcomes(band, others)
+    )
+    return min(expected / others, 1.0)
 
 
 def targets_reached(band: Range, adversaries: int) -> int:
@@ -187,45 +211,19 @@ def targets_reached(band: Range, adversaries: int) -> int:
     still reproducible; what isn't reproducible is one ability always finding
     the field arranged the way it likes.
 
-    Never more than there are, and never fewer than one - an area effect that
-    caught nobody at all would be a rounding artefact rather than a decision.
+    Never more than there are, and never fewer than one; `reach_outcomes` holds
+    both the band rules and those bounds.
     """
     if adversaries <= 0:
         return 0
 
-    if band is Range.FAR:
-        # Everyone, but one short a quarter of the time. Far used to mean
-        # "the whole field, always", which made every Far ability worth its
-        # ceiling on every cast.
-        short = random.randint(1, FAR_FALLS_SHORT_ONE_IN) == FAR_FALLS_SHORT_ONE_IN
-        reached = adversaries - 1 if short else adversaries
-    elif band is Range.CLOSE:
-        # Three quarters and never all of them, and held to CLOSE_CAP half the
-        # time - so the band's advantage over Very Close only really shows on a
-        # big field, and even there not every time.
-        reached = min(adversaries * 3 // 4, adversaries - 1)
-        capped = (
-            random.randint(1, CLOSE_HELD_TO_ITS_CAP_ONE_IN)
-            == CLOSE_HELD_TO_ITS_CAP_ONE_IN
-        )
-        if capped:
-            reached = min(reached, CLOSE_CAP)
-    elif band is Range.VERY_CLOSE:
-        # A third, held to VERY_CLOSE_CAP unless the field is unusually spread
-        # out - which is the one-in-ten case, not the common one.
-        reached = adversaries // 3
-        spread = (
-            random.randint(1, VERY_CLOSE_SPREADS_ONE_IN) == VERY_CLOSE_SPREADS_ONE_IN
-        )
-        if not spread:
-            reached = min(reached, VERY_CLOSE_CAP)
-    else:
-        # 3 on a crowded field and 2 otherwise, less one unless they're bunched.
-        # So Melee below MANY_ADVERSARIES is now 1 or 2 rather than a flat 2.
-        clustered = (
-            random.randint(1, MELEE_CLUSTERS_ONE_IN) == MELEE_CLUSTERS_ONE_IN
-        )
-        best = 3 if adversaries >= MANY_ADVERSARIES else 2
-        reached = best if clustered else best - 1
-
-    return min(max(reached, 1), adversaries)
+    outcomes = reach_outcomes(band, adversaries)
+    draw = random.random()
+    cumulative = 0.0
+    for probability, reached in outcomes:
+        cumulative += probability
+        if draw < cumulative:
+            return reached
+    # Only reachable on floating-point remainder, where the last outcome is the
+    # one the draw fell inside.
+    return outcomes[-1][1]

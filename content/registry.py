@@ -68,6 +68,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Iterable, NamedTuple, Protocol
 
+from content.damage_types import UNREDUCED, strongest
 from content.names import base_name, canonical, parameter
 from dice.common import AdvantageState, combined
 
@@ -261,6 +262,7 @@ _on_party_attack_rolls: dict[str, Callable] = {}
 _party_roll_conversions: dict[str, Callable] = {}
 _attack_advantages: dict[str, Callable] = {}
 _damage_multipliers: dict[str, Callable] = {}
+_damage_resistances: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -612,6 +614,38 @@ def damage_multiplier(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_damage_multipliers, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def damage_resistance(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that makes its holder resistant or immune to a damage type.
+
+    Signature: `(holder, damage_type, fight) -> float | None` - the factor
+    incoming damage of that type is multiplied by, or None to decline.
+    `content/damage_types.py` names the three answers it can give: `UNREDUCED`,
+    `RESISTED` (a half) and `IMMUNE` (nothing gets through).
+
+    **One hook for both**, keyed by the type. Immunity and resistance differ only
+    in how much of the hit survives - the SRD writes them as one paragraph - so a
+    feature granting both would otherwise have to register twice and a caller
+    would have to ask two questions and reconcile the answers. Note this is *not*
+    `immunity` above, which is about **conditions**: the names are similar and
+    the questions are not, so neither is overloaded onto the other.
+
+    Holder-scoped, because a resistance belongs to whoever is being hit rather
+    than to the attack. Dispatch scans the target's own features and takes the
+    **strongest single** answer, since "the effects of multiple resistances to the
+    same damage type do not stack".
+
+    Applied before the target's thresholds, which is what the SRD says outright -
+    so a resistance changes how many HP a hit marks, not just the number rolled.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_damage_resistances, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -1382,6 +1416,37 @@ def incoming_damage_multiplier(target, attacker, fight: Fight = None) -> int:
         if answer:
             multiplier *= answer
     return multiplier
+
+
+def resistance_to(target, damage_type=None, fight: Fight = None) -> float:
+    """How much of a hit of this type reaches `target`, as a factor.
+
+    `UNREDUCED` unless something the target carries says otherwise; a half for a
+    resistance, nothing at all for an immunity. Where several answer, the
+    strongest single one applies rather than the product - resistances do not
+    stack in Daggerheart.
+
+    **Untyped damage is never reduced.** A hit that arrives with no type - a
+    test, or a feature nobody has typed yet - resolves in full rather than
+    raising, which is the behaviour the simulator had before types existed. See
+    `content/damage_types.py`.
+
+    Asked of the target rather than of the field, unlike
+    `incoming_damage_multiplier`: a resistance is something the creature being
+    hit has, not something a third party imposes.
+    """
+    if damage_type is None:
+        return UNREDUCED
+
+    _discover()
+    factors = []
+    for name in target.named_features:
+        resist = _registered(_damage_resistances, name)
+        if resist is not None:
+            answer = resist(target, damage_type, fight)
+            if answer is not None:
+                factors.append(answer)
+    return strongest(factors)
 
 
 def apply_on_party_attack_roll(roller: Holder, roll, fight: Fight = None) -> None:

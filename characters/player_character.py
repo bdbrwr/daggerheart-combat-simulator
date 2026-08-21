@@ -20,7 +20,8 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from content import apply_on_damaged, harden_damage, soften_damage
+from content import apply_on_damaged, harden_damage, resistance_to, soften_damage
+from content.damage_types import damage_type_named, reduced
 from items.registry import find_armor, find_weapon
 
 # How little unmarked HP counts as being on the edge.
@@ -382,8 +383,12 @@ class PlayerCharacter:
 
         Below Major threshold: 1. At/above Major: 2. At/above Severe: 3.
 
-        Massive Damage (an SRD-optional rule: 2x Severe marks 4 instead of 3)
-        and damage-type resistance are NOT implemented.
+        `amount` is expected to have been through any resistance already -
+        `take_damage` halves before it gets here, which is what the SRD's "before
+        comparing it to their Hit Point Thresholds" requires.
+
+        Massive Damage (an SRD-optional rule: 2x Severe marks 4 instead of 3) is
+        NOT implemented.
         """
         if amount >= self.severe_threshold:
             return 3
@@ -391,7 +396,9 @@ class PlayerCharacter:
             return 2
         return 1
 
-    def take_damage(self, amount: int, fight=None, direct: bool = False) -> int:
+    def take_damage(
+        self, amount: int, fight=None, direct: bool = False, damage_type=None
+    ) -> int:
         """Mark HP per the SRD's Damage Thresholds rule; return the HP marked.
 
         <=0 damage: mark nothing, and no slot is spent on a hit that wasn't
@@ -399,6 +406,13 @@ class PlayerCharacter:
         thresholds, then softened twice over: a free Armor Slot is always
         marked to drop it by one, and any damage-response domain card in the
         loadout gets its say. Both floor at zero.
+
+        `damage_type` is the SRD's physical or magic, and it is the **first**
+        thing consulted: a resistance halves the number and an immunity zeroes it
+        *before* the thresholds see it, which is what the SRD says outright and
+        what makes resistance change how many HP a hit marks rather than only the
+        figure rolled. Armor comes after, in the SRD's own order. Damage arriving
+        with no type is never reduced - see `content/damage_types.py`.
 
         Armor goes first so a card is never asked to spend a resource on a hit
         the free slot already absorbed. Content that *worsens* a hit is asked
@@ -420,6 +434,9 @@ class PlayerCharacter:
 
         Marking the last HP triggers Avoid Death.
         """
+        amount = reduced(
+            amount, resistance_to(self, damage_type_named(damage_type), fight)
+        )
         if amount <= 0:
             return 0
 

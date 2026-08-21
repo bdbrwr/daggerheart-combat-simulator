@@ -64,7 +64,7 @@ class Target(Protocol):
     # attacked rather than to whoever swung.
     named_features: list[str]
 
-    def take_damage(self, amount: int, fight=None) -> int: ...
+    def take_damage(self, amount: int, fight=None, damage_type=None) -> int: ...
 
 
 def attack_with(
@@ -162,7 +162,10 @@ def attack_with(
         is_critical=attack_roll.is_critical,
         drop_lowest=pool.drop_lowest,
     )
-    marked = target.take_damage(damage_roll.total)
+    # Typed off the weapon, which is where the SRD prints it - a Broadsword deals
+    # physical damage and a Greatstaff magic - so a target's resistance is
+    # answered by what the PC chose to carry rather than by anything decided here.
+    marked = target.take_damage(damage_roll.total, damage_type=weapon.damage_type)
 
     # Content the *target* carries that punishes being hit - the Glass Snake's
     # shards of glass. Asked after the damage lands, because the trigger is a
