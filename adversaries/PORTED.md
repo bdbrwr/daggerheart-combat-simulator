@@ -104,7 +104,12 @@ small to change an outcome), **not implemented** (work still to do).
 | Jagged Knife Lieutenant | Leader | 4 | Tactician, More Where That Came From, Coup de Grace, Momentum *implemented* |
 | Jagged Knife Shadow | Skulk | 4 | Backstab, Cloaked *implemented* |
 | Jagged Knife Sniper | Ranged | earlier | Unseen Strike *irrelevant* |
-| Minor Chaos Elemental | Solo | 4 | Sickening Flux, Remake Reality, Magical Reflection, Momentum *implemented* · **Arcane Form *not implemented*** — it needs damage-type resistance, which is real outstanding work rather than a dismissal |
+| Minor Chaos Elemental | Solo | 4 | Arcane Form, Sickening Flux, Remake Reality, Magical Reflection, Momentum *implemented* — Arcane Form was the last one outstanding and landed with damage-type resistance |
+| Minor Fire Elemental | Solo | 5 | Relentless (2), Scorched Earth, Explosion, Consume Kindling, Momentum *implemented* |
+| Minor Demon | Solo | 5 | Relentless (2), All Must Fall, Hellfire, Reaper, Momentum *implemented* |
+| Minor Treant | Minion | 5 | Minion (5), Group Attack *implemented* — needed no new code at all, like the Jagged Knife Lackey |
+| Green Ooze | Skulk | 5 | Slow, Acidic Form, Envelop, Split *implemented* |
+| Tiny Green Ooze | Skulk | 5 | Acidic Form *implemented* — shares the Green Ooze's registration |
 
 ---
 
@@ -117,41 +122,39 @@ printed page as each batch is read, so a blank one is unknown rather than
 unknown-to-be-blank - and a Social found there is skipped rather than ported.
 
 1. Courtier — **Social, skipped**
-2. Merchant — **Social, skipped**
-3. Minor Fire Elemental — Solo
-4. Minor Demon — Solo
-5. Minor Treant — Minion
-6. Green Ooze — Skulk
-7. Tiny Green Ooze — Skulk
-8. Red Ooze — Skulk
-9. Tiny Red Ooze — Skulk
-10. Petty Noble — **Social, skipped**
-11. Pirate Captain — Leader
-12. Pirate Raiders — Horde (3/HP)
-13. Pirate Tough — Bruiser
-14. Sellsword — Minion
-15. Skeleton Archer — Ranged
-16. Skeleton Dredge — Minion
-17. Skeleton Knight
-18. Skeleton Warrior
-19. Spellblade
-20. Swarm of Rats
-21. Sylvan Soldier
-22. Tangle Bramble Swarm
-23. Tangle Bramble
-24. Weaponmaster
-25. Young Dryad
-26. Brawny Zombie
-27. Patchwork Zombie Hulk
-28. Rotted Zombie
-29. Shambling Zombie
-30. Zombie Pack
+2. Red Ooze — Skulk
+3. Tiny Red Ooze — Skulk
+4. Petty Noble — **Social, skipped**
+5. Pirate Captain — Leader
+6. Pirate Raiders — Horde (3/HP)
+7. Pirate Tough — Bruiser
+8. Sellsword — Minion
+9. Skeleton Archer — Ranged
+10. Skeleton Dredge — Minion
+11. Skeleton Knight
+12. Skeleton Warrior
+13. Spellblade
+14. Swarm of Rats
+15. Sylvan Soldier
+16. Tangle Bramble Swarm
+17. Tangle Bramble
+18. Weaponmaster
+19. Young Dryad
+20. Brawny Zombie
+21. Patchwork Zombie Hulk
+22. Rotted Zombie
+23. Shambling Zombie
+24. Zombie Pack
 
 Types down to Skeleton Dredge were confirmed against the printed page (SRD
-pp. 78–81) while batch 3 was being read, which is also where the three Socials
-above were spotted. **Batch 5 therefore starts at the Minor Fire Elemental**, and
-the next five are the Minor Fire Elemental, Minor Demon, Minor Treant, Green Ooze
-and Tiny Green Ooze.
+pp. 78–81), which is also where the Socials were spotted. **Batch 6 starts at the
+Red Ooze**, and the next five are the Red Ooze, Tiny Red Ooze, Pirate Captain,
+Pirate Raiders and Pirate Tough.
+
+Batch 6's first two are cheap: the Red Ooze pair share *Split* and the Oozes'
+general shape with batch 5, so only *Creeping Fire*, *Ignite* and *Burning* are
+new. **The Red Ooze splits into Tiny Red Oozes**, so both have to land in the same
+batch for that feature to work, exactly as the Green pair did.
 
 ### Tiers 2-4
 
@@ -441,6 +444,80 @@ its check because the Poison is what the sting is for; Grab and Drag never had
 one, and still doesn't, because Restrained does nothing here for the check to
 protect. Neither behaves differently from before - a knob and its justification
 were removed, not a decision.
+
+### Batch 5
+
+Twelve features across five stat blocks, and **the Minor Treant needed no code
+at all** — `Minion (5)` and `Group Attack` were both written generically in batch
+2, so it came online with its JSON entry exactly as the Lackey did. Four more
+features were already modelled: `Relentless (2)` and `Momentum` on both Solos.
+
+| Feature | Cost | Ruled by |
+|---|---|---|
+| Scorched Earth (Fire Elemental) | 1 Stress | rule 1, with no threshold on how many PCs it reaches |
+| Explosion (Fire Elemental) | 1 Fear | rule 4 |
+| Consume Kindling (Fire Elemental) | free, 3 per scene | **Ruled**: the flammable scenery is always to hand, so it clears on each spotlight until its uses are gone — HP first, Stress only once the HP track is clean. See `SIMULATION-RULES.md` §1 |
+| All Must Fall (Demon) | free | Passive. No choice to make; it fires on any PC failure with Fear inside the band |
+| Hellfire (Demon) | 1 Fear | rule 4 |
+| Reaper (Demon) | 1 Stress | rule 2, plus the new general qualifier: **a Reaction whose benefit computes to zero is not taken**, so an unhurt Demon banks its Stress |
+| Slow (Green Ooze) | — | Passive. Nothing about it is a choice |
+| Acidic Form (both Oozes) | — | Passive |
+| Envelop (Green Ooze) | free | rule 4. Rule 3 deliberately doesn't reach it — the attack deals full damage and 2 Stress whether or not the hold is already on |
+| Split (Green Ooze) | 1 Fear | rule 4 |
+
+**Three rules readings**, all in `SIMULATION-RULES.md`:
+
+- **Only PCs make Reaction Rolls.** "All creatures within this area must make an
+  Agility Reaction Roll" reaches only the party, and that is intended rather than
+  a gap — an adversary carries no traits to roll. It does not generalise to every
+  area feature: Acid Bath still splashes allies, because it involves no roll.
+- **A success can buy half rather than everything.** Scorched Earth and Hellfire
+  are the first saves worth something short of a clean escape, so "success" and
+  "critical" come apart — half rounds down, a critical still takes nothing.
+- **Split removes the Ooze without defeating it.** `FightState.remove` is the
+  mirror of `summon`; marking its HP would have told the reader the party had
+  won something at the moment they are worse off.
+
+**Machinery batch 5 built.** `skip_spotlight` / `skips_spotlight` is the first
+hook that can spend an activation on nothing — an `action` declining just lets
+the next option try, and the standard attack never declines, so nothing could
+previously say "this spotlight resolves into nothing at all". `FightState.remove`
+is the other half of `summon`. Two module-local helpers in
+`features/adversaries.py` carry clauses the SRD prints verbatim on several stat
+blocks: `_burn_an_armor_slot` (Spit Acid and Acidic Form) and `_flames`
+(Scorched Earth and Hellfire).
+
+**Two things to watch when reading numbers.** The Fire Elemental is effectively a
+**12 HP Solo** once Consume Kindling is counted, on top of a Far standard attack
+the area rule rarely holds back. And the Green Ooze's Slow cuts its output in
+half — it acts every other spotlight, and the wasted activation still costs the
+GM whatever the turn charged — which is what pays for Envelop, Acidic Form and
+Split all sitting on one 5 HP stat block.
+
+### Damage types, and what closed with them
+
+Not a batch — a retrofit, and the last piece of batch 4. `content/damage_types.py`
+carries the SRD's two types plus what resistance and immunity do to a hit;
+`damage_resistance` / `resistance_to` is one hook for both, keyed by type, since
+they differ only in how much of the hit survives.
+
+Three rules readings came out of it, all in `SIMULATION-RULES.md` §2: halving
+lands **before** thresholds (so a resistance changes the HP marked, not just the
+number), several resistances fold by taking the **strongest single** one, and
+**untyped damage matches nothing** — it is never resisted and satisfies no type
+restriction, so a missing type can only ever fail to apply an effect.
+
+Two declared gaps closed and a third was found and closed with them: **Weak
+Structure** (Construct), **Unstoppable** (Guardian) and **Iron Will** (Stalwart)
+are all physical-only on the page and now enforce it. That needed `damage_type`
+added to the `severity_response` and `severity_increase` signatures — chosen over
+passing a `Hit` record or filtering inside dispatch, on the grounds that the type
+is a fact about the hit exactly as `amount` and `hp_to_mark` are.
+
+**Every feature that rolls damage now states a type**, and where the page states
+none the ruling is that it takes the adversary's own standard-attack type
+(`Adversary.type_of_damage`). Death Quake was the case worth catching: magic out
+of a physical Construct, which the fallback alone would have got wrong.
 
 ## Still open
 

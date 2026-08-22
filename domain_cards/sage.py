@@ -11,6 +11,7 @@ verbatim text is in .reference/abilities.json.
 
 from combat.results import AttackResult
 from content.aoe import Range, area_difficulty, targets_beaten, targets_in_area
+from content.damage_types import DamageType
 from content.grimoire import Grimoire
 from content.registry import (
     Fight,
@@ -101,7 +102,7 @@ def vicious_entangle(caster: Holder, target, fight: Fight) -> AttackResult | Non
         modifier=1,
         is_critical=attack_roll.is_critical,
     )
-    marked = target.take_damage(damage_roll.total)
+    marked = target.take_damage(damage_roll.total, damage_type=DamageType.PHYSICAL)
     fight.spend_fear(1)
     fight.note(
         f"{caster.name} entangles {target.name} for {damage_roll.total} "
@@ -190,11 +191,16 @@ def tekaira_armored_beetles(caster: Holder, fight: Fight) -> bool:
 
 
 @severity_response("Conjure Swarm")
-def beetles_take_the_hit(caster: Holder, amount: int, hp_to_mark: int, fight=None) -> int:
+def beetles_take_the_hit(
+    caster: Holder, amount: int, hp_to_mark: int, fight=None, damage_type=None
+) -> int:
     """Conjure Swarm, the beetles' payoff: one threshold off the next hit.
 
     A threshold is worth one HP here, floored at zero - the same arithmetic
     every severity reduction uses.
+
+    `damage_type` is ignored: the card says "when you next take damage" without
+    naming a type, so the beetles answer for either kind.
 
     SIMULATION RULE - policy. The Hope to keep the beetles up afterwards is
     spent only while Hope is plentiful. They're worth exactly one threshold on
@@ -265,7 +271,10 @@ def fire_flies(caster: Holder, target, fight: Fight) -> AttackResult | None:
 
     # Summed across everything caught: the on-hit hooks that read this ask
     # whether the damage roll marked HP, and it did if any target marked one.
-    marked = sum(adversary.take_damage(damage_roll.total) for adversary in caught)
+    marked = sum(
+        adversary.take_damage(damage_roll.total, damage_type=DamageType.MAGIC)
+        for adversary in caught
+    )
     fight.note(
         f"{caster.name} looses fire flies, catching {len(caught)} "
         f"for {damage_roll.total} each"

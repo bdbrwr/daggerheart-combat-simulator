@@ -250,16 +250,22 @@ class Adversary:
             is_critical=attack_roll is not None and attack_roll.is_critical,
         )
 
-    def _type_for(self, damage_type):
+    def type_of_damage(self, stated=None):
         """The type this attack deals, defaulting to the stat block's own.
 
         The same arrangement `damage_dice` and `direct` already use, and it says
         the same rule the SRD writes for damage: a feature that states its own
-        type on the page passes it - the Minor Chaos Elemental's Remake Reality
-        is magic whatever the Elemental's staff is - and one that says nothing is
-        the printed attack, so it deals the printed attack's type.
+        type on the page passes it - the Construct's Death Quake is magic
+        whatever the Construct's fists are - and one that says nothing deals the
+        printed attack's type.
+
+        Public, and the one place that rule lives. `attack` and `area_attack`
+        call it for their callers, but a feature that rolls damage without going
+        through either - a reflection, a splash, a countdown volley - has to ask
+        it directly rather than reading `damage_type` off the stat block itself,
+        so the fallback can never be spelled two different ways.
         """
-        return self.damage_type if damage_type is None else damage_type
+        return self.damage_type if stated is None else stated
 
     def _dealt(self, damage_roll, target, fight) -> int:
         """The damage this roll actually delivers, after anything multiplies it.
@@ -345,7 +351,7 @@ class Adversary:
                 self._dealt(damage_roll, target, fight),
                 fight,
                 direct=direct,
-                damage_type=self._type_for(damage_type),
+                damage_type=self.type_of_damage(damage_type),
             )
 
         return (
@@ -414,7 +420,7 @@ class Adversary:
             self._dealt(damage_roll, target, fight),
             fight,
             direct=direct,
-            damage_type=self._type_for(damage_type),
+            damage_type=self.type_of_damage(damage_type),
         )
         return AttackResult(
             attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
@@ -556,9 +562,13 @@ class Adversary:
         Chaos Elemental's `Arcane Form` is resistant to magic damage, so what a
         party's spellcasters are carrying starts to matter.
         """
-        amount = reduced(
-            amount, resistance_to(self, damage_type_named(damage_type), fight)
-        )
+        # Resolved once and carried, exactly as `PlayerCharacter.take_damage`
+        # does: the type answers the resistance and is then handed to the two
+        # damage-response hooks, where the Construct's physical-only Weak
+        # Structure reads it.
+        kind = damage_type_named(damage_type)
+
+        amount = reduced(amount, resistance_to(self, kind, fight))
         if amount <= 0:
             hp_to_mark = 0
         elif amount >= self.severe_threshold:
@@ -568,8 +578,8 @@ class Adversary:
         else:
             hp_to_mark = 1
 
-        hp_to_mark = soften_damage(self, amount, hp_to_mark, fight)
-        hp_to_mark = harden_damage(self, amount, hp_to_mark, fight)
+        hp_to_mark = soften_damage(self, amount, hp_to_mark, fight, kind)
+        hp_to_mark = harden_damage(self, amount, hp_to_mark, fight, kind)
 
         self.mark_hp(hp_to_mark)
 
@@ -577,4 +587,14 @@ class Adversary:
         # last HP" sees an adversary that is already down - which is what the
         # Construct's Death Quake needs to be true.
         apply_on_damaged(self, amount, hp_to_mark, fight)
+
+        # An adversary that has just died takes its holds with it. A condition
+        # whose only printed way out is something happening to *this* adversary -
+        # the Green Ooze's Envelop ends when the Ooze takes Severe damage - can
+        # never end once it is off the field, and the Ooze's own thresholds mean
+        # two Major hits kill it without a Severe one ever landing. Asked
+        # generically; nothing here knows which conditions those are, or that any
+        # exist. See `FightState.release_conditions_from` for what is spared.
+        if fight is not None and self.is_defeated:
+            fight.release_conditions_from(self)
         return hp_to_mark

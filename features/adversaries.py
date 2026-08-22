@@ -39,7 +39,7 @@ from dataclasses import replace
 from adversaries.catalogue import parse_dice
 from adversaries.registry import find_adversary
 from combat.results import AttackResult
-from content.aoe import Range, targets_in_area, targets_reached
+from content.aoe import Range, chance_within, targets_in_area, targets_reached
 from content.conditions import (
     BEFORE_AN_ACTION_ROLL,
     POISONED,
@@ -49,6 +49,7 @@ from content.conditions import (
     until_they_clear_hp,
     when_they_act,
 )
+from content.damage_types import RESISTED, DamageType
 from content.names import ADVERSARY, canonical, qualified
 from content.registry import (
     Fight,
@@ -61,6 +62,7 @@ from content.registry import (
     convert_party_roll,
     damage_bonus,
     damage_multiplier,
+    damage_resistance,
     deals_direct_damage,
     difficulty_bonus,
     direct_damage,
@@ -74,6 +76,7 @@ from content.registry import (
     on_party_attack_roll,
     on_spotlight,
     severity_increase,
+    skip_spotlight,
     spotlight_cost,
     standard_damage,
 )
@@ -216,20 +219,19 @@ def momentum(adversary, target, result, fight: Fight) -> None:
 WEAK_STRUCTURE = qualified(ADVERSARY, "Weak Structure")
 
 
-@severity_increase(
-    WEAK_STRUCTURE,
-    unmodelled=[
-        "Weak Structure: the physical-damage restriction - damage types are "
-        "recorded on the catalogues but nothing reads them yet, so this worsens "
-        "magic damage too and makes the Construct slightly more fragile here "
-        "than on the page",
-    ],
-)
-def weak_structure(adversary, amount: int, hp_to_mark: int, fight=None) -> int:
-    """When this adversary marks HP, they mark an additional one.
+@severity_increase(WEAK_STRUCTURE)
+def weak_structure(
+    adversary, amount: int, hp_to_mark: int, fight=None, damage_type=None
+) -> int:
+    """When this adversary marks HP from physical damage, they mark another.
 
     SRD: "When the Construct marks HP from physical damage, they must mark an
     additional HP."
+
+    **Physical only**, which used to be a declared gap and is now enforced: the
+    type reaches this hook as an argument. Untyped damage does not qualify - a
+    restriction matches only a type that was actually stated - so the Construct
+    is never worsened by a hit nobody typed.
 
     Keyed on HP actually being marked, not on damage being dealt - a hit that
     softened away to nothing didn't mark anything, so there is nothing to add to.
@@ -239,7 +241,11 @@ def weak_structure(adversary, amount: int, hp_to_mark: int, fight=None) -> int:
     On a 9 HP track this is worth a lot: it turns a Major hit into 3 HP and a
     Severe into 4, so the Construct dies to roughly two thirds of the hits its
     HP suggests. That is the trade the stat block is making for its 1d20 attack.
+    Now that the restriction bites, a party carrying magic damage is the answer
+    to it - which is the choice the printed page was offering all along.
     """
+    if damage_type is not DamageType.PHYSICAL:
+        return hp_to_mark
     if hp_to_mark <= 0:
         return hp_to_mark
     return hp_to_mark + 1
@@ -338,6 +344,88 @@ def _release_held(adversary, fight, *names: str) -> None:
                 fight.clear_condition(pc, name)
 
 
+# --- Clauses the SRD prints on more than one stat block -----------------------
+#
+# Both of these are printed verbatim across several features, so the mechanic
+# lives here once and each feature keeps whatever it does *around* it. This is
+# not the same as sharing content: no feature's decision to fire is in here, only
+# the arithmetic the page repeats word for word.
+
+
+def _burn_an_armor_slot(pc, fight) -> bool:
+    """Cost `pc` an Armor Slot with none of its benefit; an HP if they have none.
+
+    "The target must mark an Armor Slot without receiving its benefits (they can
+    still use armor to reduce the damage). If they can't mark an Armor Slot, they
+    must mark an additional HP." The Acid Burrower's *Spit Acid* and both Oozes'
+    *Acidic Form* print it identically.
+
+    Returns whether a slot was actually marked, which is what a caller with
+    something to add on the failing branch needs to know - Spit Acid hands the GM
+    a Fear there and Acidic Form doesn't. The HP is forced, so it goes through
+    the death check and can be the mark that drops a PC.
+    """
+    if pc.armor_unmarked > 0:
+        pc.mark_armor_slot(1)
+        return True
+    pc.mark_hp_and_check_death(1)
+    return False
+
+
+# SIMULATION RULE - ruled. **Only PCs make Reaction Rolls; adversaries never do.**
+# Several SRD features say "all *creatures* within this area must make an Agility
+# Reaction Roll", which on the page catches the adversary's own allies too - the
+# Minor Fire Elemental's Scorched Earth and the Minor Demon's Hellfire are the
+# first. Here such a feature reaches only the party, and that is the intended
+# behaviour rather than a gap: an adversary carries no traits for a Reaction Roll
+# to be made against.
+#
+# It does *not* generalise to every area feature. The Acid Burrower's Acid Bath
+# deliberately splashes other adversaries, because it deals damage with no roll
+# involved and leaving them out would flatter it. The Reaction Roll is the
+# distinction, not the word "creatures".
+
+
+def _flames(adversary, fight, caught: list, dice, modifier: int, damage_type):
+    """An area that damages whoever fails an Agility Reaction Roll, halved on a pass.
+
+    The shape both *Scorched Earth* and *Hellfire* print: no attack roll, and a
+    save for **half** rather than for nothing. Every other reaction-roll feature
+    so far has offered a clean escape, which is why this is worth saying once
+    here rather than twice in the features.
+
+    **One damage roll shared by everyone caught**, the way Remake Reality and
+    Rampaging Fury already do it - the page describes one patch of fire, not a
+    roll per target. Half rounds down, following every other halving in the
+    codebase.
+
+    **A critical takes nothing at all**, and needs its own branch here. The
+    standing rule is that a critical ignores the whole effect rather than only
+    the part a success avoids - and where a success normally buys a clean escape
+    that costs nothing to express, here it buys half, so "half" and "nothing"
+    have come apart for the first time.
+
+    Returns the `AttackResult` the caller should hand back: the spotlight was
+    spent, but nothing rolled to hit anybody.
+    """
+    damage = roll_damage(dice_groups=dice, modifier=modifier)
+    for pc in caught:
+        roll = _reaction_roll(pc, "agility", adversary.difficulty, fight)
+        if roll.is_critical:
+            dealt = 0
+        elif roll.is_success:
+            dealt = damage.total // 2
+        else:
+            dealt = damage.total
+        if dealt <= 0:
+            fight.note(f"{pc.name} is untouched by the flames ({roll})")
+            continue
+        pc.take_damage(dealt, fight, damage_type=damage_type)
+        caught_or_shielded = "shields themselves for" if roll.is_success else "is caught for"
+        fight.note(f"{pc.name} {caught_or_shielded} {dealt}")
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
 # --- Acid Burrower -----------------------------------------------------------
 
 EARTH_ERUPTION = qualified(ADVERSARY, "Earth Eruption")
@@ -422,14 +510,18 @@ def spit_acid(adversary, target, fight: Fight):
         return None
 
     result, struck = adversary.area_attack(
-        caught, fight=fight, damage_dice=[DiceGroup(count=2, sides=6)], damage_modifier=0
+        caught,
+        fight=fight,
+        damage_dice=[DiceGroup(count=2, sides=6)],
+        damage_modifier=0,
+        damage_type=DamageType.PHYSICAL,
     )
     for pc in struck:
-        if pc.armor_unmarked > 0:
-            pc.mark_armor_slot(1)
+        if _burn_an_armor_slot(pc, fight):
             fight.note(f"{pc.name}'s armor is eaten away (Spit Acid: an Armor Slot)")
             continue
-        pc.mark_hp_and_check_death(1)
+        # The Fear is Spit Acid's own, not part of the shared clause - the Oozes'
+        # Acidic Form prints the same armor burn without it.
         fight.note(f"{pc.name} has no armor left to lose, and marks an HP")
         fight.gain_fear(1)
     return result
@@ -480,7 +572,7 @@ def acid_bath(adversary, amount: int, hp_marked: int, fight=None) -> None:
     fight.note(f"{adversary.name} sprays acidic blood (Acid Bath)")
     for caught in splashed:
         damage = roll_damage(dice_groups=[DiceGroup(count=1, sides=10)], modifier=0)
-        caught.take_damage(damage.total, fight)
+        caught.take_damage(damage.total, fight, damage_type=DamageType.PHYSICAL)
         fight.note(f"{caught.name} is bathed in it for {damage.total}")
 
 
@@ -524,6 +616,7 @@ def bite(adversary, target, fight: Fight):
         fight=fight,
         damage_dice=[DiceGroup(count=3, sides=4)],
         damage_modifier=10,
+        damage_type=DamageType.PHYSICAL,
     )
     if result.damage_roll is None:
         return result
@@ -641,6 +734,7 @@ def hail_of_boulders(adversary, target, fight: Fight):
         fight=fight,
         damage_dice=[DiceGroup(count=1, sides=10)],
         damage_modifier=2,
+        damage_type=DamageType.PHYSICAL,
     )
     if len(struck) > 1:
         fight.gain_fear(1)
@@ -684,7 +778,7 @@ def rampaging_fury(adversary, amount: int, hp_marked: int, fight=None) -> None:
     fight.note(f"{adversary.name} rampages (Rampaging Fury)")
     damage = roll_damage(dice_groups=[DiceGroup(count=2, sides=6)], modifier=3)
     for pc in trampled:
-        pc.take_damage(damage.total, fight, direct=True)
+        pc.take_damage(damage.total, fight, direct=True, damage_type=DamageType.PHYSICAL)
         fight.note(f"{pc.name} is caught in the path for {damage.total}")
 
 
@@ -724,7 +818,11 @@ def trample(adversary, target, fight: Fight):
     adversary.spend_stress(1)
     fight.note(f"{adversary.name} tramples forward")
     result, _ = adversary.area_attack(
-        caught, fight=fight, damage_dice=[DiceGroup(count=1, sides=8)], damage_modifier=0
+        caught,
+        fight=fight,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=0,
+        damage_type=DamageType.PHYSICAL,
     )
     return result
 
@@ -786,6 +884,11 @@ def death_quake(adversary, amount: int, hp_marked: int, fight=None) -> None:
     `is_defeated` is already true here, and the Construct is exploding as it dies
     rather than needing to survive to do it.
 
+    **Magic**, stated explicitly, and the clearest case in the catalogue for why
+    a feature may override its stat block's type: the Construct's Fist Slam is
+    physical, and letting the blast inherit that would have a party's magic
+    resistances silently fail against the one attack the page calls magic.
+
     Worth knowing for encounter tuning: this makes killing the Construct cost
     something, so a party that focuses it down takes the blast at exactly the
     moment they thought the fight was won.
@@ -804,6 +907,7 @@ def death_quake(adversary, amount: int, hp_marked: int, fight=None) -> None:
         fight,
         damage_dice=[DiceGroup(count=1, sides=12)],
         damage_modifier=2,
+        damage_type=DamageType.MAGIC,
     )
     for pc in struck:
         fight.note(f"{pc.name} is caught in the blast")
@@ -895,6 +999,7 @@ def grab_and_drag(adversary, target, fight: Fight):
         fight=fight,
         damage_dice=[DiceGroup(count=1, sides=6)],
         damage_modifier=2,
+        damage_type=DamageType.PHYSICAL,
     )
     if result.damage_roll is None:
         return result
@@ -1015,6 +1120,7 @@ def hobbling_strike(adversary, target, fight: Fight):
         damage_dice=[DiceGroup(count=3, sides=4)],
         damage_modifier=10,
         direct=True,
+        damage_type=DamageType.PHYSICAL,
     )
     if result.damage_roll is None:
         return result
@@ -1359,6 +1465,7 @@ def venomous_stinger(adversary, target, fight: Fight):
         fight=fight,
         damage_dice=[DiceGroup(count=1, sides=4)],
         damage_modifier=4,
+        damage_type=DamageType.PHYSICAL,
     )
     if result.damage_roll is None:
         return result
@@ -1507,7 +1614,7 @@ def spitter_die_rolls(adversary, fight=None) -> None:
             fight.note(f"{pc.name} ducks the spray ({roll})")
             continue
         damage = roll_damage(dice_groups=[DiceGroup(count=1, sides=4)], modifier=0)
-        pc.take_damage(damage.total, fight)
+        pc.take_damage(damage.total, fight, damage_type=DamageType.PHYSICAL)
         fight.note(f"{pc.name} is cut by the spray for {damage.total}")
 
 
@@ -1539,6 +1646,7 @@ def spinning_serpent(adversary, target, fight: Fight):
         fight=fight,
         damage_dice=[DiceGroup(count=1, sides=6)],
         damage_modifier=1,
+        damage_type=DamageType.PHYSICAL,
     )
     return result
 
@@ -1593,6 +1701,7 @@ def fall_back(adversary, attacker, weapon, fight=None) -> None:
         fight=fight,
         damage_dice=[DiceGroup(count=1, sides=10)],
         damage_modifier=2,
+        damage_type=DamageType.PHYSICAL,
     )
     if result.damage_roll is None:
         fight.note(f"{adversary.name} misses {attacker.name} ({result.attack_roll})")
@@ -1655,6 +1764,7 @@ def hobbling_shot(adversary, target, fight: Fight):
         fight=fight,
         damage_dice=[DiceGroup(count=1, sides=12)],
         damage_modifier=3,
+        damage_type=DamageType.PHYSICAL,
     )
     if result.damage_roll is None:
         return result
@@ -1954,7 +2064,15 @@ def on_my_signal_ticks(adversary, roller, roll, fight=None) -> None:
         modifier=shooter.damage_modifier * hits,
         is_critical=critical,
     )
-    target.take_damage(damage.total, fight, direct=deals_direct_damage(shooter, fight))
+    # The archers' own standard attack, so it deals the archers' printed type -
+    # read off the shooter rather than off the Head Guard whose whistle called
+    # it, and asked through `type_of_damage` so the fallback is spelled once.
+    target.take_damage(
+        damage.total,
+        fight,
+        direct=deals_direct_damage(shooter, fight),
+        damage_type=shooter.type_of_damage(),
+    )
     fight.note(
         f"{hits} of the volley lands on {target.name} for {damage.total} combined"
     )
@@ -2059,9 +2177,9 @@ def chaotic_flux(adversary, target, fight: Fight):
     on more than one PC - which makes this, not the staff, what a Hexer's Stress
     is for once its curse is out.
 
-    Damage types are recorded on the catalogues but not yet read by anything, so
-    the magic damage resolves like any other; that gap is already declared on the
-    Construct's Weak Structure, and it is what `Arcane Form` is waiting on.
+    Typed magic explicitly, though the Hexer's staff is magic too and the
+    fallback would have reached the same answer - stating it means the feature
+    stays correct if the stat block is ever retuned.
 
     USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
     rule decides when it is on the table, with deliberately no threshold on how
@@ -2081,6 +2199,7 @@ def chaotic_flux(adversary, target, fight: Fight):
         fight=fight,
         damage_dice=[DiceGroup(count=2, sides=6)],
         damage_modifier=3,
+        damage_type=DamageType.MAGIC,
     )
     return result
 
@@ -2347,6 +2466,7 @@ def coup_de_grace(adversary, target, fight: Fight):
         fight,
         damage_dice=[DiceGroup(count=2, sides=6)],
         damage_modifier=12,
+        damage_type=DamageType.PHYSICAL,
     )
     if result.damage_roll is None:
         return result
@@ -2439,6 +2559,37 @@ def cloaked_grants_advantage(adversary, target, fight=None):
 
 # --- Minor Chaos Elemental ---------------------------------------------------
 
+ARCANE_FORM = qualified(ADVERSARY, "Arcane Form")
+
+
+@damage_resistance(ARCANE_FORM)
+def arcane_form(adversary, damage_type, fight=None) -> float | None:
+    """This adversary is resistant to magic damage.
+
+    SRD: "The Elemental is resistant to magic damage."
+
+    The first resistance in the catalogue, and the whole reason
+    `content/damage_types.py` exists. Halving lands **before** the Elemental's
+    thresholds of 7 and 14, which is what the SRD requires and where the effect
+    really lives: a 13-point spell goes from marking 2 HP to marking 1, and a
+    16-point one from 3 to 2. Against a 7 HP track that is close to doubling how
+    long the Elemental survives a caster.
+
+    Declines on anything that isn't magic, which includes untyped damage - a
+    resistance applies to a type that was stated, so a feature nobody has typed
+    can only ever fail to be resisted rather than be resisted wrongly.
+
+    Worth reading beside the stat block's other half: the Elemental's own Warp
+    Blast is magic, and Magical Reflection sends half a melee attacker's damage
+    back as magic too. So a party's answer to this adversary is genuinely a
+    weapon choice - the front line's steel gets through in full, and the
+    spellcasters do not.
+    """
+    if damage_type is not DamageType.MAGIC:
+        return None
+    return RESISTED
+
+
 SICKENING_FLUX = qualified(ADVERSARY, "Sickening Flux")
 
 
@@ -2521,7 +2672,7 @@ def remake_reality(adversary, target, fight: Fight):
     fight.note(f"{adversary.name} remakes the ground itself (GM spends a Fear)")
     damage = roll_damage(dice_groups=[DiceGroup(count=2, sides=6)], modifier=3)
     for pc in caught:
-        pc.take_damage(damage.total, fight, direct=True)
+        pc.take_damage(damage.total, fight, direct=True, damage_type=DamageType.MAGIC)
         fight.note(f"{pc.name} is caught in the change for {damage.total}")
     return AttackResult(attack_roll=None, damage_roll=None)
 
@@ -2558,6 +2709,13 @@ def magical_reflection(adversary, attacker, weapon, damage=0, fight=None) -> Non
     shrugged off still came in at that size. The reflection is ordinary damage
     going the other way, so the PC's own armor and damage responses get their say.
 
+    SIMULATION RULE - interpretation, ruled. The page prints no damage type for
+    the rebound. The ruling is the standing one for any adversary feature that
+    states none: it deals the type of the adversary's own standard attack, which
+    for the Elemental is magic. So this is not the attacker's blow returning in
+    kind - a Greatsword's rebound is magic too - it is the Elemental's own
+    magic, and a PC resistant to magic halves it.
+
     The trigger is a landed attack, so a miss reflects nothing.
     """
     if fight is None or damage <= 0:
@@ -2569,10 +2727,511 @@ def magical_reflection(adversary, attacker, weapon, damage=0, fight=None) -> Non
     if reflected <= 0:
         return
 
-    attacker.take_damage(reflected, fight)
+    attacker.take_damage(reflected, fight, damage_type=adversary.type_of_damage())
     fight.note(
         f"{attacker.name}'s blow rebounds off {adversary.name} for {reflected} "
         f"(Magical Reflection)"
+    )
+
+
+# --- Minor Fire Elemental ----------------------------------------------------
+
+SCORCHED_EARTH = qualified(ADVERSARY, "Scorched Earth")
+
+
+@action(
+    SCORCHED_EARTH,
+    unmodelled=[
+        "Scorched Earth: choosing the point. The page lets the GM place the "
+        "Very Close area anywhere within Far range, which is positioning - so "
+        "the area is measured around the Elemental instead, and a GM who would "
+        "have placed it on the tightest cluster gets no credit for it",
+    ],
+)
+def scorched_earth(adversary, target, fight: Fight):
+    """Mark a Stress: the ground within Very Close bursts into flames for 2d8.
+
+    SRD: "Mark a Stress to choose a point within Far range. The ground within
+    Very Close range of that point immediately bursts into flames. All creatures
+    within this area must make an Agility Reaction Roll. Targets who fail take
+    2d8 magic damage from the flames. Targets who succeed take half damage."
+
+    **The band is the area's own size, not the range it can be placed at.** Very
+    Close is what burns; Far is only how far away the Elemental can start the
+    fire, and no positions are tracked for that to mean anything.
+
+    The first feature where a successful Reaction Roll buys *half* damage rather
+    than escaping the effect - see `_flames`, which both this and Hellfire use.
+    A critical still ignores it entirely, per the standing rule on reaction rolls.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
+    rule decides when it is on the table, with no threshold on how many PCs it
+    reaches. 9 HP against three Stress puts the Elemental inside the line from
+    full health, so in practice this is simply what it does until the Stress runs
+    out - and Consume Kindling can buy some of it back.
+    """
+    caught = targets_in_area(Range.VERY_CLOSE, fight.conscious_party)
+    if not caught or not adversary.will_spend_stress(1):
+        return None
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} sets the ground alight (Scorched Earth)")
+    return _flames(
+        adversary,
+        fight,
+        caught,
+        [DiceGroup(count=2, sides=8)],
+        0,
+        DamageType.MAGIC,
+    )
+
+
+EXPLOSION = qualified(ADVERSARY, "Explosion")
+EXPLOSION_FEAR = 1
+
+
+@action(
+    EXPLOSION,
+    unmodelled=[
+        "Explosion: the knockback to Far range, which is where a combatant ends "
+        "up and has nothing to change here. The damage is modelled",
+    ],
+)
+def explosion(adversary, target, fight: Fight):
+    """Spend a Fear to erupt, attacking everyone within Close for 1d8.
+
+    SRD: "Spend a Fear to erupt in a fiery explosion. Make an attack against all
+    targets within Close range. Targets the Elemental succeeds against take 1d8
+    magic damage and are knocked back to Far range."
+
+    An ordinary area attack - one roll against everyone, unlike Scorched Earth's
+    save-for-half - so the two halves of this stat block ask the party for
+    different things: Evasion here, an Agility Reaction Roll there.
+
+    USAGE POLICY - ruled. Used whenever the GM can afford the Fear, and among the
+    options that pass the choice is random. 1d8 averages 4.5 against the
+    Elemental's printed 1d10+4 at 9.5, so this is much the weaker attack against
+    a single PC and only pays when Close reaches two or more - and there is
+    deliberately no threshold saying so.
+    """
+    caught = targets_in_area(Range.CLOSE, fight.conscious_party)
+    if not caught or fight.fear < EXPLOSION_FEAR:
+        return None
+
+    fight.spend_fear(EXPLOSION_FEAR)
+    fight.note(f"{adversary.name} erupts (Explosion: GM spends a Fear)")
+    result, _ = adversary.area_attack(
+        caught,
+        fight=fight,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=0,
+        damage_type=DamageType.MAGIC,
+    )
+    return result
+
+
+CONSUME_KINDLING = qualified(ADVERSARY, "Consume Kindling")
+CONSUME_KINDLING_TOKEN = "Consume Kindling"
+
+# "Three times per scene", as printed - the feature's own number rather than a
+# knob, and a scene is one fight here.
+CONSUME_KINDLING_USES = 3
+
+
+@on_spotlight(CONSUME_KINDLING)
+def consume_kindling(adversary, fight=None) -> None:
+    """Three times a fight, clear an HP - or a Stress once the HP track is clean.
+
+    SRD: "Three times per scene, when the Elemental moves onto objects that are
+    highly flammable, consume them to clear a HP or a Stress."
+
+    SIMULATION RULE - policy, ruled. The printed trigger is moving onto flammable
+    scenery, and neither movement nor terrain has any representation here. Rather
+    than dismiss the feature - it is worth up to 3 HP on a 9 HP Solo, which is
+    far too large to wave through - the ruling is that **the kindling is always
+    to hand**: the Elemental consumes some on each of its spotlights until its
+    three uses are gone. That makes it effectively a 12 HP adversary, and the
+    availability is the invented part rather than the effect.
+
+    **HP first, then Stress**, also ruled. HP is what keeps it on the field, so
+    it takes that whenever any is marked; a use is only spent on Stress once
+    there is no HP to clear, where it buys another Scorched Earth instead. A use
+    is never spent on nothing, so an unhurt Elemental at full Stress banks them.
+
+    Fired on the spotlight rather than as an Action, because the page makes it a
+    Reaction to moving and the Elemental moves when it acts - so this costs it
+    nothing and does not compete with Scorched Earth or Explosion.
+    """
+    if fight is None:
+        return
+    if fight.token_count(adversary, CONSUME_KINDLING_TOKEN) >= CONSUME_KINDLING_USES:
+        return
+
+    if adversary.hp_marked > 0:
+        adversary.clear_hp(1)
+        cleared = "an HP"
+    elif adversary.stress_marked > 0:
+        adversary.clear_stress(1)
+        cleared = "a Stress"
+    else:
+        return  # nothing to clear, so nothing is spent
+
+    fight.add_token(adversary, CONSUME_KINDLING_TOKEN, cap=CONSUME_KINDLING_USES)
+    left = CONSUME_KINDLING_USES - fight.token_count(adversary, CONSUME_KINDLING_TOKEN)
+    fight.note(
+        f"{adversary.name} consumes kindling, clearing {cleared} "
+        f"({left} left this scene)"
+    )
+
+
+# --- Minor Demon -------------------------------------------------------------
+
+ALL_MUST_FALL = qualified(ADVERSARY, "All Must Fall")
+
+
+@on_party_attack_roll(ALL_MUST_FALL)
+def all_must_fall(adversary, roller, roll, fight=None) -> None:
+    """A PC who fails with Fear near this adversary loses a Hope.
+
+    SRD: "When a PC rolls a failure with Fear while within Close range of the
+    Demon, they lose a Hope."
+
+    A critical is never "with Fear" and a success is not a failure, so the band
+    this fires in is narrow - roughly one roll in four - but it costs the GM
+    nothing at all, which makes it the only free Hope drain in the catalogue.
+
+    SIMULATION RULE - policy. "Within Close range of the Demon" is positioning,
+    so the **area rule answers it**, measured over the conscious party: that is
+    the field the band has to reach, exactly as Luckbender measures its ally
+    check over the rest of the party rather than over the adversaries. Against
+    four PCs Close covers three of them, so a given failure lands in range three
+    times in four.
+
+    The Hope is taken through `spend_hope`, so it is counted as spent in the
+    report. Strictly a PC losing a Hope to a curse has not *spent* it, but the
+    alternative is a fifth Hope figure nobody asked for, and the four the report
+    prints would stop reconciling if it simply vanished.
+    """
+    if fight is None or roll.is_success:
+        return
+    if roll.outcome is not DualityOutcome.FEAR:
+        return
+    if not roller.can_spend_hope(1):
+        return
+    if random.random() >= chance_within(Range.CLOSE, len(fight.conscious_party)):
+        return
+
+    roller.spend_hope(1)
+    fight.note(f"{roller.name}'s hope fails them near {adversary.name} (All Must Fall)")
+
+
+HELLFIRE = qualified(ADVERSARY, "Hellfire")
+HELLFIRE_FEAR = 1
+
+
+@action(HELLFIRE)
+def hellfire(adversary, target, fight: Fight):
+    """Spend a Fear: 1d20+3 to everyone within Far, halved by an Agility save.
+
+    SRD: "Spend a Fear to rain down hellfire within Far range. All targets within
+    the area must make an Agility Reaction Roll. Targets who fail take 1d20+3
+    magic damage. Targets who succeed take half damage."
+
+    Far reaches the whole field, so unlike Scorched Earth this has no band
+    holding it back - and 1d20+3 averages 13.5, which is Severe for most tier 1
+    PCs. It is the largest area effect in tier 1 by a distance, and the save only
+    halves it.
+
+    Magic damage from a stat block whose printed Claws are physical, so the type
+    is stated here rather than inherited.
+
+    USAGE POLICY - ruled. Used whenever the GM can afford the Fear, and among the
+    options that pass the choice is random.
+    """
+    caught = targets_in_area(Range.FAR, fight.conscious_party)
+    if not caught or fight.fear < HELLFIRE_FEAR:
+        return None
+
+    fight.spend_fear(HELLFIRE_FEAR)
+    fight.note(f"{adversary.name} rains down hellfire (GM spends a Fear)")
+    return _flames(
+        adversary,
+        fight,
+        caught,
+        [DiceGroup(count=1, sides=20)],
+        3,
+        DamageType.MAGIC,
+    )
+
+
+REAPER = qualified(ADVERSARY, "Reaper")
+
+
+@damage_bonus(REAPER)
+def reaper(adversary, target, fight: Fight) -> int:
+    """Mark a Stress for damage equal to this adversary's own marked HP.
+
+    SRD: "Before rolling damage for the Demon's attack, you can mark a Stress to
+    gain a bonus to the damage roll equal to the Demon's current number of marked
+    HP."
+
+    Asked from inside the damage roll, which is where "before rolling damage"
+    puts it - and by then the attack has landed, so the Stress is never spent on
+    a miss. The same hook and the same window as the Construct's Overload.
+
+    The stat block reads backwards from a Horde: the Demon gets *more* dangerous
+    as the party wears it down. At 7 of 8 HP marked its Claws swing 1d8+13.
+
+    USAGE POLICY - ruled. A **Reaction**, so it fires whenever its trigger
+    happens and the Stress can be paid - with one general qualifier the user
+    ruled alongside it: **a Reaction whose benefit computes to zero is not
+    taken.** An undamaged Demon would otherwise burn a Stress for +0, and all
+    four would be gone before the feature was worth anything. That is not an
+    expected-damage comparison - the bonus is a number both sides of the table
+    can read off the stat block - so the rule against those does not reach it.
+    """
+    if fight is None:
+        return 0
+
+    bonus = adversary.hp_marked
+    if bonus <= 0:
+        return 0
+    if not adversary.can_spend_stress(1):
+        return 0
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} reaps its own wounds (Reaper: +{bonus} damage)")
+    return bonus
+
+
+# --- Green Ooze --------------------------------------------------------------
+
+SLOW = qualified(ADVERSARY, "Slow")
+SLOW_TOKEN = "Slow"
+
+
+@skip_spotlight(SLOW)
+def slow(adversary, fight=None) -> bool:
+    """This adversary spends every other spotlight preparing, and cannot act.
+
+    SRD: "When you spotlight the Ooze and they don't have a token on their stat
+    block, they can't act yet. Place a token on their stat block and describe
+    what they're preparing to do. When you spotlight the Ooze and they have a
+    token on their stat block, clear the token and they can act."
+
+    So the *first* spotlight is always the wasted one, and it alternates from
+    there. That is a large tax and the reason the Green Ooze's other numbers
+    look generous: it acts half as often as anything else on the field, and the
+    activation it loses still cost the GM whatever the turn charged for it.
+
+    Being asked is the commitment - the hook is consulted exactly once per
+    activation - so the token is flipped here rather than needing something
+    afterwards to notice the spotlight happened. The same contract Cloaked keeps
+    with the advantage rule.
+    """
+    if fight is None:
+        return False
+
+    if fight.token_count(adversary, SLOW_TOKEN):
+        fight.set_token(adversary, SLOW_TOKEN, 0)
+        return False
+
+    fight.set_token(adversary, SLOW_TOKEN, 1)
+    fight.note(f"{adversary.name} gathers itself, and cannot act yet (Slow)")
+    return True
+
+
+ACIDIC_FORM = qualified(ADVERSARY, "Acidic Form")
+
+
+@on_hit(ACIDIC_FORM)
+def acidic_form(adversary, target, result, fight: Fight) -> None:
+    """A successful attack costs the target an Armor Slot, or an HP if they have none.
+
+    SRD: "When the Ooze makes a successful attack, the target must mark an Armor
+    Slot without receiving its benefits (they can still use armor to reduce the
+    damage). If they can't mark an Armor Slot, they must mark an additional HP."
+
+    The parenthesis settles the order, exactly as it does for Spit Acid: the hit
+    resolves normally first, free slot and all, and the burned slot comes
+    afterwards - so a PC down to one slot spends it on the damage and then has
+    none left for the acid. Firing on `on_hit` is what makes that true, since
+    the damage has already been applied by then.
+
+    Keyed on the attack succeeding rather than on HP being marked, which is what
+    the trigger says - a hit the armor swallowed entirely still burns a slot.
+
+    Carried by both Oozes, so it is registered once and reached by whichever is
+    swinging. Against a party of two- and three-slot armor, a pair of Tiny Green
+    Oozes strips the front line bare in a couple of exchanges, and everything
+    after that is HP.
+    """
+    if result is None or result.damage_roll is None:
+        return
+
+    if _burn_an_armor_slot(target, fight):
+        fight.note(f"{target.name}'s armor sizzles (Acidic Form: an Armor Slot)")
+        return
+    fight.note(f"{target.name} has no armor left to burn, and marks an HP")
+
+
+ENVELOP = qualified(ADVERSARY, "Envelop")
+ENVELOPED = "Enveloped"
+
+# "The target must mark 2 Stress", as printed.
+ENVELOP_STRESS = 2
+
+
+def _envelop_costs_a_stress(holder, fight, moment: str) -> None:
+    """Being enveloped costs a Stress on every action roll the holder makes.
+
+    The Scorpion Poison's shape - `Condition.effect` on `BEFORE_AN_ACTION_ROLL` -
+    with no die to roll: the SRD charges this one unconditionally.
+    """
+    if moment != BEFORE_AN_ACTION_ROLL:
+        return
+    holder.mark_stress(1)
+    fight.note(f"{holder.name} struggles inside the ooze, and marks a Stress")
+
+
+@action(
+    ENVELOP,
+    unmodelled=[
+        "Envelop: being inside the Ooze as a position - there is nothing here "
+        "for that to change. The Stress it costs, both up front and per action "
+        "roll, is modelled in full, and so is being freed",
+    ],
+)
+def envelop(adversary, target, fight: Fight):
+    """A standard attack that swallows the target: 2 Stress, and more on every roll.
+
+    SRD: "Make a standard attack against a target within Melee range. On a
+    success, the Ooze envelops them and the target must mark 2 Stress. The target
+    must mark an additional Stress when they make an action roll. If the Ooze
+    takes Severe damage, the target is freed."
+
+    The *printed* attack, so no dice are passed and the stat block's own 1d6+1 is
+    rolled - and Acidic Form burns a slot on top of it, since this is a
+    successful attack like any other.
+
+    What it really costs is the Stress. Two up front plus one per action roll
+    empties a six-slot track in four turns, and a PC with every Stress marked is
+    Vulnerable for the rest of the fight. The forced Stress falls through to HP
+    when it won't fit, per the SRD.
+
+    **No already-enveloped check**, unlike Venomous Stinger. Rule 3 covers a
+    feature whose *point* is the condition, and this one deals the Ooze's full
+    damage and 2 more Stress whether or not the hold is already on - so declining
+    would hold back a real attack over nothing.
+
+    USAGE POLICY - ruled. Nothing to pay, so nothing to gate: it joins the
+    shuffled pool alongside the standard attack, the standing default.
+    """
+    result = adversary.attack(target, fight=fight)
+    if result.damage_roll is None:
+        return result
+
+    target.mark_stress(ENVELOP_STRESS)
+    fight.apply_condition(
+        target,
+        Condition(name=ENVELOPED, effect=_envelop_costs_a_stress, source=adversary),
+    )
+    fight.note(
+        f"{adversary.name} engulfs {target.name}, who marks {ENVELOP_STRESS} Stress"
+    )
+    return result
+
+
+@on_damaged(ENVELOP)
+def envelop_releases(adversary, amount: int, hp_marked: int, fight=None) -> None:
+    """Severe damage to this adversary frees whoever it has swallowed.
+
+    "If the Ooze takes Severe damage, the target is freed" - the printed way out,
+    and the only one on the page, since this hold offers no roll to break free.
+    Keyed on the damage rolled rather than the HP it cost, the reading Acid Bath
+    established.
+
+    There is a second, unprinted way out, and it is not this feature's business:
+    the Ooze **leaving the fight** at all, whether killed or Split. A hold that
+    only the holder can lift has to end when the holder is gone, or it would
+    outlast the thing that caused it - and the Ooze's own 5/10 thresholds on a
+    5 HP track mean two Major hits kill it without a Severe one ever landing, so
+    that is the common case rather than the corner one. Handled generically by
+    `FightState.release_conditions_from`.
+    """
+    if fight is None or amount < adversary.severe_threshold:
+        return
+
+    _release_held(adversary, fight, ENVELOPED)
+    fight.note(f"{adversary.name} loses its grip, and the ooze sloughs away")
+
+
+SPLIT = qualified(ADVERSARY, "Split")
+SPLIT_FEAR = 1
+
+# "When the Ooze has 3 or more HP marked", and "two Tiny Green Oozes", as printed.
+SPLIT_AT_HP_MARKED = 3
+SPLIT_INTO = "Tiny Green Ooze"
+SPLIT_COUNT = 2
+
+
+@on_damaged(SPLIT)
+def split(adversary, amount: int, hp_marked: int, fight=None) -> None:
+    """At 3 marked HP, spend a Fear to become two fresh Tiny Green Oozes.
+
+    SRD: "When the Ooze has 3 or more HP marked, you can spend a Fear to split
+    them into two Tiny Green Oozes (with no marked HP or Stress). Immediately
+    spotlight both of them."
+
+    Keyed on the Ooze's *state* rather than on the hit, which is what "has 3 or
+    more HP marked" says - so it can fire on any wound once the track is deep
+    enough, not only on the one that got there.
+
+    **The Ooze leaves without being defeated**, through `FightState.remove` - the
+    mirror of the `summon` the Lieutenant already uses. Marking its HP would have
+    looked the same to the loop and told the reader a lie: the party is worse off
+    at this moment, not better.
+
+    Worth reading as arithmetic. A Green Ooze at 3 of 5 marked has 2 HP left; it
+    becomes 4 HP spread over two bodies that are *harder to hit* (Difficulty 14
+    against its own 8), both carrying Acidic Form, and both act immediately. The
+    Fear is cheap for that. What the party loses by splitting it is the Envelop
+    and the Slow - the Tinies have neither, so they act every turn.
+
+    A defeated Ooze does not split: "when the Ooze has 3 or more HP marked" is
+    about one still standing, and a stat block that split as it died would let a
+    Fear undo the kill.
+
+    USAGE POLICY - ruled. Used whenever the GM can afford the Fear, the standing
+    default for a feature with no policy of its own.
+    """
+    if fight is None or adversary.is_defeated:
+        return
+    if adversary.hp_marked < SPLIT_AT_HP_MARKED:
+        return
+    if fight.fear < SPLIT_FEAR:
+        return
+
+    try:
+        definition = find_adversary(SPLIT_INTO)
+    except KeyError:
+        # An encounter can be run against a cut-down catalogue; a feature that
+        # can't find what it becomes leaves the Ooze standing rather than
+        # removing it and putting nothing back.
+        return
+
+    fight.spend_fear(SPLIT_FEAR)
+    # Whatever it had swallowed comes loose with it - `remove` releases the holds
+    # of anything leaving the field, so nothing about that is Split's business.
+    fight.remove(adversary)
+    for _ in range(SPLIT_COUNT):
+        spawned = definition.spawn()
+        fight.summon(spawned)
+        fight.grant_activation(spawned)
+
+    fight.note(
+        f"{adversary.name} splits into {SPLIT_COUNT} {SPLIT_INTO}s, which act at "
+        f"once (GM spends a Fear)"
     )
 
 

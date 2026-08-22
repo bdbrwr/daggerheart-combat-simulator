@@ -19,15 +19,23 @@ resistances don't stack, so several answers are folded by taking the **strongest
 single** one rather than by multiplying: two resistances are still a half, and a
 resistance beside an immunity is nothing at all.
 
-## Untyped damage is not an error
+## Untyped damage is not an error, and it matches nothing
 
-Every attack in the game has a type, and every stat block and weapon states one.
-But a damage figure that reaches a target without one - a test, or a feature
-nobody has typed yet - is resolved **unreduced** rather than raising. A missing
-type can only ever fail to apply a resistance, which is today's behaviour and
-visibly wrong in the direction of "nothing happened"; a raise mid-fight would be
-worse. What *does* raise is a type somebody wrote down and spelled wrong: see
-`damage_type_named`.
+Damage should always have a type, and after the typing sweep everything in this
+simulator states one bar the Beastbound companion, whose sheet leaves the choice
+to the player and which nobody has ruled on.
+
+Where a type is nevertheless missing, the rule is that **it matches nothing**. It
+is resolved unreduced rather than raising, and it satisfies no type restriction
+either - a physical-only feature declines on it exactly as a magic resistance
+does. So a gap in the authoring can only ever *fail* to apply an effect, never
+wrongly apply one, and it shows up as nothing happening rather than as the wrong
+thing happening.
+
+What *does* raise is a type somebody wrote down and spelled wrong, because that
+is the one case where the failure would be invisible: it would quietly resolve as
+untyped, and a resistance that silently never fires looks identical to a
+resistance nobody implemented. See `damage_type_named`.
 """
 
 from enum import Enum

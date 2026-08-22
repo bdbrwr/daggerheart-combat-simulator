@@ -14,11 +14,15 @@ from content.registry import Fight, Holder, on_hit, severity_response
 
 
 @severity_response("Get Back Up")
-def get_back_up(character: Holder, amount: int, hp_to_mark: int, fight=None) -> int:
+def get_back_up(
+    character: Holder, amount: int, hp_to_mark: int, fight=None, damage_type=None
+) -> int:
     """Get Back Up (Blade, level 1). Returns the HP the hit should now mark.
 
     SRD: when you take Severe damage, you can mark a Stress to reduce the
     severity by one threshold.
+
+    `damage_type` is ignored: the card names no type, so it answers for both.
 
     SIMULATION RULE - rules interpretation. This triggers on the damage *amount*
     clearing the Severe threshold rather than on the HP the hit would end up
@@ -90,9 +94,13 @@ def whirlwind(attacker: Holder, target, result, fight: Fight) -> None:
         return
     attacker.spend_hope(1)
 
+    # The same attack landing on somebody else, so the same type: the card adds
+    # no damage of its own, it re-uses the swing's. See
+    # `PlayerCharacter.weapon_damage_type`.
     splash = result.damage_roll.total // 2
+    damage_type = getattr(attacker, "weapon_damage_type", None)
     for adversary in others[:reach]:
-        adversary.take_damage(splash)
+        adversary.take_damage(splash, fight, damage_type=damage_type)
         fight.note(f"Whirlwind catches {adversary.name} for {splash}")
 
 

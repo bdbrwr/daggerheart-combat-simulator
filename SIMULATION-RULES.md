@@ -65,6 +65,8 @@ the balance numbers, and none of them is wrong in a rules sense.
 | **`Flying (X)` is authored as the *average* uplift**, not checked per round | `features/adversaries.py` → `flying`; `adversaries/adversary.py` → `spawn` | The SRD qualifies it - "*while* flying" - and nothing tracks whether an adversary is currently airborne. Rather than invent a per-round check, the qualifier moves to the author: a creature in the air the whole fight is written `Flying (2)`, one up half the time `Flying (1)`. Over a high-N run those land in the same place, and the knob is in the JSON per adversary. |
 | **An adversary spends its own HP on a feature freely, but never its last** | `adversaries/adversary.py` → `will_spend_hp`; `features/adversaries.py` → `sickening_flux` | Nothing; spending an adversary's HP is the GM's choice. Ruled as "the same reading as Stress, never the last one" — and worth knowing that the first half is vacuous: the desperation test asks whether `hp_unmarked` has fallen to `X**2 + 1` with X the slots left after paying, which when the pool *is* the HP track reduces to `hp_unmarked <= hp_unmarked**2 + 1` and is true of everything alive. So the guard is the rule: such a feature is used from full health and stops one HP short of suicide. |
 | **`I've Got 'Em` doubles damage before the target's thresholds**, not after | `features/adversaries.py` → `ive_got_em`; `adversaries/adversary.py` → `_dealt`; `content/registry.py` → `damage_multiplier` | The SRD says the creature "takes double damage". Doubling the rolled total is the reading; doubling the HP marked would be a far larger effect, since damage becomes HP through bands. Applied per target, so a sweep doubles only against whoever is actually held. |
+| **A Reaction whose benefit computes to zero is not taken** | `features/adversaries.py` → `reaper` | Nothing; a Reaction firing is the GM's choice. A general qualifier on rule 2 rather than a threshold for one feature: the Minor Demon's *Reaper* adds damage equal to its own marked HP, so an unhurt Demon would burn a Stress for +0 and all four would be gone before the feature was worth anything. Deliberately **not** an expected-damage comparison — the bonus is a number printed on the stat block and visible to both sides of the table, which is what separates this from the rule struck out below. |
+| **Consume Kindling's flammable scenery is always to hand**, so the Minor Fire Elemental clears an HP (or a Stress once its HP track is clean) on each of its spotlights until its three uses are gone | `features/adversaries.py` → `consume_kindling`, `CONSUME_KINDLING_USES` | The SRD triggers it on the Elemental "moving onto objects that are highly flammable" — terrain, which has no representation here. Dismissing it was rejected: three clears on a 9 HP Solo is worth far too much to wave through, so the effect is modelled and the *availability* is the invented part. It makes the Elemental effectively a 12 HP adversary. HP before Stress is also ruled: HP is what keeps it on the field, and a use is never spent on nothing. |
 | **Adaptability** is used only while 4 or fewer Stress are marked | `features/ancestries.py` → `ADAPTABILITY_MAX_STRESS_MARKED` | The card sets no limit. Marking the last Stress makes a PC Vulnerable for the rest of the fight, which costs far more than one rerolled attack is worth, so the last slots are held back. |
 
 ### Adversary desperation — when Stress gets spent
@@ -173,7 +175,24 @@ a band does — the roller draws from it, `chance_within` takes its expectation.
 They were two sets of numbers until this change, a rolled count beside three
 hand-written shares (Far 1.0, Close 3/4, Very Close 1/3), and adding the spread
 rolls moved one and not the other. Sharing one definition is what stops that
-happening again.
+happening again. Two of the old shares were simply wrong once the spread rolls
+existed: Far is 15/16 over four rather than a certainty, and Very Close is held
+below a third by its cap.
+
+**The one thing the two readings disagree about is the floor at 1, and they
+should.** A *count* never catches nobody — a sweep that fizzled entirely would be
+a rounding artefact rather than a decision. A *probability* must not inherit
+that: floored, Close and Very Close would be certainties over a field of one, so
+the Faerie could always reach the only other party member. `chance_within` asks
+`reach_outcomes` with `floor=False` for exactly that reason.
+
+> **Known degeneracy at a field of one.** Unfloored, Close's "never all of them"
+> rule leaves nothing for it to reach when there is a single other combatant, so
+> `chance_within(CLOSE, 1)` is 0.0 — a Faerie in a **two-PC party** could never
+> rescue her only ally. Every field size from two upward is sensible (0.5, 2/3,
+> 3/4 …), and the party this simulator is built around has four, so this has no
+> effect on any encounter being tuned. It is recorded rather than clamped
+> because picking a number for it is a balance decision.
 
 > **The field is whoever the band has to reach, and that is not always the
 > adversaries.** "Is my ally close by?" is measured over **the rest of the
@@ -290,6 +309,28 @@ its allies deal to creatures **it** has Restrained, and a condition nobody
 recorded is one nothing can key on. Bite, Grab and Drag, Detain and Hold Them
 Down all record theirs. What stays declared as a gap is the movement.
 
+**A hold ends when the thing holding you leaves the fight.** Not printed
+anywhere, and it has to be a rule: a condition with a `source` and **no `end` of
+its own** is written to be lifted by something happening to whoever applied it -
+Envelop ends when the Ooze takes Severe damage, Grab and Drag when the Defender
+does - and an adversary that is dead or gone can never take any damage again. So
+such a condition would sit on a PC for the rest of the fight with no way out,
+which is harsher than anything the SRD prints. `combat/state.py` →
+`release_conditions_from`, called from both exits: `remove` and the defeat check
+in `Adversary.take_damage`.
+
+Worth knowing how ordinary this case is rather than treating it as a corner. The
+Green Ooze has thresholds of 5/10 on a 5 HP track, so **two Major hits kill it
+and a Severe one never lands** - the printed release is the exception, not the
+rule.
+
+**A condition that carries its own ender is deliberately left alone**, which is
+the half that stops this becoming "clear everything". The Minor Chaos Elemental's
+Sickening Flux makes a PC Vulnerable "until their next rest or they clear a HP":
+it names its own exit, so killing the Elemental must not cure it. The same spares
+every hold that offers an escape roll - a PC Restrained by a dead Bear can still
+roll out, and nothing is stranded.
+
 **A printed way out of a hold is modelled, not skipped.** Where the SRD ends a
 condition on a roll ("until they break free with a successful Strength Roll"),
 the held PC attempts it as a Reaction Roll at each announced moment —
@@ -329,6 +370,22 @@ that. Features call `roll_duality` directly and read `is_success` and
 Where a failure is "15 damage and Vulnerable" and a success is "5 damage", a
 critical is nothing at all.
 
+**Only PCs make them.** Several SRD features say "all *creatures* within this
+area must make an Agility Reaction Roll", which on the page catches the
+adversary's own allies — the Minor Fire Elemental's *Scorched Earth* and the
+Minor Demon's *Hellfire* are the first two. Here such a feature reaches **only
+the party**, and that is ruled as the intended behaviour rather than a gap to
+declare: an adversary stat block carries no traits for a trait-based roll to be
+made against. It does not generalise to every area feature — the Acid Burrower's
+*Acid Bath* still splashes other adversaries, because it deals damage with no
+roll involved. The Reaction Roll is the distinction, not the word "creatures".
+
+**A success can buy half rather than everything.** Scorched Earth and Hellfire
+both read "targets who fail take X. Targets who succeed take half damage", which
+is the first place a save is worth something short of a clean escape. Half rounds
+down, and a critical still takes nothing — so "success" and "critical" have come
+apart and each needs saying (`features/adversaries.py` → `_flames`).
+
 | Policy | Where | What the rules say |
 |---|---|---|
 | Where the SRD prints **no Difficulty** for a Reaction Roll, the adversary's own Difficulty is used | `features/adversaries.py` → `_reaction_roll` | The GM sets it. The stat block's Difficulty is the number already on the page and it scales with tier, which makes it the least invented option — but it is invented, and it's a knob. |
@@ -365,12 +422,17 @@ the numbers.
 | **Pack Tactics** asks the **area rule** whether the pack converged: of the wolves alive, `targets_reached(MELEE, ...)` says how many are on this target, and the feature needs 2 - the attacker and one more | `features/adversaries.py` → `pack_tactics`, `PACK_TACTICS_WOLVES` | "Another Dire Wolf within Melee range of the target" is positioning, and none is tracked. Reading it as "is another wolf alive anywhere?" would fire on every standard attack for as long as any packmate stood, which is far more than the page promises - so the Melee band answers instead. Since that band is rolled, a pair converges about half the time and a pack of six always does, and how often the band lets it through is the whole of what holds the feature back. |
 | **Armor-Shredding Shards** reads "within Melee range" off the **attacker's weapon**: everyone is assumed to have attacked from the greatest range their weapon allows, so a Melee-only weapon triggers it and anything reaching further does not | `features/adversaries.py` → `armor_shredding_shards`; `items/weapons.py` → `attack_with` | No positions are tracked, so the trigger needs some handle on distance and the weapon is the only one there is. It makes the feature a tax on the front line and free for archers, which is the shape it has at a table - and it means a party's answer to the Glass Snake is a weapon choice. Only weapon attacks reach it; content that rolls an attack of its own has no weapon and no range, declared as a gap |
 | A **Minion Group Attack** is **one activation** however many Minions it sweeps, but each Minion swept has its own spotlight consumed and doesn't act again that GM turn | `features/adversaries.py` → `group_attack`; `combat/state.py` → `consume_activation`; `combat/fight.py` → `_next_adversary` | "Spend a Fear to choose a target and spotlight all Giant Rats within Close range" - the SRD spotlights several combatants with one feature, which nothing in the loop had a shape for. Charging one activation follows from it being one shared attack roll; consuming the rest follows from them having been spotlighted. Reading it the other way (one activation each) would let a swarm act, then act again, and would empty the GM turn's budget into a single feature |
+| **Resistance halves a hit *before* its thresholds are read**, so it changes how many HP the hit marks rather than only the figure rolled | `content/damage_types.py` → `reduced`; `characters/player_character.py` and `adversaries/adversary.py` → `take_damage` | Not really an ambiguity — the SRD says "reduce incoming damage of that type by half **before comparing it to their Hit Point Thresholds**" — but it is worth recording, because it is the whole size of the effect. Against the Minor Chaos Elemental's thresholds of 7 and 14, a 13-point spell goes from marking 2 HP to marking 1; halving afterwards would have been worth nothing at all. It is the same place `I've Got 'Em`'s doubling already lands. |
+| Several resistances fold by taking the **strongest single** one, never by multiplying | `content/damage_types.py` → `strongest` | SRD: "the effects of multiple resistances to the same damage type do not stack." Multiplying would make a second resistance quarter the hit, and a resistance beside an immunity is simply the immunity. |
+| **Untyped damage matches nothing.** It is never resisted, and it satisfies no type restriction either | `content/damage_types.py` → `damage_type_named`; `content/registry.py` → `resistance_to`, `severity_response` | Damage should always have a type, and after this change everything in the simulator states one bar the Beastbound companion. Where a type is nevertheless missing, the ruling is that it can only ever *fail* to apply an effect and never wrongly apply one — so a gap in the authoring shows up as nothing happening rather than as the wrong thing happening. A type that is **stated and misspelled** raises instead, because that is the case where the failure would otherwise be invisible. |
+| An adversary feature that states **no damage type** deals the type of its stat block's **standard attack** | `adversaries/adversary.py` → `type_of_damage`; `features/adversaries.py` → `magical_reflection`, `on_my_signal_ticks` | The same shape as the damage rule below it, applied to the type, and ruled by the user in the same words. So the Minor Chaos Elemental's *Magical Reflection* rebound is **magic** — the Elemental's own, not the attacker's blow returning in kind — and the Archer Guards' countdown volley takes the *Archer's* type rather than the Head Guard's. A feature that states a type on the page overrides it, which is what makes the Construct's *Death Quake* magic out of a physical stat block. |
 | An adversary feature that makes an attack deals **whatever damage it states, and otherwise the adversary's standard damage** | `features/adversaries.py` → `detain`; `adversaries/adversary.py` → `_damage_for` | The SRD prints all three cases and only two of them explicitly: dice of its own (Bite at 3d4+10), no damage at all (the Kneebreaker's Hold Them Down, which says "the target takes no damage"), and silence. Silence is read as the standard attack, and the corroboration is that Hold Them Down has to say otherwise — a clause only worth printing if damage is the default. Passing no dice keeps it true mechanically too, since `dice is None` is already the discriminator for "the printed attack", so a standard-damage swap reaches such a feature. |
 | An **interrupting Reaction does not cancel the attack it interrupts** | `content/registry.py` → `before_attacked`; `features/adversaries.py` → `fall_back` | The Harrier's Fall Back fires "before the attack roll" and moves the Harrier out of Melee, which could be read as making the attack impossible. Nothing in the SRD says it is cancelled, and a PC can move within Close range as part of their own action, so one whose target backed off would simply follow. So the hook can't veto: what the Reaction buys is the counterattack it comes with. Reading it the other way would turn the Harrier's three Stress into three negated melee attacks and make the stat block far stronger. |
 | **"Moves into Melee range to make an attack" is read off the attacker's weapon** | `features/adversaries.py` → `fall_back` | The same handle on distance Armor-Shredding Shards already uses, and the only one there is: a Melee weapon triggers it, anything reaching further does not. |
 | **On My Signal** triggers **once**, every Archer Guard fires at the **same** PC, and their successes are **combined into one damage roll** | `features/adversaries.py` → `on_my_signal_ticks` | The SRD only re-arms a countdown that says it loops, and this one doesn't. "The nearest target within their range" is positioning; the standing targeting rule stands in for it, asked once on the Head Guard's behalf, which is also what leaves "if any attacks succeed on the same target, combine their damage" with anything to do. Combining is not a rounding detail: three separate hits of 7 mark 3 HP, while one combined 21 is Severe. |
 | **Tactician does not cost the Lieutenant its action** | `features/adversaries.py` → `tactician` | The SRD files it as an Action, but the text triggers "when you spotlight the Lieutenant… to **also** spotlight two allies". Ruled as a rider on being spotlighted, so it registers on `on_spotlight` and the Lieutenant still attacks afterwards. Reading it the other way would make it one option among several and roughly halve how often a Jagged Knife band gets its extra activations. |
-| **Magical Reflection** reads "within Close range" off the attacker's weapon, and halves the damage **rolled**, rounding down | `features/adversaries.py` → `magical_reflection` | The same handle on distance Armor-Shredding Shards uses, so Melee, Very Close and Close weapons trigger it and Far ones don't. "The damage they dealt" is read as the number rolled rather than the HP it cost, so a hit the Elemental shrugged off still rebounds at full size. |
+| **Magical Reflection** reads "within Close range" off the attacker's weapon, and halves the damage **rolled**, rounding down | `features/adversaries.py` → `magical_reflection` | The same handle on distance Armor-Shredding Shards uses, so Melee, Very Close and Close weapons trigger it and Far ones don't. "The damage they dealt" is read as the number rolled rather than the HP it cost, so a hit the Elemental shrugged off still rebounds at full size. The rebound's **type** is the Elemental's own — see the untyped-feature entry above. |
+| **Split** takes the Green Ooze off the field **without defeating it** | `combat/state.py` → `remove`; `features/adversaries.py` → `split` | "Split them into two Tiny Green Oozes" leaves nothing said about what becomes of the original, and `is_defeated` was the simulator's only way for anything to leave. Marking its HP would have looked identical to the loop and lied to the reader — a play-by-play announcing the Ooze "defeated" as the field doubles reads as a win. A defeated Ooze also doesn't split, since a stat block that split as it died would let one Fear undo the kill. |
 | A die discarded by **Massive**/**Powerful** doesn't count toward the critical bonus - a crit adds the maximum of the dice that were kept, not of every die rolled | `dice/damage.py` → `critical_bonus` | A crit "adds the maximum possible result of the damage dice"; the SRD doesn't say whether a discarded die is still one of "the damage dice". Counting it would pay for a die that was thrown away. |
 
 ## 3. Not implemented
@@ -390,7 +452,6 @@ complete simulation of the game.
 > nobody has done.
 
 - **Massive Damage** (SRD-optional: 2× Severe marks 4 HP instead of 3) — `characters/player_character.py`
-- **Damage-type resistance and immunity** — nowhere, and now blocking a ported feature (see the damage-types entry below)
 - **Range and positioning entirely.** Every range band ("Melee", "Very Close", "Far") is treated as always satisfied. This is why `I Am Your Shield` never checks distance, and why adversary features keyed to position are skipped.
 - **All conditions except Vulnerable and the trait hobble** — see the conditions section above. Restrained is *ruled* to have no combat effect here rather than merely absent; Hidden, On Fire and Stunned have no representation and nothing applies them. *Cursed* (the Jagged Knife Hexer's) is a named condition whose whole effect is its own feature's, so it needs nothing from this list.
 - **Direct damage bypasses the Armor Slot only.** `characters/player_character.py` → `take_damage(direct=True)`; `content/registry.py` → `direct_damage`, `deals_direct_damage`. Thresholds still decide how many HP it costs, and damage responses still get their say — the SRD's restriction is on armor. Against this party it's worth close to a whole HP per hit, since the policy otherwise marks a free slot against everything
@@ -402,7 +463,8 @@ complete simulation of the game.
 - **Armor Score and armor thresholds are never read from the catalogue.** A sheet carries them already resolved (see the standing rule on sheet-resolved values), so `items/*.json` records them as provenance only. The consequence is that a sheet whose numbers don't match the armor it names will not be caught
 - **Subclass features above the foundation tier.** Specialization (level 5) and mastery (level 8) features are declared as gaps on each subclass rather than implemented, since the current party has neither tier
 - **Nothing ever attacks the Beastbound companion**, so its Stress, and dropping out of the scene when its last Stress is marked, don't exist here. It contributes damage and carries no risk
-- **Damage types are authored but never read.** Every weapon in `items/*.json` carries a `damage_type`, and every adversary stat block prints the type of its standard attack — so the data is there and this is a gap in the *code*, not an absence in the model. Nothing consults it yet, which is why Unstoppable's physical-only reduction applies to every hit and Weak Structure worsens magic damage it shouldn't. **Resistance and immunity are the same gap** and are real outstanding work: the Minor Chaos Elemental's `Arcane Form` ("resistant to magic damage") is therefore left *unimplemented* rather than dismissed, because a dismissal would claim the effect has nothing here to touch and that is not true
+- **One damage roll carries one type.** Where a feature adds dice of a *different* type to an attack's own roll, the whole total takes the weapon's type. The School of War's **Face Your Fear** is the case — an extra 1d10 of magic riding a swing that may be physical — and the two readings are mutually exclusive: splitting the roll in two would measure each half against the target's thresholds separately, which is the exact error `extra_damage` exists to avoid. The type loses, the single threshold comparison wins, and it is declared as a gap where the feature is registered
+- **The Beastbound companion's damage is untyped.** The companion sheet says "physical or magic as the player chose" and no choice has been ruled, so its bite is the one thing left in the simulator that deals damage without stating a type — and therefore the one thing no resistance is ever applied to. Declared as a gap on Beastbound; awaiting a ruling
 - **Help an ally** — step 4 of the PC turn priority; needs more than one PC
 - **Secondary weapons** — loaded from the sheet, never used
 - **Multi-slot armor marking** — at most one Armor Slot is marked per hit

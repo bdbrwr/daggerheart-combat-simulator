@@ -32,23 +32,33 @@ class FakeTarget:
         self.hp_unmarked = hp_unmarked
         self.damage_taken: list[int] = []
         self.direct_damage_taken: list[int] = []
+        self.types_taken: list = []
 
     @property
     def is_near_death(self) -> bool:
         """Part of the protocol so the party's forced-reroll content can ask."""
         return self.hp_unmarked <= NEAR_DEATH_HP_UNMARKED
 
-    def take_damage(self, amount: int, fight=None, direct: bool = False) -> int:
+    def take_damage(
+        self, amount: int, fight=None, direct: bool = False, damage_type=None
+    ) -> int:
         """`fight` is part of the protocol so a PC's damage responses can reach
         per-fight state; a fake has none, and records only the damage.
 
         `direct` says no Armor Slot may be marked against the hit. A fake has no
         armor either, so it changes nothing here - it's recorded separately so a
         test can still assert that an attack came through as direct.
+
+        `damage_type` is the same shape: a fake has no resistances for it to
+        answer, and it is recorded rather than dropped so a test can assert what
+        type an attack came through as. It is **not** optional decoration -
+        `Adversary.attack` types every hit off the stat block, so a stand-in
+        without it raises on any attack that lands.
         """
         self.damage_taken.append(amount)
         if direct:
             self.direct_damage_taken.append(amount)
+        self.types_taken.append(damage_type)
         return amount
 
 

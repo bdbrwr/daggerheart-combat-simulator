@@ -284,6 +284,21 @@ class PlayerCharacter:
         return find_weapon(self.primary_weapon).named_features if self.primary_weapon else []
 
     @property
+    def weapon_damage_type(self) -> str:
+        """The damage type of the weapon this PC swings, or "" if they carry none.
+
+        Here for the same reason `weapon_features` is: content that **reuses an
+        attack the weapon already made** has to type what it deals, and the
+        weapon is what typed the original. Whirlwind's splash and Hold Them Off's
+        two extra targets are both that shape - the same damage roll landing on
+        somebody else, so the same type.
+
+        Content that rolls damage of its own says so itself and never reads this;
+        a Grimoire spell is magic whatever the caster is holding.
+        """
+        return find_weapon(self.primary_weapon).damage_type if self.primary_weapon else ""
+
+    @property
     def named_features(self) -> list[str]:
         """Everything this PC carries that applies to whatever they do.
 
@@ -434,9 +449,13 @@ class PlayerCharacter:
 
         Marking the last HP triggers Avoid Death.
         """
-        amount = reduced(
-            amount, resistance_to(self, damage_type_named(damage_type), fight)
-        )
+        # Resolved once, and then carried: the type decides the resistance here
+        # and is handed to the two damage-response hooks below, several of whose
+        # registrants are restricted to one type on the page (Iron Will,
+        # Unstoppable). Parsing it twice would be two chances to disagree.
+        kind = damage_type_named(damage_type)
+
+        amount = reduced(amount, resistance_to(self, kind, fight))
         if amount <= 0:
             return 0
 
@@ -446,8 +465,8 @@ class PlayerCharacter:
             self.mark_armor_slot(1)
             hp_to_mark = max(hp_to_mark - 1, 0)
 
-        hp_to_mark = soften_damage(self, amount, hp_to_mark, fight)
-        hp_to_mark = harden_damage(self, amount, hp_to_mark, fight)
+        hp_to_mark = soften_damage(self, amount, hp_to_mark, fight, kind)
+        hp_to_mark = harden_damage(self, amount, hp_to_mark, fight, kind)
 
         self.mark_hp_and_check_death(hp_to_mark)
         apply_on_damaged(self, amount, hp_to_mark, fight)

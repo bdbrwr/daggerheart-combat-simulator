@@ -199,6 +199,8 @@ class Fight(Protocol):
     def condition_on(self, holder, name: str): ...
     def clear_condition(self, holder, name: str) -> None: ...
     def summon(self, adversary) -> None: ...
+    def remove(self, adversary) -> None: ...
+    def release_conditions_from(self, source) -> list: ...
     def is_vulnerable(self, combatant) -> bool: ...
     def disadvantaged_on(self, holder, trait: str) -> bool: ...
     def token_count(self, holder, name: str) -> int: ...
@@ -258,6 +260,7 @@ _standard_damage: dict[str, Callable] = {}
 _on_attacked: dict[str, Callable] = {}
 _before_attacked: dict[str, Callable] = {}
 _on_spotlight: dict[str, Callable] = {}
+_skip_spotlight: dict[str, Callable] = {}
 _on_party_attack_rolls: dict[str, Callable] = {}
 _party_roll_conversions: dict[str, Callable] = {}
 _attack_advantages: dict[str, Callable] = {}
@@ -274,9 +277,22 @@ _discovering = False
 def severity_response(name: str, unmodelled: Iterable[str] = ()):
     """Register content that changes the HP an incoming hit marks.
 
-    Signature: `(holder, amount, hp_to_mark, fight) -> int` - the HP the hit
-    should now mark. `amount` is the raw damage, so content can key on the
-    number rolled rather than on what other reductions have left.
+    Signature: `(holder, amount, hp_to_mark, fight, damage_type) -> int` - the HP
+    the hit should now mark. `amount` is the raw damage, so content can key on
+    the number rolled rather than on what other reductions have left.
+
+    `damage_type` is a `DamageType` or None, and it is here because the SRD
+    restricts several of these to one type: the Stalwart's Iron Will and the
+    Guardian's Unstoppable are both "when you take **physical** damage". It is a
+    fact about the hit exactly as `amount` and `hp_to_mark` are, so it sits
+    beside them rather than being declared on the decorator and filtered inside
+    dispatch. Most registrants ignore it.
+
+    **Untyped damage matches no restriction.** A hit that arrives with no type
+    satisfies neither "physical only" nor "magic only", which is the same rule
+    `resistance_to` follows: missing data can then only ever *fail* to apply an
+    effect, never wrongly apply one. Damage should always be typed; where it
+    isn't, the gap shows up as nothing happening.
 
     `fight` may be None: damage can be resolved outside a fight (in a test, say),
     and content that needs per-fight state has to cope with not having it rather
@@ -295,12 +311,13 @@ def severity_increase(name: str, unmodelled: Iterable[str] = ()):
     """Register content that makes an incoming hit mark *more* HP.
 
     Signature and arguments are `severity_response`'s exactly - `(holder, amount,
-    hp_to_mark, fight) -> int` - and this is its opposite number: that hook is
-    for content that softens a hit, this one for content that worsens it. The
-    Construct's `Weak Structure` ("when the Construct marks HP from physical
-    damage, they must mark an additional HP") is the first, and the shape recurs
-    often enough across the SRD's adversaries to be worth its own hook rather
-    than a sign flip inside the softening one.
+    hp_to_mark, fight, damage_type) -> int` - and this is its opposite number:
+    that hook is for content that softens a hit, this one for content that
+    worsens it. The Construct's `Weak Structure` ("when the Construct marks HP
+    from physical damage, they must mark an additional HP") is the first, and the
+    shape recurs often enough across the SRD's adversaries to be worth its own
+    hook rather than a sign flip inside the softening one. It is also why
+    `damage_type` is in the signature; see `severity_response`.
 
     Two hooks rather than one because the *order* matters and has to be fixed
     somewhere: softening runs first and hardening second, so a hit that armor and
@@ -695,6 +712,38 @@ def convert_party_roll(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_party_roll_conversions, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def skip_spotlight(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that takes its holder's spotlight away before they act.
+
+    Signature: `(holder, fight) -> bool` - True to spend the activation on
+    nothing. The Green Ooze's `Slow` is the reason it exists: "when you spotlight
+    the Ooze and they don't have a token, they can't act yet - place a token and
+    describe what they're preparing to do."
+
+    Distinct from every other way a spotlight can come to nothing. An `action`
+    that declines simply lets the next option try, and the standard attack never
+    declines, so a spotlight always resolves into *something*; this is the hook
+    for content that says it resolves into nothing at all. And it is not
+    `on_spotlight`, which fires on the spotlight arriving and cannot refuse it.
+
+    **Being asked is the commitment**, the same contract `attack_advantage` and
+    `hope_die` keep: it is consulted exactly once per activation, so content that
+    alternates can flip its own token here rather than needing something
+    afterwards to notice the spotlight happened.
+
+    The activation is still spent, and the Fear it cost is still gone - the GM
+    turn charges before the adversary is asked what it does. That is the whole
+    weight of the feature.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_skip_spotlight, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -1426,10 +1475,9 @@ def resistance_to(target, damage_type=None, fight: Fight = None) -> float:
     strongest single one applies rather than the product - resistances do not
     stack in Daggerheart.
 
-    **Untyped damage is never reduced.** A hit that arrives with no type - a
-    test, or a feature nobody has typed yet - resolves in full rather than
-    raising, which is the behaviour the simulator had before types existed. See
-    `content/damage_types.py`.
+    **Untyped damage is never reduced**, the same rule the severity hooks follow:
+    a hit that arrives with no type matches nothing, so it resolves in full
+    rather than raising. See `content/damage_types.py`.
 
     Asked of the target rather than of the field, unlike
     `incoming_damage_multiplier`: a resistance is something the creature being
@@ -1589,7 +1637,9 @@ def apply_on_hit(holder: Holder, target, result, fight: Fight) -> None:
             respond(holder, target, result, fight)
 
 
-def soften_damage(character: Holder, amount: int, hp_to_mark: int, fight=None) -> int:
+def soften_damage(
+    character: Holder, amount: int, hp_to_mark: int, fight=None, damage_type=None
+) -> int:
     """Let every damage-response this character carries soften a hit.
 
     Called once by PlayerCharacter.take_damage. Each response sees what the
@@ -1599,12 +1649,16 @@ def soften_damage(character: Holder, amount: int, hp_to_mark: int, fight=None) -
     class feature softens a hit exactly the way a card does (Unstoppable reduces
     the severity of every hit while it's running), and nothing about this hook
     cares which kind of content registered it.
+
+    `damage_type` is the `DamageType` the hit arrived with, or None, and is
+    passed to every response - see `severity_response` for why the type travels
+    as an argument rather than as a filter here.
     """
     _discover()
     for name in character.named_features:
         respond = _registered(_severity_responses, name)
         if respond is not None:
-            hp_to_mark = respond(character, amount, hp_to_mark, fight)
+            hp_to_mark = respond(character, amount, hp_to_mark, fight, damage_type)
     return hp_to_mark
 
 
@@ -1678,6 +1732,24 @@ def apply_on_spotlight(holder, fight=None) -> None:
             respond(holder, fight)
 
 
+def skips_spotlight(holder, fight=None) -> bool:
+    """Whether anything this combatant carries spends their activation on nothing.
+
+    False unless something says otherwise. Everything registered is asked - none
+    of them may be skipped once one answers True, because being asked is the
+    commitment and content that alternates flips its own state when consulted.
+    Short-circuiting would leave a second such feature out of step with the
+    turn it thinks it is on.
+    """
+    _discover()
+    skipped = False
+    for name in holder.named_features:
+        prepares = _registered(_skip_spotlight, name)
+        if prepares is not None and prepares(holder, fight):
+            skipped = True
+    return skipped
+
+
 def standard_attack_damage(holder, target, roll=None, fight=None):
     """The dice this combatant's standard attack should roll instead, if any.
 
@@ -1729,7 +1801,9 @@ def deals_direct_damage(holder, fight=None) -> bool:
     return False
 
 
-def harden_damage(character, amount: int, hp_to_mark: int, fight=None) -> int:
+def harden_damage(
+    character, amount: int, hp_to_mark: int, fight=None, damage_type=None
+) -> int:
     """Let everything this combatant carries make an incoming hit cost more.
 
     The mirror of `soften_damage`, and called immediately after it by whoever is
@@ -1741,12 +1815,15 @@ def harden_damage(character, amount: int, hp_to_mark: int, fight=None) -> int:
     asked, the softening has had its say, so a hit fully absorbed by armor and a
     domain card is sitting at zero and content that only fires on a real mark can
     see that.
+
+    `damage_type` travels the same way it does through `soften_damage`, and for
+    the same registrants' sake: the Construct's Weak Structure is physical-only.
     """
     _discover()
     for name in character.named_features:
         respond = _registered(_severity_increases, name)
         if respond is not None:
-            hp_to_mark = respond(character, amount, hp_to_mark, fight)
+            hp_to_mark = respond(character, amount, hp_to_mark, fight, damage_type)
     return hp_to_mark
 
 

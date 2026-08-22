@@ -121,7 +121,9 @@ def targets_hit(roll, targets: list) -> list:
     ]
 
 
-def reach_outcomes(band: Range, combatants: int) -> list[tuple[float, int]]:
+def reach_outcomes(
+    band: Range, combatants: int, floor: bool = True
+) -> list[tuple[float, int]]:
     """Every reach `band` can produce over a field this size, with its odds.
 
     **One definition of the band rules, read two ways.** `targets_reached` draws
@@ -130,16 +132,21 @@ def reach_outcomes(band: Range, combatants: int) -> list[tuple[float, int]]:
     sets of numbers - a rolled count here and three hand-written shares beside
     it - and they drifted apart the moment the spread rolls were added.
 
-    Each outcome is already floored at 1 and capped at the field size, so no
-    caller has to re-apply either. The floor is why an area effect never catches
-    nobody: a sweep that fizzled entirely would be a rounding artefact rather
-    than a decision.
+    Each outcome is capped at the field size, so no caller has to re-apply that.
+
+    **`floor` is the one thing the two readers disagree about, and they should.**
+    A *count* is floored at 1, because an area effect that caught nobody would be
+    a rounding artefact rather than a decision. A *probability* must not be: the
+    floor would make Close and Very Close certainties over a field of one, so the
+    Faerie could always reach the only other party member. Same band rules, and
+    the floor is a fact about sweeping an area rather than about who is standing
+    where - which is why it is a parameter here instead of two functions.
     """
     if combatants <= 0:
         return [(1.0, 0)]
 
     def clamped(reached: int) -> int:
-        return min(max(reached, 1), combatants)
+        return min(max(reached, 1 if floor else 0), combatants)
 
     if band is Range.FAR:
         # Everyone, but one short a quarter of the time. Far used to mean
@@ -193,11 +200,17 @@ def chance_within(band: Range, others: int) -> float:
     since that is who the band has to reach. Returns 0.0 on an empty field -
     there is nothing to measure against, and content should decline rather than
     treat that as certainty.
+
+    Asked **unfloored**, which is the whole reason `reach_outcomes` takes the
+    parameter: the floor at 1 belongs to sweeping an area, and reading it as a
+    likelihood would make a proportional band a certainty whenever the field is
+    small enough for the floor to bite.
     """
     if others <= 0:
         return 0.0
     expected = sum(
-        probability * reached for probability, reached in reach_outcomes(band, others)
+        probability * reached
+        for probability, reached in reach_outcomes(band, others, floor=False)
     )
     return min(expected / others, 1.0)
 

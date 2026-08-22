@@ -16,6 +16,7 @@ implemented stays `unimplemented` and says so in the coverage report.
 import random
 
 from content.conditions import RESTRAINED, VULNERABLE
+from content.damage_types import DamageType
 from content.grimoire import FeatureSet
 from content.registry import (
     Fight,
@@ -139,24 +140,26 @@ def unstoppable(guardian: Holder, fight: Fight) -> bool:
     return True
 
 
-@severity_response(
-    "Guardian",
-    unmodelled=[
-        "Unstoppable: the physical-damage restriction - damage types aren't "
-        "tracked anywhere, so this softens magic damage too",
-    ],
-)
+@severity_response("Guardian")
 def unstoppable_reduces_severity(
-    guardian: Holder, amount: int, hp_to_mark: int, fight=None
+    guardian: Holder, amount: int, hp_to_mark: int, fight=None, damage_type=None
 ) -> int:
     """One threshold less severe: Severe to Major, Major to Minor, Minor to None.
 
     Each threshold is worth exactly one HP, so a step down the ladder is one HP
     fewer marked, floored at zero - which is what "Minor to None" means.
 
+    **Physical damage only**, as the page says. That restriction used to be a
+    declared gap because nothing carried the type this far; it now arrives as an
+    argument. Untyped damage does not qualify - a restriction matches only a
+    type that was actually stated, so a gap in the authoring costs the Guardian
+    nothing rather than handing them a reduction the SRD doesn't give.
+
     Unlike Get Back Up this costs nothing and isn't a choice, so there's no
     policy here: while the die is on the sheet, it always applies.
     """
+    if damage_type is not DamageType.PHYSICAL:
+        return hp_to_mark
     if not _unstoppable_value(guardian, fight):
         return hp_to_mark
     return max(hp_to_mark - 1, 0)
@@ -301,8 +304,11 @@ def _hold_them_off(ranger: Holder, target, result, fight: Fight) -> None:
         return
 
     ranger.spend_hope(HOPE_FEATURE_COST)
+    # The same roll measured against another Difficulty, so the same type - the
+    # card reuses the swing rather than dealing damage of its own.
+    damage_type = getattr(ranger, "weapon_damage_type", None)
     for adversary in beaten:
-        adversary.take_damage(result.damage_roll.total)
+        adversary.take_damage(result.damage_roll.total, fight, damage_type=damage_type)
         fight.note(
             f"{ranger.name} holds them off, catching {adversary.name} "
             f"for {result.damage_roll.total}"

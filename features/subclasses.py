@@ -31,6 +31,7 @@ not ruled on and not implemented stays `unimplemented`.
 """
 
 from combat.results import AttackResult
+from content.damage_types import DamageType
 from content.registry import (
     Fight,
     Holder,
@@ -54,8 +55,6 @@ from dice.duality import DualityOutcome, roll_duality
 # --- Stalwart (Guardian) -----------------------------------------------------
 
 STALWART_GAPS = [
-    "Iron Will: the physical-damage restriction - damage types aren't tracked, "
-    "so the extra slot can be marked against any hit",
     "Unrelenting and Partners-in-Arms (specialization, level 5) and Undaunted "
     "and Loyal Protector (mastery, level 8)",
 ]
@@ -66,7 +65,9 @@ IRON_WILL_WORTH_A_SLOT = 2
 
 
 @severity_response("Stalwart", unmodelled=STALWART_GAPS)
-def iron_will(guardian: Holder, amount: int, hp_to_mark: int, fight=None) -> int:
+def iron_will(
+    guardian: Holder, amount: int, hp_to_mark: int, fight=None, damage_type=None
+) -> int:
     """Stalwart's *Iron Will*. Returns the HP the hit should now mark.
 
     SRD: when you take physical damage, you can mark an additional Armor Slot to
@@ -76,11 +77,18 @@ def iron_will(guardian: Holder, amount: int, hp_to_mark: int, fight=None) -> int
     against every hit as a matter of simulation policy, and this is a second one
     on top of that. Each slot is worth one threshold, which is one HP.
 
+    **Physical damage only**, as printed, checked first so the slot is never
+    even considered against a spell. Untyped damage doesn't qualify: a
+    restriction matches only a type that was stated, so the Guardian keeps the
+    slot rather than spending it on a hit nobody typed.
+
     SIMULATION RULE - policy. Slots are the party's durability and there are
     only a few, so this doesn't spend one to save a single HP. It pays when the
     hit would otherwise put the Guardian down, and otherwise only when the hit
     is still marking 2 or more HP after the free slot.
     """
+    if damage_type is not DamageType.PHYSICAL:
+        return hp_to_mark
     if hp_to_mark <= 0:
         return hp_to_mark
     if guardian.armor_marked >= guardian.armor_max:
@@ -157,6 +165,10 @@ def adept(wizard: Holder, target, fight: Fight) -> int:
 COMPANION_DAMAGE_DIE = 6
 
 BEASTBOUND_GAPS = [
+    "Companion: its damage is 'physical or magic as the player chose', and no "
+    "choice has been ruled - so the companion's bite goes out untyped and no "
+    "resistance is ever applied to it. Awaiting a ruling; everything else that "
+    "deals damage now states a type",
     "Companion: the companion is never attacked, so its Stress, and dropping "
     "out of the scene when its last Stress is marked, are not modelled. "
     "Nothing targets it because no positioning is tracked - which means this "
@@ -227,7 +239,11 @@ def companion(ranger: Holder, target, fight: Fight) -> AttackResult | None:
         + total_extra_damage(ranger, target, attack_roll, fight),
         is_critical=attack_roll.is_critical,
     )
-    marked = target.take_damage(damage_roll.total)
+    # Untyped, and the only damage left in the simulator that is - the companion
+    # sheet says "physical or magic as the player chose" and no choice has been
+    # ruled. Declared in BEASTBOUND_GAPS. `fight` is passed either way, so the
+    # target's own damage responses can see it.
+    marked = target.take_damage(damage_roll.total, fight)
     fight.note(
         f"{ranger.name}'s companion mauls {target.name} for {damage_roll.total}"
     )
@@ -292,8 +308,11 @@ FACE_YOUR_FEAR_DICE = 1
 FACE_YOUR_FEAR_DIE = 10
 
 SCHOOL_OF_WAR_GAPS = [
-    "Face Your Fear: the damage is magic, and damage types aren't tracked - "
-    "which costs nothing today, since nothing resists either kind",
+    "Face Your Fear: the extra die is magic where the weapon it rides on may "
+    "not be. Damage types are tracked now, but this die joins the weapon's own "
+    "damage roll so that it is measured against thresholds once - and one roll "
+    "carries one type, which is the weapon's. Against a magic-resistant target "
+    "the 1d10 is therefore unresisted where the SRD would halve it",
     "Thrive in Chaos and Have No Fear (mastery, level 8) and Conjure Shield "
     "and Fueled by Fear (specialization, level 5)",
 ]

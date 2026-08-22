@@ -64,7 +64,9 @@ class Target(Protocol):
     # attacked rather than to whoever swung.
     named_features: list[str]
 
-    def take_damage(self, amount: int, fight=None, damage_type=None) -> int: ...
+    def take_damage(
+        self, amount: int, fight=None, direct: bool = False, damage_type=None
+    ) -> int: ...
 
 
 def attack_with(
@@ -165,7 +167,14 @@ def attack_with(
     # Typed off the weapon, which is where the SRD prints it - a Broadsword deals
     # physical damage and a Greatstaff magic - so a target's resistance is
     # answered by what the PC chose to carry rather than by anything decided here.
-    marked = target.take_damage(damage_roll.total, damage_type=weapon.damage_type)
+    #
+    # `fight` is passed for the reason every other call site passes it: it is how
+    # the target's own damage responses reach state that only lives for the
+    # length of a fight. It was missing here, which left every hook downstream of
+    # a PC weapon hit - the resistance, the two severity hooks - seeing None.
+    marked = target.take_damage(
+        damage_roll.total, fight, damage_type=weapon.damage_type
+    )
 
     # Content the *target* carries that punishes being hit - the Glass Snake's
     # shards of glass. Asked after the damage lands, because the trigger is a

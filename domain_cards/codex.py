@@ -9,6 +9,7 @@ verbatim text is in .reference/abilities.json.
 """
 
 from combat.results import AttackResult
+from content.damage_types import DamageType
 from content.grimoire import Grimoire
 from content.registry import (
     Fight,
@@ -94,7 +95,7 @@ def power_push(caster: Holder, target, fight: Fight) -> AttackResult | None:
         modifier=2,
         is_critical=attack_roll.is_critical,
     )
-    marked = target.take_damage(damage_roll.total)
+    marked = target.take_damage(damage_roll.total, fight, damage_type=DamageType.MAGIC)
     fight.note(f"{caster.name} casts Power Push at {target.name}")
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
@@ -131,7 +132,10 @@ def ice_spike(caster: Holder, target, fight: Fight) -> AttackResult | None:
         + total_extra_damage(caster, target, attack_roll, fight),
         is_critical=attack_roll.is_critical,
     )
-    marked = target.take_damage(damage_roll.total)
+    # Physical, unusually for a Codex spell - the card says so, and it is the one
+    # place a magic-resistant adversary would notice the difference between the
+    # Book of Ava's two attack spells.
+    marked = target.take_damage(damage_roll.total, fight, damage_type=DamageType.PHYSICAL)
     fight.note(f"{caster.name} strikes {target.name} with an Ice Spike")
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
@@ -229,7 +233,7 @@ def arcane_barrage(caster: Holder, fight: Fight) -> bool:
     caster.spend_hope(spend)
     damage = roll_damage(dice_groups=[DiceGroup(count=spend, sides=6)])
     target = max(targets, key=lambda adversary: adversary.hp_marked)
-    target.take_damage(damage.total)
+    target.take_damage(damage.total, fight, damage_type=DamageType.MAGIC)
     fight.note(
         f"{caster.name} spends {spend} Hope on an Arcane Barrage, "
         f"hitting {target.name} for {damage.total}"

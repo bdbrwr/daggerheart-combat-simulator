@@ -300,62 +300,74 @@ def test_whirlwind_costs_nothing_without_the_hope_for_it():
 # in tests/ may never depend on how a die landed.
 
 
-def _spread_roll_fires(low: int, high: int) -> int:
-    """A `randint` that always rolls the top of its range - the 1-in-N case."""
-    return high
+def _spread_roll_fires() -> float:
+    """A draw that always lands in the **first** outcome - the 1-in-N case.
+
+    `targets_reached` draws one `random.random()` and walks `reach_outcomes` in
+    order, and every band lists its one-in-N case first - Far falling short, Close
+    held to its cap, Very Close spreading past it, Melee bunching. So a draw of
+    zero selects that case whatever N is, and these tests never have to know each
+    band's odds to control it.
+
+    **Patch `random.random`, not `randint`.** The band rules were rewritten to
+    draw once from `reach_outcomes` rather than rolling a die per band, and these
+    helpers still patched `randint` afterwards - so they silently controlled
+    nothing and the cases below were reading real random draws.
+    """
+    return 0.0
 
 
-def _spread_roll_does_not(low: int, high: int) -> int:
-    """A `randint` that always rolls the bottom - the ordinary case."""
-    return low
+def _spread_roll_does_not() -> float:
+    """A draw that always lands in the last outcome - the ordinary case."""
+    return 0.999
 
 
 def test_far_reaches_everyone_unless_the_field_is_strung_out():
-    with patch("content.aoe.random.randint", _spread_roll_does_not):
+    with patch("content.aoe.random.random", _spread_roll_does_not):
         assert targets_reached(Range.FAR, 5) == 5
-    with patch("content.aoe.random.randint", _spread_roll_fires):
+    with patch("content.aoe.random.random", _spread_roll_fires):
         assert targets_reached(Range.FAR, 5) == 4
 
 
 def test_close_never_reaches_everyone():
     """True on either branch: the base is bounded by n-1 and capping only lowers it."""
     for roll in (_spread_roll_fires, _spread_roll_does_not):
-        with patch("content.aoe.random.randint", roll):
+        with patch("content.aoe.random.random", roll):
             for count in range(2, 12):
                 assert targets_reached(Range.CLOSE, count) < count
 
 
 def test_close_is_three_quarters_until_the_cap_bites():
-    with patch("content.aoe.random.randint", _spread_roll_does_not):
+    with patch("content.aoe.random.random", _spread_roll_does_not):
         assert targets_reached(Range.CLOSE, 8) == 6
-    with patch("content.aoe.random.randint", _spread_roll_fires):
+    with patch("content.aoe.random.random", _spread_roll_fires):
         assert targets_reached(Range.CLOSE, 8) == 3
 
     # At four the base is already the cap, so the roll changes nothing.
     for roll in (_spread_roll_fires, _spread_roll_does_not):
-        with patch("content.aoe.random.randint", roll):
+        with patch("content.aoe.random.random", roll):
             assert targets_reached(Range.CLOSE, 4) == 3
 
 
 def test_very_close_is_held_to_two_unless_the_field_spreads():
     # The spread is the *one-in-ten*, so firing the roll is the rare case that
     # lets the full third through - the opposite way round from the other bands.
-    with patch("content.aoe.random.randint", _spread_roll_fires):
+    with patch("content.aoe.random.random", _spread_roll_fires):
         assert targets_reached(Range.VERY_CLOSE, 9) == 3
-    with patch("content.aoe.random.randint", _spread_roll_does_not):
+    with patch("content.aoe.random.random", _spread_roll_does_not):
         assert targets_reached(Range.VERY_CLOSE, 9) == 2
 
     # At four a third is 1, under the cap either way.
     for roll in (_spread_roll_fires, _spread_roll_does_not):
-        with patch("content.aoe.random.randint", roll):
+        with patch("content.aoe.random.random", roll):
             assert targets_reached(Range.VERY_CLOSE, 4) == 1
 
 
 def test_melee_reaches_one_fewer_unless_they_are_bunched():
-    with patch("content.aoe.random.randint", _spread_roll_fires):
+    with patch("content.aoe.random.random", _spread_roll_fires):
         assert targets_reached(Range.MELEE, 4) == 2
         assert targets_reached(Range.MELEE, MANY_ADVERSARIES) == 3
-    with patch("content.aoe.random.randint", _spread_roll_does_not):
+    with patch("content.aoe.random.random", _spread_roll_does_not):
         assert targets_reached(Range.MELEE, 4) == 1
         assert targets_reached(Range.MELEE, MANY_ADVERSARIES) == 2
 
@@ -368,16 +380,29 @@ def test_melee_reaches_one_fewer_unless_they_are_bunched():
 # positions tracked the band's share of the field stands in for it.
 
 
-def test_far_always_reaches_a_named_combatant():
-    assert chance_within(Range.FAR, 4) == 1.0
+def test_far_nearly_always_reaches_a_named_combatant():
+    """Not a certainty any more, and that is the point of the shared definition.
+
+    Far used to carry a hand-written share of 1.0 beside a rolled count that
+    could fall one short - two numbers for one rule, which disagreed the moment
+    the spread rolls were added. Now the share *is* the count's expectation: Far
+    reaches 3 a quarter of the time and 4 otherwise, so any one of the four is
+    inside it 3.75/4 of the time.
+    """
+    assert chance_within(Range.FAR, 4) == pytest.approx(3.75 / 4)
 
 
 def test_close_is_three_quarters_as_odds_too():
     assert chance_within(Range.CLOSE, 4) == 0.75
 
 
-def test_very_close_is_a_third_as_odds_too():
-    assert chance_within(Range.VERY_CLOSE, 9) == pytest.approx(1 / 3)
+def test_very_close_is_held_below_a_third_as_odds_too():
+    """The cap reaches the odds too, which the old hand-written 1/3 ignored.
+
+    Nine combatants put a third at 3, but VERY_CLOSE_CAP holds it to 2 in nine
+    cases out of ten - so the expectation is 2.1, not 3.
+    """
+    assert chance_within(Range.VERY_CLOSE, 9) == pytest.approx(2.1 / 9)
 
 
 def test_melee_odds_come_from_the_field_size():
@@ -396,9 +421,9 @@ def test_melee_odds_come_from_the_field_size():
 
 def test_melee_odds_do_not_move_when_the_spread_roll_does():
     """The tell that this is an expectation rather than a sample."""
-    with patch("content.aoe.random.randint", _spread_roll_fires):
+    with patch("content.aoe.random.random", _spread_roll_fires):
         fired = chance_within(Range.MELEE, 4)
-    with patch("content.aoe.random.randint", _spread_roll_does_not):
+    with patch("content.aoe.random.random", _spread_roll_does_not):
         did_not = chance_within(Range.MELEE, 4)
 
     assert fired == did_not

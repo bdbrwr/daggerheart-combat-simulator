@@ -282,10 +282,21 @@ def test_luckbender_is_already_spent_in_a_no_rest_encounter():
     assert faerie.hope_marked == 6
 
 
+def _party_around(faerie: PlayerCharacter, ally: PlayerCharacter) -> list:
+    """A four-PC party, which is the size the range question is meaningful at.
+
+    The field Close is measured over is **the rest of the party**, so with only
+    one other PC the band's own "never all of them" rule leaves nothing for it to
+    reach and the odds collapse. Four PCs put three allies on the field, where
+    Close reaches two - the 2/3 these cases are pinned either side of.
+    """
+    return [faerie, ally, _make_pc("Bran"), _make_pc("Cass")]
+
+
 def test_an_allys_roll_is_rescued_when_they_are_within_close_range():
     faerie = _faerie()
     ally = _make_pc("Artorias")
-    fight = _fight([faerie, ally])
+    fight = _fight(_party_around(faerie, ally))
 
     with patch("features.ancestries.random.random", return_value=0.0):
         replacement = luckbender(faerie, ally, _failed(), _remake_duality, fight)
@@ -295,10 +306,10 @@ def test_an_allys_roll_is_rescued_when_they_are_within_close_range():
 
 
 def test_an_ally_out_of_close_range_is_not_rescued():
-    """Close covers three quarters of the field, so 0.99 falls outside it."""
+    """Close reaches two of three allies, so 0.99 falls outside it."""
     faerie = _faerie()
     ally = _make_pc("Artorias")
-    fight = _fight([faerie, ally])
+    fight = _fight(_party_around(faerie, ally))
 
     with patch("features.ancestries.random.random", return_value=0.99):
         assert luckbender(faerie, ally, _failed(), _remake_duality, fight) is None

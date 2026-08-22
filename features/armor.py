@@ -48,9 +48,14 @@ def _severity(amount: int, major: int, severe: int) -> int:
 
 
 @severity_response(qualified(ARMOR, "Reinforced"))
-def reinforced(wearer: Holder, amount: int, hp_to_mark: int, fight=None) -> int:
+def reinforced(
+    wearer: Holder, amount: int, hp_to_mark: int, fight=None, damage_type=None
+) -> int:
     """*Reinforced*: when you mark your last Armor Slot, increase your damage
     thresholds by +2 until you clear at least 1 Armor Slot.
+
+    `damage_type` is ignored: raised thresholds are raised against everything,
+    and the feature names no type.
 
     Expressed as a severity response rather than as a change to the character's
     thresholds, because thresholds are read once when damage lands and this is

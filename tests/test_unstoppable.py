@@ -12,6 +12,7 @@ from characters.player_character import PlayerCharacter
 from combat.rest import Rest
 from combat.state import FightState
 from content.conditions import RESTRAINED, VULNERABLE
+from content.damage_types import DamageType
 from features.classes import (
     UNSTOPPABLE,
     unstoppable,
@@ -20,6 +21,10 @@ from features.classes import (
     unstoppable_immunities,
     unstoppable_reduces_severity,
 )
+
+# Unstoppable and Iron Will are both physical-only on the page, so nearly every
+# case here has to state a type. Aliased so the assertions stay readable.
+PHYSICAL = DamageType.PHYSICAL
 
 
 def _guardian(level: int = 1, hp_marked: int = 1) -> PlayerCharacter:
@@ -126,8 +131,8 @@ def test_severity_drops_by_one_threshold_while_running():
     fight = _fight(guardian)
     unstoppable(guardian, fight)
 
-    assert unstoppable_reduces_severity(guardian, 20, 3, fight) == 2
-    assert unstoppable_reduces_severity(guardian, 8, 2, fight) == 1
+    assert unstoppable_reduces_severity(guardian, 20, 3, fight, PHYSICAL) == 2
+    assert unstoppable_reduces_severity(guardian, 8, 2, fight, PHYSICAL) == 1
 
 
 def test_severity_floors_at_zero():
@@ -136,22 +141,40 @@ def test_severity_floors_at_zero():
     fight = _fight(guardian)
     unstoppable(guardian, fight)
 
-    assert unstoppable_reduces_severity(guardian, 3, 1, fight) == 0
-    assert unstoppable_reduces_severity(guardian, 3, 0, fight) == 0
+    assert unstoppable_reduces_severity(guardian, 3, 1, fight, PHYSICAL) == 0
+    assert unstoppable_reduces_severity(guardian, 3, 0, fight, PHYSICAL) == 0
+
+
+def test_magic_damage_is_untouched_even_while_running():
+    """"When you take physical damage" - the restriction the page prints."""
+    guardian = _guardian()
+    fight = _fight(guardian)
+    unstoppable(guardian, fight)
+
+    assert unstoppable_reduces_severity(guardian, 20, 3, fight, DamageType.MAGIC) == 3
+
+
+def test_untyped_damage_is_untouched_even_while_running():
+    """Untyped matches no restriction, so an unauthored type can only cost less."""
+    guardian = _guardian()
+    fight = _fight(guardian)
+    unstoppable(guardian, fight)
+
+    assert unstoppable_reduces_severity(guardian, 20, 3, fight) == 3
 
 
 def test_severity_is_untouched_when_not_unstoppable():
     guardian = _guardian()
     fight = _fight(guardian)
 
-    assert unstoppable_reduces_severity(guardian, 20, 3, fight) == 3
+    assert unstoppable_reduces_severity(guardian, 20, 3, fight, PHYSICAL) == 3
 
 
 def test_severity_is_untouched_without_a_fight_to_read_state_from():
     """Damage can resolve outside a fight; the feature declines rather than raising."""
     guardian = _guardian()
 
-    assert unstoppable_reduces_severity(guardian, 20, 3, None) == 3
+    assert unstoppable_reduces_severity(guardian, 20, 3, None, PHYSICAL) == 3
 
 
 def test_damage_bonus_is_the_current_die_value():

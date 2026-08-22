@@ -48,6 +48,7 @@ from content import (
     granted_attack_advantage,
     hope_die_for,
     is_immune_to,
+    skips_spotlight,
     standard_attack_area,
     total_damage_bonus,
     total_roll_bonus,
@@ -364,6 +365,15 @@ def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult
     # the Snake is up. Asked first, so it happens whatever the adversary then
     # does, and it neither competes for the action nor consumes it.
     apply_on_spotlight(adversary, state)
+
+    # Content that spends the activation on nothing at all - the Green Ooze's
+    # Slow, which prepares on one spotlight and acts on the next. Asked after the
+    # riders above, because the SRD's trigger for those is being *in* the
+    # spotlight and the Ooze is: it simply can't act once it is there. The Fear
+    # the activation cost has already been charged by the GM turn, which is the
+    # whole weight of the feature.
+    if skips_spotlight(adversary, state):
+        return None
 
     target = choose_adversary_target(adversary, state)
     if target is None:

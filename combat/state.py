@@ -204,6 +204,33 @@ class FightState:
         """
         self.adversaries.append(adversary)
 
+    def remove(self, adversary: Adversary) -> None:
+        """Take an adversary out of the fight **without** defeating it.
+
+        The mirror of `summon`, and the Green Ooze's *Split* is why it exists:
+        the Ooze becomes two Tiny Green Oozes, so it leaves the field at a moment
+        when the party is worse off than before, not better.
+
+        Marking its HP would have done the same job to the loop - everything asks
+        `is_defeated` - and told a lie to the reader. A play-by-play saying "the
+        Green Ooze is defeated" as the field doubles reads as a win, and any
+        future statistic counting adversaries defeated would have counted it.
+
+        Nothing else changes. The removed adversary is not in `living_adversaries`
+        so it can't be targeted or spotlighted, and it no longer counts toward
+        victory - which is right, since it isn't there. Stale entries it leaves in
+        the targeting memory and the token tables are harmless: both are keyed by
+        `id()` and nothing looks up a combatant that isn't on the field.
+
+        Its **conditions are not** harmless, which is why they are released here -
+        see `release_conditions_from`. A hold whose only printed way out is
+        something happening to this adversary can never end once it has left.
+        """
+        self.release_conditions_from(adversary)
+        self.adversaries = [
+            standing for standing in self.adversaries if standing is not adversary
+        ]
+
     # --- Conditions ----------------------------------------------------------
 
     def apply_condition(self, holder, condition: Condition) -> None:
@@ -230,6 +257,43 @@ class FightState:
 
     def clear_condition(self, holder, name: str) -> None:
         self.conditions.pop((id(holder), name), None)
+
+    def release_conditions_from(self, source) -> list[str]:
+        """End the conditions `source` applied that **only `source`** could end.
+
+        Called whenever an adversary leaves the fight, by either route: defeated,
+        or removed outright by something like the Green Ooze's *Split*.
+
+        The discriminator is a condition with a `source` and **no `end` of its
+        own**. Such a condition is written to be lifted by something happening to
+        whoever applied it - Envelop ends when the Ooze takes Severe damage, Grab
+        and Drag when the Defender does - and once that adversary is off the
+        field it can never take any damage again. Without this the condition
+        would sit on the PC for the rest of the fight with no way out, which is
+        harsher than anything the SRD prints.
+
+        **A condition that carries its own `end` is left alone**, and that is the
+        important half. The Minor Chaos Elemental's Sickening Flux makes a PC
+        Vulnerable "until their next rest or they clear a HP" - it names its own
+        exit, so killing the Elemental must not cure it. Same for the holds that
+        offer an escape roll: a PC Restrained by a dead Bear can still roll out,
+        and nothing is stranded.
+
+        Returns the names lifted, so a caller can report them.
+        """
+        released: list[str] = []
+        for holder in [*self.party, *self.adversaries]:
+            for (holder_id, name), condition in list(self.conditions.items()):
+                if holder_id != id(holder):
+                    continue
+                if condition.source is not source or condition.end is not None:
+                    continue
+                self.clear_condition(holder, name)
+                self.note(
+                    f"{holder.name} is no longer {name} - {source.name} is gone"
+                )
+                released.append(name)
+        return released
 
     def expire_conditions(self, holder, moment: str) -> list[str]:
         """Offer every condition on `holder` the chance to end; return those that did.

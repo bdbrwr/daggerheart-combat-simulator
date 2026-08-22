@@ -25,6 +25,7 @@ from characters.player_character import PlayerCharacter
 from combat.results import AttackResult
 from combat.state import FightState
 from content.aoe import Range
+from content.damage_types import DamageType
 from content.conditions import (
     BEFORE_AN_ACTION_ROLL,
     ON_A_GM_TURN,
@@ -49,8 +50,8 @@ from content.registry import (
 )
 from dice.common import AdvantageState
 from dice.d20 import D20RollResult
-from dice.damage import DiceGroup
-from dice.duality import DualityRollResult
+from dice.damage import DamageRollResult, DiceGroup
+from dice.duality import DualityOutcome, DualityRollResult
 from features.adversaries import (
     acid_bath,
     bite,
@@ -119,6 +120,10 @@ def _adversary(name: str = "Thing", features=(), **overrides) -> Adversary:
         attack_modifier=2,
         damage_dice=[DiceGroup(count=1, sides=8)],
         damage_modifier=2,
+        # Every real stat block prints one, and an untyped attack now means a
+        # type restriction can never fire - so the default here mirrors the
+        # catalogue rather than leaving test damage in a state no page has.
+        damage_type="physical",
         features=list(features),
     )
     defaults.update(overrides)
@@ -252,22 +257,55 @@ def test_a_dismissal_carries_its_reason():
 
 def test_weak_structure_adds_an_hp_to_a_hit_that_marked_one():
     construct = _adversary("Construct", features=["Weak Structure"])
-    assert weak_structure(construct, amount=9, hp_to_mark=2) == 3
+    assert (
+        weak_structure(
+            construct, amount=9, hp_to_mark=2, damage_type=DamageType.PHYSICAL
+        )
+        == 3
+    )
 
 
 def test_weak_structure_adds_nothing_to_a_hit_that_marked_nothing():
     """"When the Construct marks HP" - a hit softened away marked none."""
     construct = _adversary("Construct", features=["Weak Structure"])
-    assert weak_structure(construct, amount=9, hp_to_mark=0) == 0
+    assert (
+        weak_structure(
+            construct, amount=9, hp_to_mark=0, damage_type=DamageType.PHYSICAL
+        )
+        == 0
+    )
+
+
+def test_weak_structure_leaves_magic_damage_alone():
+    """"From physical damage" - the restriction the page prints."""
+    construct = _adversary("Construct", features=["Weak Structure"])
+    assert (
+        weak_structure(construct, amount=9, hp_to_mark=2, damage_type=DamageType.MAGIC)
+        == 2
+    )
+
+
+def test_weak_structure_leaves_untyped_damage_alone():
+    """Untyped damage matches no restriction, so a gap costs nothing extra."""
+    construct = _adversary("Construct", features=["Weak Structure"])
+    assert weak_structure(construct, amount=9, hp_to_mark=2) == 2
 
 
 def test_weak_structure_reaches_the_construct_through_dispatch():
     construct = _adversary("Construct", features=["Weak Structure"])
-    assert harden_damage(construct, amount=9, hp_to_mark=1) == 2
+    assert (
+        harden_damage(
+            construct, amount=9, hp_to_mark=1, damage_type=DamageType.PHYSICAL
+        )
+        == 2
+    )
 
 
 def test_an_adversary_without_it_takes_the_hit_unchanged():
-    assert harden_damage(_adversary(), amount=9, hp_to_mark=1) == 1
+    assert (
+        harden_damage(_adversary(), amount=9, hp_to_mark=1, damage_type=DamageType.PHYSICAL)
+        == 1
+    )
 
 
 # --- Bone Breaker and direct damage -----------------------------------------
@@ -862,15 +900,20 @@ def test_grab_and_drag_declines_when_the_gm_has_no_fear():
 # Whether the pack converges on one target is the Melee band's answer, and that
 # band is rolled - two wolves come together about half the time. So the spread
 # roll is pinned here rather than sampled, the same way tests/test_hooks.py pins
-# it: a roll of the top of the range means bunched, the bottom means scattered.
+# it.
+#
+# `targets_reached` draws one `random.random()` and walks `reach_outcomes` in
+# order, and Melee lists its bunched case first - so a draw of zero is bunched
+# and a draw near one is scattered. These used to patch `randint`, which the band
+# rules stopped using when they moved to a single draw, and so pinned nothing.
 
 
 def _bunched():
-    return patch("content.aoe.random.randint", lambda low, high: high)
+    return patch("content.aoe.random.random", lambda: 0.0)
 
 
 def _scattered():
-    return patch("content.aoe.random.randint", lambda low, high: low)
+    return patch("content.aoe.random.random", lambda: 0.999)
 
 
 def _wolf(**overrides) -> Adversary:
@@ -1936,13 +1979,19 @@ def test_rally_guards_declines_without_the_fear():
 def _all_in_range():
     """Pin the spread roll so Far reaches the whole field.
 
-    Worth knowing what this does beyond the band: `content.aoe.random` *is* the
-    `random` module, so pinning it pins every unpatched die in the test - which
-    is why the volley's own roller has to be patched alongside it, and patched
-    where the feature calls it (`features.adversaries.roll_d20`) rather than
-    where an ordinary adversary attack does.
+    Far lists its one-in-four "falls short" case *first* in `reach_outcomes`, so
+    a draw near one selects the other branch and everybody is in range. It used
+    to patch `randint`, which the band rules stopped using when they moved to a
+    single `random.random()` draw - so this pinned nothing and the volley's size
+    was a real random draw.
+
+    Worth knowing what it does beyond the band: `content.aoe.random` *is* the
+    `random` module, so pinning `random.random` pins that call everywhere - which
+    is why the volley's own roller is patched alongside it, and patched where the
+    feature calls it (`features.adversaries.roll_d20`) rather than where an
+    ordinary adversary attack does.
     """
-    return patch("content.aoe.random.randint", lambda low, high: low)
+    return patch("content.aoe.random.random", lambda: 0.999)
 
 
 def _archers_that_deal(flat: int, count: int) -> list[Adversary]:
@@ -2732,6 +2781,10 @@ def _elemental(**overrides) -> Adversary:
         attack_modifier=3,
         damage_dice=[DiceGroup(count=1, sides=12)],
         damage_modifier=6,
+        # Magic, unlike the fixture default - the Warp Blast is one of the two
+        # tier 1 attacks that is, and Magical Reflection reads it for the type
+        # its rebound deals.
+        damage_type="magic",
         range="Close",
     )
     defaults.update(overrides)
@@ -2852,6 +2905,701 @@ def test_magical_reflection_halves_downward_and_ignores_a_scratch():
     assert attacker.hp_marked == 1, "half of 1 rounds down to nothing"
 
 
-def test_arcane_form_is_left_unimplemented_rather_than_dismissed():
-    """Damage types *are* recorded on the catalogues, so this is a real gap."""
-    assert assess("adversary:Arcane Form").status is Status.UNIMPLEMENTED
+def test_arcane_form_is_modelled():
+    """It was the last unimplemented feature on any ported stat block.
+
+    Left as a real gap for as long as nothing read damage types - never
+    dismissed, because the catalogues recorded the types all along and a
+    dismissal would have claimed the effect had nothing here to touch.
+    """
+    assert assess("adversary:Arcane Form").status is Status.MODELLED
+
+
+def test_arcane_form_halves_magic_and_leaves_steel_alone():
+    """The whole point of the stat block: the answer to it is a weapon choice."""
+    elemental = _elemental()
+
+    assert elemental.take_damage(13, damage_type=DamageType.MAGIC) == 1
+    assert _elemental().take_damage(13, damage_type=DamageType.PHYSICAL) == 2
+
+
+# --- Batch 5: the Minor Fire Elemental ---------------------------------------
+#
+# Scorched Earth and Hellfire share `_flames`, so the three outcomes of the
+# Reaction Roll are pinned once here and Hellfire's own cases only check what is
+# different about it.
+
+
+def _fire_elemental(**overrides) -> Adversary:
+    """The printed Minor Fire Elemental: 9 HP, 3 Stress, a 1d10+4 blast at Far."""
+    defaults = dict(
+        features=[
+            "Relentless (2)",
+            "Scorched Earth",
+            "Explosion",
+            "Consume Kindling",
+            "Momentum",
+        ],
+        hp_max=9,
+        stress_max=3,
+        difficulty=13,
+        major_threshold=7,
+        severe_threshold=15,
+        attack_modifier=3,
+        damage_dice=[DiceGroup(count=1, sides=10)],
+        damage_modifier=4,
+        damage_type="magic",
+        range="Far",
+    )
+    defaults.update(overrides)
+    return _adversary("Minor Fire Elemental", **defaults)
+
+
+def _fixed_damage(total: int):
+    """Pin the shared damage roll `_flames` makes, so a save's half is exact."""
+    return patch(
+        "features.adversaries.roll_damage",
+        return_value=DamageRollResult(
+            dice_groups=[DiceGroup(count=1, sides=total)],
+            die_results=[[total]],
+            modifier=0,
+        ),
+    )
+
+
+def _burnable(**overrides):
+    """A party whose thresholds make 10, 5 and 0 damage read as 2, 1 and 0 HP."""
+    return _party(armor_max=0, major_threshold=6, severe_threshold=20, **overrides)
+
+
+def test_scorched_earth_burns_whoever_fails_the_reaction_roll():
+    from features.adversaries import scorched_earth
+
+    elemental = _fire_elemental()
+    fight = _fight(party=_burnable(), adversaries=[elemental])
+
+    with _fixed_damage(10), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        scorched_earth(elemental, fight.party[0], fight)
+
+    assert elemental.stress_marked == 1
+    hurt = [pc for pc in fight.party if pc.hp_marked]
+    assert hurt and all(pc.hp_marked == 2 for pc in hurt), "10 is Major here"
+
+
+def test_a_successful_reaction_roll_buys_half_rather_than_nothing():
+    """The new shape: every earlier save was a clean escape."""
+    from features.adversaries import scorched_earth
+
+    elemental = _fire_elemental()
+    fight = _fight(party=_burnable(), adversaries=[elemental])
+
+    with _fixed_damage(10), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        scorched_earth(elemental, fight.party[0], fight)
+
+    hurt = [pc for pc in fight.party if pc.hp_marked]
+    assert hurt and all(pc.hp_marked == 1 for pc in hurt), "half of 10 is below Major"
+
+
+def test_a_critical_reaction_roll_still_takes_nothing_at_all():
+    """"Half" and "nothing" come apart here, so the critical needs its own branch."""
+    from features.adversaries import scorched_earth
+
+    elemental = _fire_elemental()
+    fight = _fight(party=_burnable(), adversaries=[elemental])
+
+    with _fixed_damage(10), patch(
+        "features.adversaries.roll_duality",
+        return_value=_duality(succeeds=True, critical=True),
+    ):
+        scorched_earth(elemental, fight.party[0], fight)
+
+    assert not any(pc.hp_marked for pc in fight.party)
+
+
+def test_scorched_earth_declines_without_the_stress():
+    from features.adversaries import scorched_earth
+
+    elemental = _fire_elemental(stress_max=0)
+    fight = _fight(adversaries=[elemental])
+
+    assert scorched_earth(elemental, fight.party[0], fight) is None
+
+
+def test_explosion_spends_a_fear_and_sweeps_close_range():
+    from features.adversaries import explosion
+
+    elemental = _fire_elemental()
+    fight = _fight(party=_party(armor_max=0), adversaries=[elemental], fear=1)
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = explosion(elemental, fight.party[0], fight)
+
+    assert fight.fear == 0
+    assert result.damage_roll is not None
+    assert any(pc.hp_marked for pc in fight.party)
+
+
+def test_explosion_declines_without_the_fear():
+    from features.adversaries import explosion
+
+    elemental = _fire_elemental()
+    fight = _fight(adversaries=[elemental], fear=0)
+
+    assert explosion(elemental, fight.party[0], fight) is None
+
+
+def test_consume_kindling_clears_hp_first():
+    from features.adversaries import consume_kindling
+
+    elemental = _fire_elemental()
+    elemental.mark_hp(2)
+    elemental.mark_stress(1)
+    fight = _fight(adversaries=[elemental])
+
+    consume_kindling(elemental, fight)
+
+    assert elemental.hp_marked == 1
+    assert elemental.stress_marked == 1, "Stress waits until the HP track is clean"
+
+
+def test_consume_kindling_falls_through_to_stress():
+    from features.adversaries import consume_kindling
+
+    elemental = _fire_elemental()
+    elemental.mark_stress(2)
+    fight = _fight(adversaries=[elemental])
+
+    consume_kindling(elemental, fight)
+
+    assert elemental.stress_marked == 1
+
+
+def test_consume_kindling_spends_nothing_on_an_unhurt_elemental():
+    """A use is never wasted, so an untouched Elemental banks all three."""
+    from features.adversaries import CONSUME_KINDLING_USES, consume_kindling
+
+    elemental = _fire_elemental()
+    fight = _fight(adversaries=[elemental])
+
+    for _ in range(CONSUME_KINDLING_USES + 2):
+        consume_kindling(elemental, fight)
+
+    elemental.mark_hp(1)
+    consume_kindling(elemental, fight)
+
+    assert elemental.hp_marked == 0, "the uses were still there when it was hurt"
+
+
+def test_consume_kindling_runs_out_after_three():
+    from features.adversaries import CONSUME_KINDLING_USES, consume_kindling
+
+    elemental = _fire_elemental()
+    elemental.mark_hp(5)
+    fight = _fight(adversaries=[elemental])
+
+    for _ in range(CONSUME_KINDLING_USES + 3):
+        consume_kindling(elemental, fight)
+
+    assert elemental.hp_marked == 5 - CONSUME_KINDLING_USES
+
+
+# --- Batch 5: the Minor Demon -------------------------------------------------
+
+
+def _demon(**overrides) -> Adversary:
+    """The printed Minor Demon: 8 HP, 4 Stress, 1d8+6 claws at Melee."""
+    defaults = dict(
+        features=["Relentless (2)", "All Must Fall", "Hellfire", "Reaper", "Momentum"],
+        hp_max=8,
+        stress_max=4,
+        difficulty=14,
+        major_threshold=8,
+        severe_threshold=15,
+        attack_modifier=3,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=6,
+    )
+    defaults.update(overrides)
+    return _adversary("Minor Demon", **defaults)
+
+
+def _in_range():
+    """Pin the Close band so the PC is beside the Demon."""
+    return patch("features.adversaries.random.random", lambda: 0.0)
+
+
+def _out_of_range():
+    return patch("features.adversaries.random.random", lambda: 0.99)
+
+
+def _failed_with_fear() -> DualityRollResult:
+    """All Must Fall's exact trigger, which `_duality` can't build.
+
+    That helper rolls Hope 5 against Fear 4, so its failures are failures *with
+    Hope* - and this feature fires on neither a success nor a failure with Hope.
+    """
+    return DualityRollResult(
+        hope_die_result=2,
+        fear_die_result=6,
+        modifier=0,
+        advantage_state=AdvantageState.NONE,
+        advantage_die_result=None,
+        help_dice_results=None,
+        difficulty=100,
+    )
+
+
+def test_the_trigger_helper_really_is_a_failure_with_fear():
+    """Guards the three cases below, which all pass vacuously if this is wrong."""
+    roll = _failed_with_fear()
+
+    assert not roll.is_success
+    assert roll.outcome is DualityOutcome.FEAR
+
+
+def test_all_must_fall_costs_a_hope_on_a_failure_with_fear():
+    from features.adversaries import all_must_fall
+
+    demon = _demon()
+    fight = _fight(adversaries=[demon])
+    roller = fight.party[0]
+    roller.gain_hope(3)
+
+    with _in_range():
+        all_must_fall(demon, roller, _failed_with_fear(), fight)
+
+    assert roller.hope_marked == 2
+
+
+def test_all_must_fall_leaves_a_successful_roll_alone():
+    from features.adversaries import all_must_fall
+
+    demon = _demon()
+    fight = _fight(adversaries=[demon])
+    roller = fight.party[0]
+    roller.gain_hope(3)
+
+    with _in_range():
+        all_must_fall(demon, roller, _duality(succeeds=True), fight)
+
+    assert roller.hope_marked == 3
+
+
+def test_all_must_fall_does_not_reach_a_pc_out_of_range():
+    from features.adversaries import all_must_fall
+
+    demon = _demon()
+    fight = _fight(adversaries=[demon])
+    roller = fight.party[0]
+    roller.gain_hope(3)
+
+    with _out_of_range():
+        all_must_fall(demon, roller, _failed_with_fear(), fight)
+
+    assert roller.hope_marked == 3
+
+
+def test_all_must_fall_takes_nothing_from_a_pc_with_no_hope():
+    from features.adversaries import all_must_fall
+
+    demon = _demon()
+    fight = _fight(adversaries=[demon])
+    roller = fight.party[0]
+
+    with _in_range():
+        all_must_fall(demon, roller, _failed_with_fear(), fight)
+
+    assert roller.hope_marked == 0
+
+
+def test_hellfire_spends_a_fear_and_reaches_the_whole_field():
+    from features.adversaries import hellfire
+
+    demon = _demon()
+    fight = _fight(party=_burnable(), adversaries=[demon], fear=1)
+
+    with _fixed_damage(10), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        hellfire(demon, fight.party[0], fight)
+
+    assert fight.fear == 0
+    # Far reaches everyone or all but one, and every one of them failed.
+    assert sum(1 for pc in fight.party if pc.hp_marked) >= len(fight.party) - 1
+
+
+def test_reaper_adds_the_demons_own_marked_hp():
+    from features.adversaries import reaper
+
+    demon = _demon()
+    demon.mark_hp(5)
+    fight = _fight(adversaries=[demon])
+
+    assert reaper(demon, fight.party[0], fight) == 5
+    assert demon.stress_marked == 1
+
+
+def test_reaper_keeps_its_stress_while_the_demon_is_unhurt():
+    """The ruled general qualifier: a Reaction buying nothing is not taken."""
+    from features.adversaries import reaper
+
+    demon = _demon()
+    fight = _fight(adversaries=[demon])
+
+    assert reaper(demon, fight.party[0], fight) == 0
+    assert demon.stress_marked == 0
+
+
+def test_reaper_declines_when_the_stress_is_gone():
+    from features.adversaries import reaper
+
+    demon = _demon(stress_max=0)
+    demon.mark_hp(5)
+    fight = _fight(adversaries=[demon])
+
+    assert reaper(demon, fight.party[0], fight) == 0
+
+
+# --- Batch 5: the Minor Treant ------------------------------------------------
+
+
+def test_the_minor_treant_needed_no_new_code():
+    """Both features were written generically in batch 2, like the Lackey's."""
+    assert assess("adversary:Minion (5)").status is Status.MODELLED
+    assert assess("adversary:Group Attack").status is Status.MODELLED
+
+
+def test_the_treants_minion_number_is_read_off_its_own_stat_block():
+    treant = _adversary("Minor Treant", features=["Minion (5)", "Group Attack"])
+
+    assert feature_parameter(treant, "adversary:Minion") == "5"
+
+
+# --- Batch 5: the Oozes -------------------------------------------------------
+
+
+def _green_ooze(**overrides) -> Adversary:
+    """The printed Green Ooze: 5 HP, 2 Stress, 1d6+1 at Melee, Difficulty 8."""
+    defaults = dict(
+        features=["Slow", "Acidic Form", "Envelop", "Split"],
+        hp_max=5,
+        stress_max=2,
+        difficulty=8,
+        major_threshold=5,
+        severe_threshold=10,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=6)],
+        damage_modifier=1,
+        damage_type="magic",
+    )
+    defaults.update(overrides)
+    return _adversary("Green Ooze", **defaults)
+
+
+def test_slow_spends_the_first_spotlight_and_acts_on_the_second():
+    from content.registry import skips_spotlight
+
+    ooze = _green_ooze()
+    fight = _fight(adversaries=[ooze])
+
+    assert skips_spotlight(ooze, fight) is True, "the first spotlight is always lost"
+    assert skips_spotlight(ooze, fight) is False
+    assert skips_spotlight(ooze, fight) is True, "and it alternates from there"
+
+
+def test_a_slow_adversary_takes_no_action_on_the_spotlight_it_loses():
+    """Through the loop, since the whole point is that the activation is spent."""
+    from combat.policy import take_adversary_turn
+
+    ooze = _green_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        assert take_adversary_turn(ooze, fight) is None
+        assert not any(pc.hp_marked for pc in fight.party)
+
+        assert take_adversary_turn(ooze, fight) is not None
+
+
+def test_an_adversary_without_slow_acts_every_time():
+    from content.registry import skips_spotlight
+
+    fight = _fight()
+
+    assert skips_spotlight(_adversary(), fight) is False
+
+
+def test_acidic_form_burns_an_armor_slot():
+    from features.adversaries import acidic_form
+
+    ooze = _green_ooze()
+    fight = _fight(party=_party(armor_max=2), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = ooze.attack(target, fight=fight)
+    marked_by_the_hit = target.armor_marked
+
+    acidic_form(ooze, target, result, fight)
+
+    assert target.armor_marked == marked_by_the_hit + 1
+
+
+def test_acidic_form_costs_an_hp_when_there_is_no_armor_left():
+    from features.adversaries import acidic_form
+
+    ooze = _green_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = ooze.attack(target, fight=fight)
+    before = target.hp_marked
+
+    acidic_form(ooze, target, result, fight)
+
+    assert target.hp_marked == before + 1
+
+
+def test_acidic_form_does_nothing_on_a_miss():
+    from features.adversaries import acidic_form
+
+    ooze = _green_ooze()
+    fight = _fight(party=_party(armor_max=2), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(1)):
+        result = ooze.attack(target, fight=fight)
+
+    acidic_form(ooze, target, result, fight)
+
+    assert target.armor_marked == 0
+
+
+def test_envelop_costs_two_stress_and_then_one_per_action_roll():
+    from features.adversaries import ENVELOP_STRESS, ENVELOPED, envelop
+
+    ooze = _green_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        envelop(ooze, target, fight)
+
+    assert target.stress_marked == ENVELOP_STRESS
+    assert fight.has_condition(target, ENVELOPED)
+
+    fight.apply_condition_effects(target, BEFORE_AN_ACTION_ROLL)
+    assert target.stress_marked == ENVELOP_STRESS + 1
+
+
+def test_being_enveloped_costs_nothing_at_a_moment_it_does_not_name():
+    from features.adversaries import ENVELOP_STRESS, envelop
+
+    ooze = _green_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        envelop(ooze, target, fight)
+
+    fight.apply_condition_effects(target, ON_A_GM_TURN)
+
+    assert target.stress_marked == ENVELOP_STRESS
+
+
+def test_severe_damage_to_the_ooze_frees_whoever_it_swallowed():
+    from features.adversaries import ENVELOPED, envelop, envelop_releases
+
+    ooze = _green_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        envelop(ooze, target, fight)
+
+    envelop_releases(ooze, ooze.severe_threshold - 1, 1, fight)
+    assert fight.has_condition(target, ENVELOPED), "a lesser hit does not free them"
+
+    envelop_releases(ooze, ooze.severe_threshold, 3, fight)
+    assert not fight.has_condition(target, ENVELOPED)
+
+
+def test_envelop_deals_the_oozes_standard_damage():
+    """No dice of its own, so a standard-damage swap would reach it."""
+    from features.adversaries import envelop
+
+    ooze = _green_ooze(damage_dice=[DiceGroup(count=1, sides=4)], damage_modifier=10)
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = envelop(ooze, fight.party[0], fight)
+
+    assert result.damage_roll.total >= 11
+
+
+def test_split_replaces_the_ooze_with_two_tiny_ones():
+    from features.adversaries import SPLIT_COUNT, SPLIT_INTO, split
+
+    ooze = _green_ooze()
+    ooze.mark_hp(3)
+    fight = _fight(adversaries=[ooze], fear=1)
+
+    split(ooze, 4, 1, fight)
+
+    assert fight.fear == 0
+    # Identity, not equality: two spawned Tiny Green Oozes are equal dataclasses,
+    # so `in` would be answering a different question from the one asked.
+    assert all(a is not ooze for a in fight.adversaries), "it left the field"
+    assert not ooze.is_defeated, "and it was not defeated doing so"
+
+    tinies = [a for a in fight.living_adversaries if a.name == SPLIT_INTO]
+    assert len(tinies) == SPLIT_COUNT
+    assert all(tiny.hp_marked == 0 and tiny.stress_marked == 0 for tiny in tinies)
+    assert all(fight.granted_activations(tiny) == 1 for tiny in tinies)
+
+
+def test_splitting_frees_whoever_the_ooze_had_swallowed():
+    """Otherwise the hold could never end: its only way out is Severe damage to
+    an Ooze that is no longer on the field."""
+    from features.adversaries import ENVELOPED, envelop, split
+
+    ooze = _green_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze], fear=1)
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        envelop(ooze, target, fight)
+    assert fight.has_condition(target, ENVELOPED)
+
+    ooze.mark_hp(3)
+    split(ooze, 4, 1, fight)
+
+    assert not fight.has_condition(target, ENVELOPED)
+
+
+def test_killing_the_ooze_frees_whoever_it_had_swallowed():
+    """The case Split's own release didn't cover, and the common one.
+
+    Envelop's only printed way out is the Ooze taking Severe damage, but its
+    thresholds are 5/10 on a 5 HP track - so two Major hits kill it and Severe
+    never lands. Without a release the PC would keep marking a Stress on every
+    action roll for the rest of the fight, held by something that isn't there.
+    """
+    from features.adversaries import ENVELOPED, envelop
+
+    ooze = _green_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        envelop(ooze, target, fight)
+    assert fight.has_condition(target, ENVELOPED)
+
+    ooze.mark_hp(3)
+    assert fight.has_condition(target, ENVELOPED), "still standing, still holding"
+
+    # A Major hit, which marks the last 2 HP. Severe is 10, so the blow that
+    # kills it is nowhere near the one the page says would free the target.
+    ooze.take_damage(5, fight)
+
+    assert ooze.is_defeated
+    assert not fight.has_condition(target, ENVELOPED)
+
+    before = target.stress_marked
+    fight.apply_condition_effects(target, BEFORE_AN_ACTION_ROLL)
+    assert target.stress_marked == before, "and it stops costing them Stress"
+
+
+def test_a_condition_with_its_own_ender_survives_its_source_dying():
+    """The other half, and the reason this isn't just 'clear everything'.
+
+    Sickening Flux makes a PC Vulnerable "until their next rest or they clear a
+    HP". That names its own exit, so killing the Elemental must not cure it.
+    """
+    from features.adversaries import sickening_flux
+
+    elemental = _elemental()
+    fight = _fight(party=_party(armor_max=0), adversaries=[elemental])
+    sickening_flux(elemental, fight.party[0], fight)
+
+    caught = [pc for pc in fight.party if fight.has_condition(pc, VULNERABLE)][0]
+
+    elemental.mark_hp(elemental.hp_unmarked - 1)
+    elemental.take_damage(1, fight)
+
+    assert elemental.is_defeated
+    assert fight.has_condition(caught, VULNERABLE)
+
+
+def test_split_holds_until_three_hp_are_marked():
+    from features.adversaries import split
+
+    ooze = _green_ooze()
+    ooze.mark_hp(2)
+    fight = _fight(adversaries=[ooze], fear=2)
+
+    split(ooze, 4, 1, fight)
+
+    assert any(a is ooze for a in fight.adversaries)
+    assert fight.fear == 2
+
+
+def test_split_declines_without_the_fear():
+    from features.adversaries import split
+
+    ooze = _green_ooze()
+    ooze.mark_hp(3)
+    fight = _fight(adversaries=[ooze], fear=0)
+
+    split(ooze, 4, 1, fight)
+
+    assert any(a is ooze for a in fight.adversaries)
+
+
+def test_a_defeated_ooze_does_not_split():
+    """A Fear must not undo a kill."""
+    from features.adversaries import split
+
+    ooze = _green_ooze()
+    ooze.mark_hp(ooze.hp_max)
+    fight = _fight(adversaries=[ooze], fear=2)
+
+    split(ooze, 12, 3, fight)
+
+    assert fight.fear == 2
+    assert fight.adversaries_are_cleared
+
+
+def test_a_removed_adversary_is_gone_without_being_defeated():
+    """`remove` is the mirror of `summon`, and the distinction is the point."""
+    ooze = _green_ooze()
+    other = _adversary("Bystander")
+    fight = _fight(adversaries=[ooze, other])
+
+    fight.remove(ooze)
+
+    assert fight.living_adversaries == [other]
+    assert not ooze.is_defeated
+
+
+def test_the_tiny_ooze_carries_acidic_form_from_the_same_registration():
+    tiny = _adversary("Tiny Green Ooze", features=["Acidic Form"])
+
+    assert assess(tiny.named_features[0]).status is Status.MODELLED
+
+
+def test_a_mixed_threshold_reads_major_and_leaves_severe_out_of_reach():
+    """The Tiny Green Ooze prints '4/None', the catalogue's first mixed pair."""
+    from adversaries.registry import find_adversary
+
+    tiny = find_adversary("Tiny Green Ooze").spawn()
+
+    assert tiny.major_threshold == 4
+    assert tiny.severe_threshold == NO_THRESHOLD
+    assert tiny.take_damage(4) == 2, "Major, and that is the most anything can mark"
+    assert tiny.is_defeated

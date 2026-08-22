@@ -397,6 +397,96 @@
       "damage_type": "magic",
       "features": ["Arcane Form", "Sickening Flux", "Remake Reality", "Magical Reflection", "Momentum"],
       "notes": "Warp Blast: Close, 1d12+6 magic. No Experience printed. Arcane Form makes this the first adversary in the catalogue that is resistant to a damage type, so a party's weapon choices start to matter against it. Sickening Flux is the first feature whose cost is the adversary's own HP rather than Stress or Fear, and Magical Reflection the first that needs to know both who attacked and how hard. Momentum is already modelled."
+    },
+
+    {
+      "name": "Minor Fire Elemental",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 13,
+      "major_threshold": 7,
+      "severe_threshold": 15,
+      "hp_max": 9,
+      "stress_max": 3,
+      "attack_modifier": 3,
+      "range": "Far",
+      "damage_dice": "1d10",
+      "damage_modifier": 4,
+      "damage_type": "magic",
+      "features": ["Relentless (2)", "Scorched Earth", "Explosion", "Consume Kindling", "Momentum"],
+      "notes": "Elemental Blast: Far, 1d10+4 magic. No Experience printed. The largest tier 1 HP track so far at 9, and a Far standard attack, so the area rule rarely holds it back. Relentless (2) and Momentum are already modelled. Scorched Earth is the first feature where a successful Reaction Roll buys half damage rather than nothing."
+    },
+
+    {
+      "name": "Minor Demon",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 14,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 8,
+      "stress_max": 4,
+      "attack_modifier": 3,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 6,
+      "damage_type": "physical",
+      "features": ["Relentless (2)", "All Must Fall", "Hellfire", "Reaper", "Momentum"],
+      "notes": "Claws: Melee, 1d8+6 physical. No Experience printed. Relentless (2) and Momentum are already modelled. Reaper scales with the Demon's own wounds, so this stat block gets more dangerous exactly as the party wears it down - the opposite of the Horde's shape."
+    },
+
+    {
+      "name": "Minor Treant",
+      "tier": 1,
+      "type": "Minion",
+      "difficulty": 10,
+      "major_threshold": null,
+      "severe_threshold": null,
+      "hp_max": 1,
+      "stress_max": 1,
+      "attack_modifier": -2,
+      "range": "Melee",
+      "damage_dice": "",
+      "damage_modifier": 4,
+      "damage_type": "physical",
+      "features": ["Minion (5)", "Group Attack"],
+      "notes": "Clawed Branch: Melee, a flat 4 physical - no dice, so damage_dice is empty and the whole attack sits in damage_modifier, as the Giant Rat's and Jagged Knife Lackey's do. Thresholds print as 'None'. This entry needed no new code at all: Minion (X) reads its own 5 off this stat block and Group Attack was written for Minions in general, so the whole adversary came online with its JSON. A flat 4 apiece makes a Treant Group Attack the hardest-hitting swarm in tier 1."
+    },
+
+    {
+      "name": "Green Ooze",
+      "tier": 1,
+      "type": "Skulk",
+      "difficulty": 8,
+      "major_threshold": 5,
+      "severe_threshold": 10,
+      "hp_max": 5,
+      "stress_max": 2,
+      "attack_modifier": 1,
+      "range": "Melee",
+      "damage_dice": "1d6",
+      "damage_modifier": 1,
+      "damage_type": "magic",
+      "features": ["Slow", "Acidic Form", "Envelop", "Split"],
+      "notes": "Ooze Appendage: Melee, 1d6+1 magic. Experience: Camouflage +3. Difficulty 8 is the lowest in the catalogue and is checked against the printed page - the Tiny Green Ooze it splits into is *harder* to hit at 14, which looks inverted but is what the book prints. Slow is the first feature that spends an activation without acting, and Split the first that takes an adversary off the field without defeating it."
+    },
+
+    {
+      "name": "Tiny Green Ooze",
+      "tier": 1,
+      "type": "Skulk",
+      "difficulty": 14,
+      "major_threshold": 4,
+      "severe_threshold": null,
+      "hp_max": 2,
+      "stress_max": 1,
+      "attack_modifier": -1,
+      "range": "Melee",
+      "damage_dice": "1d4",
+      "damage_modifier": 1,
+      "damage_type": "magic",
+      "features": ["Acidic Form"],
+      "notes": "Ooze Appendage: Melee, 1d4+1 magic. No Experience printed. The first entry with a *mixed* threshold - the page prints '4/None', so a Major hit marks 2 HP off a 2 HP track and nothing can reach Severe. Difficulty 14 against the Green Ooze's 8 is what the book prints, checked against the page. Two of these are what a Green Ooze becomes when it Splits, so the catalogue needs both for that feature to work."
     }
   ]
 }

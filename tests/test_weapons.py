@@ -32,13 +32,23 @@ class FakeTarget:
     def __init__(self, difficulty: int = 10, features: list[str] | None = None):
         self.difficulty = difficulty
         self.damage_taken: list[int] = []
+        self.types_taken: list = []
         # Scanned for content that punishes being hit - the Glass Snake's
         # Armor-Shredding Shards. Empty by default so these stay about the
         # weapon; a test that wants such a feature passes it.
         self.named_features = features or []
 
-    def take_damage(self, amount: int, fight=None) -> int:
+    def take_damage(
+        self, amount: int, fight=None, direct: bool = False, damage_type=None
+    ) -> int:
+        """The full protocol signature, keywords and all.
+
+        `damage_type` is not optional decoration: `attack_with` types every hit
+        off the weapon, so a stand-in without it raises on any attack that lands
+        rather than on the thing under test.
+        """
         self.damage_taken.append(amount)
+        self.types_taken.append(damage_type)
         return amount
 
 
