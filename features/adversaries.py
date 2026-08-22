@@ -269,23 +269,47 @@ def weak_structure(
 # available - but it is invented, and it is a knob.
 
 
-def _reaction_roll(pc, trait: str, difficulty: int, fight=None):
-    """One PC's Reaction Roll against `difficulty`, using `trait`.
+def _reaction_roll(combatant, trait: str, difficulty: int, fight=None):
+    """One combatant's Reaction Roll against `difficulty`, using `trait`.
 
-    Not a wrapper around the roller - `roll_duality` is called here, at the site
-    that needs it, and this only works out the modifier and the state to roll in.
-    A PC whose sheet doesn't carry the trait rolls at +0 rather than failing to
-    roll, since every sheet carries all six and a missing one is a malformed
-    sheet rather than a rule.
+    **Both sides of the table make these, on different dice.** A PC rolls Duality
+    Dice plus the named trait, as they do for everything. An adversary rolls a
+    **flat d20 with no modifier**: stat blocks carry no traits, so there is
+    nothing to add and `trait` is only which roll the page called for.
 
-    A condition that hobbles this trait applies here as much as it does to an
+    Which one is chosen by whether the combatant has traits at all, rather than
+    by asking what kind of thing it is - the same duck-typing the damage hooks
+    already rely on, and it keeps this from importing either class.
+
+    Not a wrapper around a roller: `roll_duality` and `roll_d20` are each called
+    here, at the site that needs them, and this only works out the modifier and
+    the state to roll in. A PC whose sheet doesn't carry the trait rolls at +0
+    rather than failing to roll, since every sheet carries all six and a missing
+    one is a malformed sheet rather than a rule.
+
+    A condition that hobbles the trait applies here as much as it does to an
     attack - "disadvantage on Agility Rolls" covers the Agility Reaction Roll a
     PC makes to keep their feet - which is why `fight` is in the signature. It
-    stays optional so a reaction roll can still be made without one.
+    reaches only the duality branch, because a hobble names a trait and an
+    adversary has none. `fight` stays optional so a roll can be made without one.
+
+    Both result types answer `is_success` and `is_critical`, which is all any
+    caller reads - so a feature never has to know which side rolled.
+
+    The number this d20 is checked against is a **Difficulty**, and it is passed
+    into `roll_d20`'s `evasion` parameter. That is deliberate and ruled: the
+    parameter is named for the use it has almost everywhere - an attack against a
+    PC's Evasion - rather than renamed to something generic for the sake of this
+    one caller. It is a number to beat either way, and the alternative traded a
+    clear name at dozens of call sites for a vague one.
     """
-    disadvantaged = fight is not None and fight.disadvantaged_on(pc, trait)
+    traits = getattr(combatant, "traits", None)
+    if traits is None:
+        return roll_d20(modifier=0, evasion=difficulty)
+
+    disadvantaged = fight is not None and fight.disadvantaged_on(combatant, trait)
     return roll_duality(
-        modifier=pc.traits.get(trait, 0),
+        modifier=traits.get(trait, 0),
         difficulty=difficulty,
         advantage_state=(
             AdvantageState.DISADVANTAGE if disadvantaged else AdvantageState.NONE
@@ -320,7 +344,11 @@ def _breaks_free(
     """
 
     def ended(holder, fight, moment: str) -> bool:
-        trait = max(traits, key=lambda name: holder.traits.get(name, 0))
+        # The best of the traits offered, since the player would choose. An
+        # adversary has none and rolls a flat d20, so any of them names the same
+        # roll and the first will do.
+        carried = getattr(holder, "traits", {})
+        trait = max(traits, key=lambda name: carried.get(name, 0))
         if not _reaction_roll(holder, trait, difficulty, fight).is_success:
             return False
         for name in also_clear:
@@ -372,18 +400,16 @@ def _burn_an_armor_slot(pc, fight) -> bool:
     return False
 
 
-# SIMULATION RULE - ruled. **Only PCs make Reaction Rolls; adversaries never do.**
-# Several SRD features say "all *creatures* within this area must make an Agility
-# Reaction Roll", which on the page catches the adversary's own allies too - the
-# Minor Fire Elemental's Scorched Earth and the Minor Demon's Hellfire are the
-# first. Here such a feature reaches only the party, and that is the intended
-# behaviour rather than a gap: an adversary carries no traits for a Reaction Roll
-# to be made against.
+# RULED. **Both sides make Reaction Rolls** - see `_reaction_roll` for the dice.
+# So a feature that calls for one reaches whoever the printed text says it
+# reaches, allies included, and they get a real chance to save.
 #
-# It does *not* generalise to every area feature. The Acid Burrower's Acid Bath
-# deliberately splashes other adversaries, because it deals damage with no roll
-# involved and leaving them out would flatter it. The Reaction Roll is the
-# distinction, not the word "creatures".
+# **Read the printed noun, because the SRD alternates it deliberately.** "All
+# *creatures*" includes the acting adversary's own side; "all *targets*" is the
+# party only. Scorched Earth says creatures and Hellfire, two stat blocks later,
+# says targets - both in the same batch, which is what makes the distinction hard
+# to put down to loose wording. Each feature therefore builds its own field and
+# hands it here; nothing about that decision lives in this helper.
 
 
 def _flames(adversary, fight, caught: list, dice, modifier: int, damage_type):
@@ -409,8 +435,8 @@ def _flames(adversary, fight, caught: list, dice, modifier: int, damage_type):
     spent, but nothing rolled to hit anybody.
     """
     damage = roll_damage(dice_groups=dice, modifier=modifier)
-    for pc in caught:
-        roll = _reaction_roll(pc, "agility", adversary.difficulty, fight)
+    for creature in caught:
+        roll = _reaction_roll(creature, "agility", adversary.difficulty, fight)
         if roll.is_critical:
             dealt = 0
         elif roll.is_success:
@@ -418,11 +444,11 @@ def _flames(adversary, fight, caught: list, dice, modifier: int, damage_type):
         else:
             dealt = damage.total
         if dealt <= 0:
-            fight.note(f"{pc.name} is untouched by the flames ({roll})")
+            fight.note(f"{creature.name} is untouched by the flames ({roll})")
             continue
-        pc.take_damage(dealt, fight, damage_type=damage_type)
-        caught_or_shielded = "shields themselves for" if roll.is_success else "is caught for"
-        fight.note(f"{pc.name} {caught_or_shielded} {dealt}")
+        creature.take_damage(dealt, fight, damage_type=damage_type)
+        shielded = "shields themselves for" if roll.is_success else "is caught for"
+        fight.note(f"{creature.name} {shielded} {dealt}")
     return AttackResult(attack_roll=None, damage_roll=None)
 
 
@@ -455,11 +481,22 @@ def earth_eruption(adversary, target, fight: Fight):
     the options that pass, the choice is random. Nothing else conditions it - no
     threshold on how many PCs it catches.
 
+    **"All creatures" means the Burrower's own side too**, which is the same
+    reading Acid Bath already takes of the same word - and now that adversaries
+    make Reaction Rolls, they get a flat d20 to keep their feet like anybody
+    else. A knocked-over adversary is Vulnerable, so every roll against it has
+    Advantage: this feature can hand the party a real opening. The Burrower
+    itself is excluded.
+
     Vulnerable ends "when they next act", which the fight loop announces after
     the PC's spotlight resolves - so a PC caught by this is still Vulnerable for
     any attack that lands before their turn comes round.
     """
-    caught = targets_in_area(Range.VERY_CLOSE, fight.conscious_party)
+    caught = targets_in_area(
+        Range.VERY_CLOSE,
+        list(fight.conscious_party)
+        + [other for other in fight.living_adversaries if other is not adversary],
+    )
     if not caught:
         return None
     if not adversary.will_spend_stress(1):
@@ -468,13 +505,13 @@ def earth_eruption(adversary, target, fight: Fight):
     adversary.spend_stress(1)
     fight.note(f"{adversary.name} bursts out of the ground (Earth Eruption)")
 
-    for pc in caught:
-        roll = _reaction_roll(pc, "agility", adversary.difficulty, fight)
+    for creature in caught:
+        roll = _reaction_roll(creature, "agility", adversary.difficulty, fight)
         if roll.is_success:
-            fight.note(f"{pc.name} keeps their feet ({roll})")
+            fight.note(f"{creature.name} keeps their feet ({roll})")
             continue
-        fight.apply_condition(pc, Condition(name=VULNERABLE, end=when_they_act))
-        fight.note(f"{pc.name} is knocked over, and is Vulnerable until they act")
+        fight.apply_condition(creature, Condition(name=VULNERABLE, end=when_they_act))
+        fight.note(f"{creature.name} is knocked over, and is Vulnerable until they act")
 
     # Fired, so the spotlight is spent - but nothing rolled to hit anybody, which
     # is what an attack roll of None says. Returning None here would mean
@@ -1496,7 +1533,9 @@ ARMOR_SHREDDING_SHARDS = qualified(ADVERSARY, "Armor-Shredding Shards")
         "- has no weapon and so no range to read, and never triggers it",
     ],
 )
-def armor_shredding_shards(adversary, attacker, weapon, damage=0, fight=None) -> None:
+def armor_shredding_shards(
+    adversary, attacker, weapon, damage=0, hp_marked=0, fight=None
+) -> None:
     """A successful Melee attack on this adversary costs the attacker an Armor Slot.
 
     SRD: "After a successful attack against the Snake within Melee range, the
@@ -2692,7 +2731,9 @@ WITHIN_CLOSE = (Range.MELEE, Range.VERY_CLOSE, Range.CLOSE)
         "weapon and so no range to read, and never triggers it",
     ],
 )
-def magical_reflection(adversary, attacker, weapon, damage=0, fight=None) -> None:
+def magical_reflection(
+    adversary, attacker, weapon, damage=0, hp_marked=0, fight=None
+) -> None:
     """An attack from Close range or nearer costs the attacker half what they dealt.
 
     SRD: "When the Elemental takes damage from an attack within Close range, deal
@@ -2760,17 +2801,30 @@ def scorched_earth(adversary, target, fight: Fight):
     Close is what burns; Far is only how far away the Elemental can start the
     fire, and no positions are tracked for that to mean anything.
 
+    **"All creatures" means the Elemental's own side too**, and they roll to save
+    exactly as a PC does - a flat d20, since an adversary has no traits. The
+    printed noun is doing real work here: Hellfire two stat blocks later says
+    "all targets" and reaches only the party. It is a genuine cost of the
+    feature, and it is why a Fire Elemental is awkward to field beside anything
+    fragile. The Elemental itself is excluded, the way Acid Bath excludes the
+    Burrower.
+
     The first feature where a successful Reaction Roll buys *half* damage rather
     than escaping the effect - see `_flames`, which both this and Hellfire use.
     A critical still ignores it entirely, per the standing rule on reaction rolls.
 
     USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
-    rule decides when it is on the table, with no threshold on how many PCs it
-    reaches. 9 HP against three Stress puts the Elemental inside the line from
-    full health, so in practice this is simply what it does until the Stress runs
-    out - and Consume Kindling can buy some of it back.
+    rule decides when it is on the table, with no threshold on how many it
+    reaches - and deliberately none on how many of them are allies either. 9 HP
+    against three Stress puts the Elemental inside the line from full health, so
+    in practice this is simply what it does until the Stress runs out - and
+    Consume Kindling can buy some of it back.
     """
-    caught = targets_in_area(Range.VERY_CLOSE, fight.conscious_party)
+    caught = targets_in_area(
+        Range.VERY_CLOSE,
+        list(fight.conscious_party)
+        + [other for other in fight.living_adversaries if other is not adversary],
+    )
     if not caught or not adversary.will_spend_stress(1):
         return None
 
@@ -2941,6 +2995,13 @@ def hellfire(adversary, target, fight: Fight):
     holding it back - and 1d20+3 averages 13.5, which is Severe for most tier 1
     PCs. It is the largest area effect in tier 1 by a distance, and the save only
     halves it.
+
+    **"All targets", not "all creatures"** - so this reaches the party alone, and
+    the Demon's allies stand in the fire untouched. Scorched Earth two stat blocks
+    earlier says creatures and does catch them. The two landing in the same batch
+    is what makes the distinction hard to put down to loose wording, and it is
+    worth knowing which way round they are: the Demon is safe to field beside
+    anything, the Fire Elemental is not.
 
     Magic damage from a stat block whose printed Claws are physical, so the type
     is stated here rather than inherited.
@@ -3169,19 +3230,25 @@ def envelop_releases(adversary, amount: int, hp_marked: int, fight=None) -> None
 SPLIT = qualified(ADVERSARY, "Split")
 SPLIT_FEAR = 1
 
-# "When the Ooze has 3 or more HP marked", and "two Tiny Green Oozes", as printed.
+# "When the Ooze has 3 or more HP marked", and "two" of them, as printed.
 SPLIT_AT_HP_MARKED = 3
-SPLIT_INTO = "Tiny Green Ooze"
 SPLIT_COUNT = 2
 
 
 @on_damaged(SPLIT)
 def split(adversary, amount: int, hp_marked: int, fight=None) -> None:
-    """At 3 marked HP, spend a Fear to become two fresh Tiny Green Oozes.
+    """At 3 marked HP, spend a Fear to become two fresh copies of something smaller.
 
     SRD: "When the Ooze has 3 or more HP marked, you can spend a Fear to split
     them into two Tiny Green Oozes (with no marked HP or Stress). Immediately
     spotlight both of them."
+
+    **Parameterised with what it becomes** - `Split (Tiny Green Ooze)`,
+    `Split (Tiny Red Ooze)` - although the SRD prints the name bare on both, for
+    the reason `Flying (X)` is parameterised: it is one rule whose argument
+    differs per stat block, and hard-coding either would make the other silently
+    turn into the wrong creature. A stat block writing `Split` with no parameter
+    splits into nothing rather than guessing.
 
     Keyed on the Ooze's *state* rather than on the hit, which is what "has 3 or
     more HP marked" says - so it can fire on any wound once the track is deep
@@ -3212,8 +3279,12 @@ def split(adversary, amount: int, hp_marked: int, fight=None) -> None:
     if fight.fear < SPLIT_FEAR:
         return
 
+    becomes = feature_parameter(adversary, SPLIT)
+    if becomes is None:
+        return
+
     try:
-        definition = find_adversary(SPLIT_INTO)
+        definition = find_adversary(becomes)
     except KeyError:
         # An encounter can be run against a cut-down catalogue; a feature that
         # can't find what it becomes leaves the Ooze standing rather than
@@ -3230,10 +3301,383 @@ def split(adversary, amount: int, hp_marked: int, fight=None) -> None:
         fight.grant_activation(spawned)
 
     fight.note(
-        f"{adversary.name} splits into {SPLIT_COUNT} {SPLIT_INTO}s, which act at "
+        f"{adversary.name} splits into {SPLIT_COUNT} {becomes}s, which act at "
         f"once (GM spends a Fear)"
     )
 
+
+# --- Red Ooze ----------------------------------------------------------------
+
+IGNITE = qualified(ADVERSARY, "Ignite")
+IGNITED = "Ignited"
+
+# "Extinguished with a successful Finesse Roll (14)" - the Difficulty is printed
+# here, unlike the reaction rolls that fall back on the adversary's own.
+IGNITE_ESCAPE_DIFFICULTY = 14
+
+
+def _ignited_burns(holder, fight, moment: str) -> None:
+    """Being on fire costs 1d4 magic damage on every action roll.
+
+    The Scorpion Poison's shape - `Condition.effect` at `BEFORE_AN_ACTION_ROLL` -
+    but the first one whose cost is **damage** rather than Stress, and there is
+    no die to check first: the SRD charges this one every time.
+    """
+    if moment != BEFORE_AN_ACTION_ROLL:
+        return
+    burn = roll_damage(dice_groups=[DiceGroup(count=1, sides=4)], modifier=0)
+    holder.take_damage(burn.total, fight, damage_type=DamageType.MAGIC)
+    fight.note(f"{holder.name} is burning, and takes {burn.total}")
+
+
+@action(IGNITE)
+def ignite(adversary, target, fight: Fight):
+    """Attack for 1d8 and set the target alight until they put themselves out.
+
+    SRD: "Make an attack against a target within Very Close range. On a success,
+    the target takes 1d8 magic damage and is Ignited until they're extinguished
+    with a successful Finesse Roll (14). While Ignited, the target takes 1d4
+    magic damage when they make an action roll."
+
+    The fire is the point of it: 1d8 averages 4.5 against the Red Ooze's printed
+    1d8+3 at 7.5, so as a hit this is strictly the worse option and what it buys
+    is a burn that keeps costing until somebody rolls it off.
+
+    **Ignited carries its own ender**, which matters beyond the escape roll: a
+    condition that can end on its own terms survives its source leaving the
+    fight, so killing the Ooze does not put the fire out. That is the right
+    answer here and the wrong one for a hold - see
+    `FightState.release_conditions_from`.
+
+    The Difficulty is printed (14) rather than falling back on the Ooze's own,
+    which is the first time a printed escape roll has stated one.
+
+    USAGE POLICY - ruled. Rule 3, the one place it applies: the point of the
+    attack is the condition, so it is not used against a target who is already
+    Ignited - there it would trade the Ooze's better standard attack for nothing.
+    """
+    if fight.has_condition(target, IGNITED):
+        return None
+
+    result = adversary.attack(
+        target,
+        fight=fight,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=0,
+        damage_type=DamageType.MAGIC,
+    )
+    if result.damage_roll is None:
+        return result
+
+    fight.apply_condition(
+        target,
+        Condition(
+            name=IGNITED,
+            end=_breaks_free(("finesse",), IGNITE_ESCAPE_DIFFICULTY),
+            effect=_ignited_burns,
+        ),
+    )
+    fight.note(f"{target.name} catches fire (Ignited until a Finesse Roll puts it out)")
+    return result
+
+
+# --- Tiny Red Ooze -------------------------------------------------------------
+
+BURNING = qualified(ADVERSARY, "Burning")
+
+
+@on_attacked(
+    BURNING,
+    unmodelled=[
+        "Burning: only a weapon attack reaches this, as with Armor-Shredding "
+        "Shards. Content that rolls an attack of its own - a Grimoire spell, the "
+        "Beastbound companion - has no weapon and so no range to read, and never "
+        "triggers it",
+    ],
+)
+def burning(adversary, attacker, weapon, damage=0, hp_marked=0, fight=None) -> None:
+    """Hurting this adversary in Melee costs the attacker 1d6 direct damage.
+
+    SRD: "When a creature within Melee range deals damage to the Ooze, they take
+    1d6 direct magic damage."
+
+    Keyed on damage being **dealt** rather than on a successful attack, so a hit
+    the Ooze shrugged off entirely still burns - the number rolled is what the
+    trigger names. Read off the attacker's weapon for range, the same handle
+    Armor-Shredding Shards and Magical Reflection use.
+
+    Direct, so no Armor Slot softens it. On a 2 HP stat block that is the whole
+    point: killing a Tiny Red Ooze in melee costs something, and the party's
+    answer to a field of them is to shoot.
+    """
+    if fight is None or damage <= 0:
+        return
+    if canonical(weapon.range) != canonical(Range.MELEE.value):
+        return
+
+    burn = roll_damage(dice_groups=[DiceGroup(count=1, sides=6)], modifier=0)
+    attacker.take_damage(burn.total, fight, direct=True, damage_type=DamageType.MAGIC)
+    fight.note(
+        f"{attacker.name} is scorched striking {adversary.name} for {burn.total} "
+        f"(Burning)"
+    )
+
+
+# --- The pirates ---------------------------------------------------------------
+
+SWASHBUCKLER = qualified(ADVERSARY, "Swashbuckler")
+
+# "2 or fewer HP", as printed.
+SWASHBUCKLER_MAX_HP = 2
+
+
+@on_attacked(
+    SWASHBUCKLER,
+    unmodelled=[
+        "Swashbuckler: only a weapon attack reaches this, as with "
+        "Armor-Shredding Shards - content that rolls an attack of its own has no "
+        "weapon and so no range to read",
+    ],
+)
+def swashbuckler(adversary, attacker, weapon, damage=0, hp_marked=0, fight=None) -> None:
+    """A Melee hit that barely hurts this adversary costs the attacker a Stress.
+
+    SRD: "When the Captain marks 2 or fewer HP from an attack within Melee range,
+    the attacker must mark a Stress."
+
+    **It is the pirate who marks the HP**, not the PC - that is how the SRD writes
+    adversary features throughout, and reading it the other way round would turn
+    a defensive quirk into a second attack. So this fires on a hit that landed
+    and cost the pirate little: chip damage gets a sneer and a bruise back.
+
+    The `1 <=` half of the range never actually bites, and it is there for
+    honesty rather than for safety: adversaries have no Armor Slots, so a landed
+    hit always marks at least one HP against a threshold band. A PC is the
+    asymmetric case - the free slot means they routinely mark none - which is why
+    content on the party side has to check for zero and this doesn't.
+
+    Carried by all three pirate stat blocks, so it registers once and reaches
+    whichever was hit. The Stress is forced, so a PC with none free marks an HP.
+
+    Worth knowing what it does to focus fire: the party's own policy is to hit
+    the most wounded adversary, and a Horde of Pirate Raiders on 4 HP with
+    thresholds of 5/11 marks 1 HP off most tier 1 hits. So a melee party pays a
+    Stress for very nearly every swing they take at this crew.
+    """
+    if fight is None or canonical(weapon.range) != canonical(Range.MELEE.value):
+        return
+    if not 1 <= hp_marked <= SWASHBUCKLER_MAX_HP:
+        return
+
+    attacker.mark_stress(1)
+    fight.note(
+        f"{attacker.name}'s blow glances off {adversary.name}, and costs them a "
+        f"Stress (Swashbuckler)"
+    )
+
+
+REINFORCEMENTS = qualified(ADVERSARY, "Reinforcements")
+REINFORCEMENTS_TOKEN = "Reinforcements"
+
+# "A Pirate Raiders Horde", by name - a Horde is one stat block standing for a
+# group, so this summons a single adversary rather than several.
+REINFORCEMENTS_SUMMON = "Pirate Raiders"
+
+
+@action(
+    REINFORCEMENTS,
+    unmodelled=[
+        "Reinforcements: the Raiders appearing at Far range, which is "
+        "positioning. They join the fight and are targetable immediately",
+    ],
+)
+def reinforcements(adversary, target, fight: Fight):
+    """Once a fight, mark a Stress to whistle up a Horde of Pirate Raiders.
+
+    SRD: "Once per scene, mark a Stress to summon a Pirate Raiders Horde, which
+    appears at Far range."
+
+    A scene is one fight here, and the limit is held with a token rather than
+    with the per-rest machinery: a once-per-*scene* ability is available in every
+    fight whatever rest preceded it, where `use_once_per_rest` would correctly
+    refuse it in a no-rest encounter. That distinction is why Spitter and Consume
+    Kindling use tokens too.
+
+    Unlike the Lieutenant's uncapped summoning this brings one adversary rather
+    than three, and only ever once - but a Raiders Horde is a 4 HP stat block
+    with a real attack rather than a 1 HP Minion, so it is much the bigger
+    addition.
+
+    Declines rather than raising if the Raiders aren't in the catalogue at all,
+    the same way More Where That Came From does.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
+    rule decides when it is on the table. The Captain's 7 HP against five Stress
+    puts it inside the line from full health, so in practice the Raiders arrive
+    early - which is what a Leader with a whistle should do.
+    """
+    if fight.token_count(adversary, REINFORCEMENTS_TOKEN):
+        return None
+    if not adversary.will_spend_stress(1):
+        return None
+
+    try:
+        definition = find_adversary(REINFORCEMENTS_SUMMON)
+    except KeyError:
+        return None
+
+    adversary.spend_stress(1)
+    fight.set_token(adversary, REINFORCEMENTS_TOKEN, 1)
+    fight.summon(definition.spawn())
+    fight.note(
+        f"{adversary.name} calls up a {REINFORCEMENTS_SUMMON} Horde (Reinforcements)"
+    )
+    # The spotlight is spent, but nothing rolled to hit anybody.
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+NO_QUARTER = qualified(ADVERSARY, "No Quarter")
+NO_QUARTER_FEAR = 1
+
+# "Three or more Pirates within Melee range of them", as printed.
+NO_QUARTER_PIRATES = 3
+
+# What counts as a Pirate: any stat block with the word in its name, matched
+# canonically. The SRD writes the requirement as a *kind* rather than naming
+# stat blocks, unlike On My Signal's "all Archer Guards" - so this is the one
+# feature that matches on part of a name instead of the whole of one.
+PIRATE = canonical("Pirate")
+
+# The Captain's threats, as printed: 1d4+1 Stress on a failure.
+NO_QUARTER_STRESS_DIE = 4
+NO_QUARTER_STRESS_BONUS = 1
+
+
+@action(NO_QUARTER)
+def no_quarter(adversary, target, fight: Fight):
+    """Spend a Fear: the crew closes in, and the target marks 1d4+1 Stress.
+
+    SRD: "Spend a Fear to choose a target who has three or more Pirates within
+    Melee range of them. The Captain leads the Pirates in hurling threats and
+    promises of a watery grave. The target must make a Presence Reaction Roll. On
+    a failure, the target marks 1d4+1 Stress. On a success, they must mark a
+    Stress."
+
+    No damage at all - the whole feature is Stress, which on a six-slot track is
+    up to five at once and leaves a PC Vulnerable for the rest of the fight. The
+    first Presence Reaction Roll in the catalogue, and a critical escapes it
+    entirely per the standing rule.
+
+    SIMULATION RULE - policy. "Three or more Pirates within Melee range of them"
+    is positioning, so the **area rule answers it exactly as Pack Tactics does**:
+    of the pirates alive, `targets_reached(MELEE, ...)` says how many are on the
+    target, and the feature needs `NO_QUARTER_PIRATES` of them.
+
+    Be clear about what that costs, because it is more than it is for Pack
+    Tactics. The Melee band reaches at most 3, and only on a field of
+    `MANY_ADVERSARIES` or more with the clustered roll - so **No Quarter cannot
+    fire below six pirates, and fires about half the time above it**. That
+    follows from the printed 3 meeting the band rather than from any threshold
+    of ours; lowering it to 2 was offered and declined, so this is the ruled
+    behaviour rather than an oversight.
+
+    USAGE POLICY - ruled. Used whenever the GM can afford the Fear and the crew
+    is close enough, and among the options that pass the choice is random.
+    """
+    if fight.fear < NO_QUARTER_FEAR:
+        return None
+
+    crew = [
+        other for other in fight.living_adversaries if PIRATE in canonical(other.name)
+    ]
+    # The Captain counts: the question is how many pirates are on this target,
+    # and it is one of them.
+    if len(crew) < NO_QUARTER_PIRATES:
+        return None
+    if targets_reached(Range.MELEE, len(crew)) < NO_QUARTER_PIRATES:
+        return None
+
+    fight.spend_fear(NO_QUARTER_FEAR)
+    fight.note(
+        f"{adversary.name} promises {target.name} a watery grave (No Quarter: "
+        f"GM spends a Fear)"
+    )
+
+    roll = _reaction_roll(target, "presence", adversary.difficulty, fight)
+    if roll.is_critical:
+        fight.note(f"{target.name} laughs it off ({roll})")
+    elif roll.is_success:
+        target.mark_stress(1)
+        fight.note(f"{target.name} holds their nerve, and marks a Stress ({roll})")
+    else:
+        cost = random.randint(1, NO_QUARTER_STRESS_DIE) + NO_QUARTER_STRESS_BONUS
+        target.mark_stress(cost)
+        fight.note(f"{target.name} is shaken, and marks {cost} Stress ({roll})")
+
+    # The spotlight is spent, but nothing rolled to hit anybody.
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+CLEAR_THE_DECKS = qualified(ADVERSARY, "Clear the Decks")
+
+
+@action(
+    CLEAR_THE_DECKS,
+    unmodelled=[
+        "Clear the Decks: moving into Melee range and knocking the target back "
+        "to Close, both of which are where combatants end up and have nothing to "
+        "change here. The damage is modelled",
+    ],
+)
+def clear_the_decks(adversary, target, fight: Fight):
+    """Mark a Stress on a landed hit to deal 3d4 instead.
+
+    SRD: "Make an attack against a target within Very Close range. On a success,
+    mark a Stress to move into Melee range of the target, dealing 3d4 physical
+    damage and knocking the target back to Close range."
+
+    3d4 averages 7.5 against the Tough's printed 2d6 at 7 - so unlike most Stress
+    Actions this is barely an upgrade on the damage, and what the page is really
+    selling is the repositioning, which has nothing to change here. That makes it
+    one of the weakest Stress Actions in the catalogue as modelled, and the
+    declared gap above is most of why.
+
+    The Stress is paid on a success, so the attack is rolled first and a miss
+    costs nothing - the shape Hobbling Shot uses.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
+    rule decides when it is on the table. 5 HP against three Stress puts the
+    Tough inside the line from full health.
+    """
+    if not adversary.will_spend_stress(1):
+        return None
+
+    result = adversary.attack(
+        target,
+        fight=fight,
+        damage_dice=[DiceGroup(count=3, sides=4)],
+        damage_modifier=0,
+        damage_type=DamageType.PHYSICAL,
+    )
+    if result.damage_roll is None:
+        return result
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} clears the decks, barrelling into {target.name}")
+    return result
+
+
+no_combat_effect(
+    qualified(ADVERSARY, "Creeping Fire"),
+    "The Red Ooze can only move within Very Close range, and lights any "
+    "flammable object it touches on fire. Both halves are movement and terrain, "
+    "and neither has any representation here - unlike Consume Kindling there is "
+    "no mechanical benefit attached that could be modelled in the trigger's "
+    "place. Note the first half is a *restriction* on the Ooze rather than a "
+    "threat, so leaving it out if anything flatters the Ooze less than modelling "
+    "it would: its printed attack is already Melee, so the cap would change "
+    "nothing even if positions were tracked.",
+)
 
 no_combat_effect(
     qualified(ADVERSARY, "Maintain Distance"),

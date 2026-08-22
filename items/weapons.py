@@ -181,7 +181,10 @@ def attack_with(
     # successful attack rather than a wound, and handed the weapon because how
     # far away the attacker was standing is the only thing such content has to
     # read range off. Nothing here knows what any of it is.
-    apply_on_attacked(target, attacker, weapon, damage_roll.total, fight)
+    #
+    # Both figures the hit produced go through: the damage rolled, and the HP it
+    # finally cost. The SRD keys such features on either - see `on_attacked`.
+    apply_on_attacked(target, attacker, weapon, damage_roll.total, marked, fight)
 
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked

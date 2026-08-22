@@ -467,8 +467,8 @@
       "damage_dice": "1d6",
       "damage_modifier": 1,
       "damage_type": "magic",
-      "features": ["Slow", "Acidic Form", "Envelop", "Split"],
-      "notes": "Ooze Appendage: Melee, 1d6+1 magic. Experience: Camouflage +3. Difficulty 8 is the lowest in the catalogue and is checked against the printed page - the Tiny Green Ooze it splits into is *harder* to hit at 14, which looks inverted but is what the book prints. Slow is the first feature that spends an activation without acting, and Split the first that takes an adversary off the field without defeating it."
+      "features": ["Slow", "Acidic Form", "Envelop", "Split (Tiny Green Ooze)"],
+      "notes": "Ooze Appendage: Melee, 1d6+1 magic. Experience: Camouflage +3. Difficulty 8 is the lowest in the catalogue and is checked against the printed page - the Tiny Green Ooze it splits into is *harder* to hit at 14, which looks inverted but is what the book prints. Slow is the first feature that spends an activation without acting, and Split the first that takes an adversary off the field without defeating it. Split carries what it becomes as a parameter, the way Flying (X) carries its bonus: the book prints the name bare on both Oozes, but the Red one splits into something else."
     },
 
     {
@@ -487,6 +487,96 @@
       "damage_type": "magic",
       "features": ["Acidic Form"],
       "notes": "Ooze Appendage: Melee, 1d4+1 magic. No Experience printed. The first entry with a *mixed* threshold - the page prints '4/None', so a Major hit marks 2 HP off a 2 HP track and nothing can reach Severe. Difficulty 14 against the Green Ooze's 8 is what the book prints, checked against the page. Two of these are what a Green Ooze becomes when it Splits, so the catalogue needs both for that feature to work."
+    },
+
+    {
+      "name": "Red Ooze",
+      "tier": 1,
+      "type": "Skulk",
+      "difficulty": 10,
+      "major_threshold": 6,
+      "severe_threshold": 11,
+      "hp_max": 5,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 3,
+      "damage_type": "magic",
+      "features": ["Creeping Fire", "Ignite", "Split (Tiny Red Ooze)"],
+      "notes": "Ooze Appendage: Melee, 1d8+3 magic. Experience: Camouflage +3. The Green Ooze's sibling and a straightforwardly nastier one - no Slow holding it back, and a burn that keeps costing after the hit. Split is the same feature the Green Ooze carries, told by its parameter what to become."
+    },
+
+    {
+      "name": "Tiny Red Ooze",
+      "tier": 1,
+      "type": "Skulk",
+      "difficulty": 11,
+      "major_threshold": 5,
+      "severe_threshold": null,
+      "hp_max": 2,
+      "stress_max": 1,
+      "attack_modifier": -1,
+      "range": "Melee",
+      "damage_dice": "1d4",
+      "damage_modifier": 2,
+      "damage_type": "magic",
+      "features": ["Burning"],
+      "notes": "Ooze Appendage: Melee, 1d4+2 magic. No Experience printed. A mixed threshold again, '5/None'. Note it does *not* carry Acidic Form, unlike the Tiny Green Ooze - its whole defence is Burning, which taxes anybody killing it in melee. Two of these are what a Red Ooze becomes when it Splits."
+    },
+
+    {
+      "name": "Pirate Captain",
+      "tier": 1,
+      "type": "Leader",
+      "difficulty": 14,
+      "major_threshold": 7,
+      "severe_threshold": 14,
+      "hp_max": 7,
+      "stress_max": 5,
+      "attack_modifier": 4,
+      "range": "Melee",
+      "damage_dice": "1d12",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Swashbuckler", "Reinforcements", "No Quarter", "Momentum"],
+      "notes": "Cutlass: Melee, 1d12+2 physical. Experience: Commander +2, Sailor +3. Five Stress is the deepest track in tier 1. Momentum is already modelled. No Quarter needs three Pirates in Melee range of one target, which the area rule only allows on a field of six or more - so it is dead in a small crew by the printed number, not by any threshold of ours."
+    },
+
+    {
+      "name": "Pirate Raiders",
+      "tier": 1,
+      "type": "Horde (3/HP)",
+      "difficulty": 12,
+      "major_threshold": 5,
+      "severe_threshold": 11,
+      "hp_max": 4,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Horde (1d4+1)", "Swashbuckler"],
+      "notes": "Cutlass: Melee, 1d8+2 physical. Experience: Sailor +3. Needed no new code beyond Swashbuckler: Horde (X) reads its own 1d4+1 off this stat block, exactly as the Giant Mosquitoes' does. The type reads 'Horde (3/HP)' on the page - that is the Battle Points shorthand, not the feature's number."
+    },
+
+    {
+      "name": "Pirate Tough",
+      "tier": 1,
+      "type": "Bruiser",
+      "difficulty": 13,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 5,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "range": "Melee",
+      "damage_dice": "2d6",
+      "damage_modifier": 0,
+      "damage_type": "physical",
+      "features": ["Swashbuckler", "Clear the Decks"],
+      "notes": "Massive Fists: Melee, 2d6 physical - no flat bonus, the second tier 1 attack written that way after the Construct's. Experience: Sailor +2. Clear the Decks is worth barely more than the printed attack once its repositioning is stripped out, which is declared where it is registered."
     }
   ]
 }

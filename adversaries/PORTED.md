@@ -110,6 +110,11 @@ small to change an outcome), **not implemented** (work still to do).
 | Minor Treant | Minion | 5 | Minion (5), Group Attack *implemented* — needed no new code at all, like the Jagged Knife Lackey |
 | Green Ooze | Skulk | 5 | Slow, Acidic Form, Envelop, Split *implemented* |
 | Tiny Green Ooze | Skulk | 5 | Acidic Form *implemented* — shares the Green Ooze's registration |
+| Red Ooze | Skulk | 6 | Ignite, Split (Tiny Red Ooze) *implemented* · Creeping Fire *no combat effect* |
+| Tiny Red Ooze | Skulk | 6 | Burning *implemented* |
+| Pirate Captain | Leader | 6 | Swashbuckler, Reinforcements, No Quarter, Momentum *implemented* |
+| Pirate Raiders | Horde (3/HP) | 6 | Horde (1d4+1), Swashbuckler *implemented* — needed no new code of its own |
+| Pirate Tough | Bruiser | 6 | Swashbuckler, Clear the Decks *implemented* |
 
 ---
 
@@ -122,39 +127,35 @@ printed page as each batch is read, so a blank one is unknown rather than
 unknown-to-be-blank - and a Social found there is skipped rather than ported.
 
 1. Courtier — **Social, skipped**
-2. Red Ooze — Skulk
-3. Tiny Red Ooze — Skulk
-4. Petty Noble — **Social, skipped**
-5. Pirate Captain — Leader
-6. Pirate Raiders — Horde (3/HP)
-7. Pirate Tough — Bruiser
-8. Sellsword — Minion
-9. Skeleton Archer — Ranged
-10. Skeleton Dredge — Minion
-11. Skeleton Knight
-12. Skeleton Warrior
-13. Spellblade
-14. Swarm of Rats
-15. Sylvan Soldier
-16. Tangle Bramble Swarm
-17. Tangle Bramble
-18. Weaponmaster
-19. Young Dryad
-20. Brawny Zombie
-21. Patchwork Zombie Hulk
-22. Rotted Zombie
-23. Shambling Zombie
-24. Zombie Pack
+2. Petty Noble — **Social, skipped**
+3. Sellsword — Minion
+4. Skeleton Archer — Ranged
+5. Skeleton Dredge — Minion
+6. Skeleton Knight
+7. Skeleton Warrior
+8. Spellblade
+9. Swarm of Rats
+10. Sylvan Soldier
+11. Tangle Bramble Swarm
+12. Tangle Bramble
+13. Weaponmaster
+14. Young Dryad
+15. Brawny Zombie
+16. Patchwork Zombie Hulk
+17. Rotted Zombie
+18. Shambling Zombie
+19. Zombie Pack
 
 Types down to Skeleton Dredge were confirmed against the printed page (SRD
-pp. 78–81), which is also where the Socials were spotted. **Batch 6 starts at the
-Red Ooze**, and the next five are the Red Ooze, Tiny Red Ooze, Pirate Captain,
-Pirate Raiders and Pirate Tough.
+pp. 78–81), which is also where the Socials were spotted. **Batch 7 starts at the
+Sellsword**, and the next five are the Sellsword, Skeleton Archer, Skeleton
+Dredge, Skeleton Knight and Skeleton Warrior.
 
-Batch 6's first two are cheap: the Red Ooze pair share *Split* and the Oozes'
-general shape with batch 5, so only *Creeping Fire*, *Ignite* and *Burning* are
-new. **The Red Ooze splits into Tiny Red Oozes**, so both have to land in the same
-batch for that feature to work, exactly as the Green pair did.
+Batch 7 opens cheaply again: the **Sellsword** is `Minion (4)` plus `Group
+Attack`, both generic since batch 2, so it should need no code at all — the third
+stat block to come online with its JSON entry. The **Skeleton Dredge** is the
+same shape. Types for the two Skeletons after Dredge are unconfirmed and want
+checking against the page as that batch is read.
 
 ### Tiers 2-4
 
@@ -467,10 +468,10 @@ features were already modelled: `Relentless (2)` and `Momentum` on both Solos.
 
 **Three rules readings**, all in `SIMULATION-RULES.md`:
 
-- **Only PCs make Reaction Rolls.** "All creatures within this area must make an
-  Agility Reaction Roll" reaches only the party, and that is intended rather than
-  a gap — an adversary carries no traits to roll. It does not generalise to every
-  area feature: Acid Bath still splashes allies, because it involves no roll.
+- ~~**Only PCs make Reaction Rolls.**~~ **Reversed after batch 6** — the user
+  corrected it. Adversaries do make them, on a flat d20, so "all creatures"
+  reaches the acting adversary's own side and they roll to save like anybody
+  else. Scorched Earth therefore catches allies; see the batch 6 section.
 - **A success can buy half rather than everything.** Scorched Earth and Hellfire
   are the first saves worth something short of a clean escape, so "success" and
   "critical" come apart — half rounds down, a critical still takes nothing.
@@ -493,6 +494,63 @@ the area rule rarely holds back. And the Green Ooze's Slow cuts its output in
 half — it acts every other spotlight, and the wasted activation still costs the
 GM whatever the turn charged — which is what pays for Envelop, Acidic Form and
 Split all sitting on one 5 HP stat block.
+
+### Batch 6
+
+Ten features across five stat blocks, and **Pirate Raiders needed no code of its
+own**: `Horde (1d4+1)` was generic from batch 2 and `Swashbuckler` is shared by
+all three pirates, so it registers once and reaches whichever was hit.
+
+| Feature | Cost | Ruled by |
+|---|---|---|
+| Creeping Fire (Red Ooze) | — | **Ruled**: no combat effect. Movement and terrain, with no mechanical benefit attached that could be modelled in the trigger's place — unlike Consume Kindling |
+| Ignite (Red Ooze) | free | rule 4, gated by **rule 3**: the point of the attack is the burn, so it isn't used on a target already Ignited |
+| Split (Red Ooze) | 1 Fear | rule 4, as the Green Ooze's |
+| Burning (Tiny Red Ooze) | — | Passive |
+| Swashbuckler (all three pirates) | — | Passive |
+| Reinforcements (Captain) | 1 Stress, once per scene | rule 1 |
+| No Quarter (Captain) | 1 Fear | rule 4, plus the printed requirement of three Pirates in Melee |
+| Clear the Decks (Tough) | 1 Stress on a hit | rule 1 |
+
+**Three rules readings, one of them a reversal:**
+
+- **Adversaries DO make Reaction Rolls**, on a **flat d20 with no modifier** —
+  they have no traits to add. This corrects the batch 5 ruling, which had them
+  making none at all. The consequence is that "all creatures" features reach the
+  acting adversary's own side, and those allies get a real save.
+
+  **Read the printed noun, because the SRD alternates it.** "All *creatures*"
+  includes allies; "all *targets*" is the party only. *Scorched Earth* and *Earth
+  Eruption* say creatures and now catch allies; *Hellfire*, two stat blocks after
+  Scorched Earth, says targets and does not. All three in the same two batches,
+  which is what makes the distinction hard to put down to loose wording.
+- **"The Captain marks 2 or fewer HP" is the Captain marking it**, not the
+  Captain making a PC mark it. That is Daggerheart's design language throughout,
+  and reading it the other way would turn a defensive quirk into a second attack.
+  It also settles the lower bound: adversaries have no Armor Slots, so a landed
+  hit always marks 1 or 2 and the zero case cannot arise on the GM's side.
+- **"Pirates" is a kind, not a stat block.** No Quarter counts any living
+  adversary with "Pirate" in its name, matched canonically — the one feature that
+  matches on part of a name, where On My Signal names "Archer Guard" in full. How
+  many are *in range* goes through the area rule exactly as Pack Tactics does.
+
+**Machinery batch 6 built.** `on_attacked` gained `hp_marked` alongside the
+`damage` it already carried — Swashbuckler needs the attacker (for the Melee
+check) *and* what the hit cost, and each of the two damage hooks knew only half
+of that. The same shape as the `damage` addition in batch 4. `Split` became
+**parameterised** (`Split (Tiny Green Ooze)`, `Split (Tiny Red Ooze)`): one rule
+whose argument differs per stat block, so it follows `Flying (X)` in
+parameterising a name the book prints bare, and the Green Ooze's batch-5 entry
+was updated with it.
+
+**Worth knowing before reading numbers.** **No Quarter cannot fire below six
+pirates.** The Melee band reaches at most 3, and only on a field of
+`MANY_ADVERSARIES` or more with the clustered roll — so the Captain's signature
+move is dead in any small crew. That follows from the printed 3 meeting the area
+rule; dropping it to 2 was offered and declined. And **a melee party pays a
+Stress for nearly every swing at this crew**: focus fire aims at the most wounded
+adversary, and a Raiders Horde on 4 HP with 5/11 thresholds marks 1 HP off most
+tier 1 hits, which is exactly Swashbuckler's window.
 
 ### Damage types, and what closed with them
 

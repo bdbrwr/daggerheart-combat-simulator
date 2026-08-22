@@ -529,22 +529,31 @@ def attack_area(name: str, unmodelled: Iterable[str] = ()):
 def on_attacked(name: str, unmodelled: Iterable[str] = ()):
     """Register content on a *target* that responds to being successfully attacked.
 
-    Signature: `(holder, attacker, weapon, damage, fight) -> None`. The mirror of
-    `on_hit`, which belongs to whoever swung: this belongs to whoever was hit,
-    and it fires on a successful attack whether or not any HP was marked. The
-    Glass Snake's `Armor-Shredding Shards` ("after a successful attack against
-    the Snake within Melee range, the attacker must mark an Armor Slot") is the
-    reason it exists, and the attacker's *weapon* is in the signature because
-    that clause is the only handle the simulator has on range.
+    Signature: `(holder, attacker, weapon, damage, hp_marked, fight) -> None`. The
+    mirror of `on_hit`, which belongs to whoever swung: this belongs to whoever
+    was hit, and it fires on a successful attack whether or not any HP was
+    marked. The Glass Snake's `Armor-Shredding Shards` ("after a successful
+    attack against the Snake within Melee range, the attacker must mark an Armor
+    Slot") is the reason it exists, and the attacker's *weapon* is in the
+    signature because that clause is the only handle the simulator has on range.
 
-    `damage` is the total the attack dealt, before this holder's own thresholds
-    turned it into marked HP. The Minor Chaos Elemental's Magical Reflection
-    needs it ("deal an amount of damage to the attacker equal to half the damage
-    they dealt"), and it is the one figure `on_damaged` can see but this hook
-    could not - the two hooks each knew half of what that feature asks for.
+    **Both figures the hit produced are passed**, because the SRD keys features
+    on either and this hook is the only one that can also see who swung:
 
-    Distinct from `on_damaged`, which fires on damage arriving and can't see who
-    dealt it - "the attacker must mark an Armor Slot" needs the attacker.
+    * `damage` is the total dealt, before the holder's thresholds turned it into
+      marked HP. The Minor Chaos Elemental's Magical Reflection needs it - "deal
+      damage to the attacker equal to half the damage they dealt".
+    * `hp_marked` is what the hit finally cost. The Pirate Captain's
+      *Swashbuckler* needs it - "when the Captain marks 2 or fewer HP from an
+      attack within Melee range, the attacker must mark a Stress".
+
+    Note the subject of that second one: it is the **Captain** marking HP, not
+    the Captain making somebody else mark it. That is how the SRD writes adversary
+    features throughout - the stat block's own text is about the stat block.
+
+    Distinct from `on_damaged`, which sees both figures but not who dealt them -
+    "the attacker must mark an Armor Slot" needs the attacker. Each hook knew
+    half of what these features ask for, which is why this one has grown both.
     """
 
     def register(function: Callable) -> Callable:
@@ -1702,13 +1711,15 @@ def apply_on_damaged(holder, amount: int, hp_marked: int, fight=None) -> None:
             respond(holder, amount, hp_marked, fight)
 
 
-def apply_on_attacked(holder, attacker, weapon, damage=0, fight=None) -> None:
+def apply_on_attacked(
+    holder, attacker, weapon, damage=0, hp_marked=0, fight=None
+) -> None:
     """Let content the *target* carries respond to a successful attack on them."""
     _discover()
     for name in holder.named_features:
         respond = _registered(_on_attacked, name)
         if respond is not None:
-            respond(holder, attacker, weapon, damage, fight)
+            respond(holder, attacker, weapon, damage, hp_marked, fight)
 
 
 def apply_before_attacked(holder, attacker, weapon, fight=None) -> None:

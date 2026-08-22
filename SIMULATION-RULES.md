@@ -370,15 +370,31 @@ that. Features call `roll_duality` directly and read `is_success` and
 Where a failure is "15 damage and Vulnerable" and a success is "5 damage", a
 critical is nothing at all.
 
-**Only PCs make them.** Several SRD features say "all *creatures* within this
-area must make an Agility Reaction Roll", which on the page catches the
-adversary's own allies — the Minor Fire Elemental's *Scorched Earth* and the
-Minor Demon's *Hellfire* are the first two. Here such a feature reaches **only
-the party**, and that is ruled as the intended behaviour rather than a gap to
-declare: an adversary stat block carries no traits for a trait-based roll to be
-made against. It does not generalise to every area feature — the Acid Burrower's
-*Acid Bath* still splashes other adversaries, because it deals damage with no
-roll involved. The Reaction Roll is the distinction, not the word "creatures".
+**Both sides make them, on different dice.** A PC rolls Duality Dice plus the
+named trait. An **adversary rolls a flat d20 with no modifier**, because a stat
+block carries no traits — the bare die against the Difficulty
+(`features/adversaries.py` → `_reaction_roll`). Both results answer `is_success`
+and `is_critical`, which is all any feature reads, so no feature has to know
+which side rolled.
+
+**Read the printed noun: "creatures" includes the adversary's own side,
+"targets" does not.** The SRD alternates the two deliberately. The Minor Fire
+Elemental's *Scorched Earth* and the Acid Burrower's *Earth Eruption* both say
+"all creatures", so both catch allies — and those allies get a real d20 save.
+The Minor Demon's *Hellfire* says "all targets" and reaches only the party. The
+first two land in the same batch as the third, which is what makes the
+distinction hard to put down to loose wording. It matters for encounter building:
+a Fire Elemental is awkward to field beside anything fragile and a Demon is not,
+and an Earth Eruption that knocks another adversary over hands the party
+Advantage on every roll against it.
+
+**A d20 Reaction Roll is checked against a Difficulty, passed as `evasion`.**
+Ruled deliberately rather than renamed: `roll_d20` and `D20RollResult` keep the
+specific name because it is right for the use they have almost everywhere — an
+attack resolved against a PC's Evasion — and a Reaction Roll is the one caller
+that puts a different number in the same slot. It is a number to beat either way,
+and generalising the name would have traded clarity at dozens of call sites for
+vagueness at all of them.
 
 **A success can buy half rather than everything.** Scorched Earth and Hellfire
 both read "targets who fail take X. Targets who succeed take half damage", which
@@ -419,6 +435,8 @@ the numbers.
 | An adversary's **area attack** is one roll checked against each target's Evasion, with one damage roll applied to everyone it beat | `adversaries/adversary.py` → `area_attack`; `content/aoe.py` → `targets_hit` | The mirror of the reading already used for a PC rolling against an area, and of `Hold Them Off` reusing one roll against several. The roll's own success is measured against the *lowest* Evasion present, for the same reason the PC side measures against the lowest Difficulty: it either beat somebody or it beat nobody. |
 | A feature keyed on "takes **Severe damage**" reads the number rolled; one keyed on "marks **2 or more HP**" reads what the hit cost | `features/adversaries.py` → `acid_bath`, `rampaging_fury`; `content/registry.py` → `on_damaged` | The SRD writes both kinds and means different things by them, so `on_damaged` is handed both figures and each feature reads the one its own text names. |
 | Content that **worsens** a hit is asked after content that softens it, and **Weak Structure** fires only on a hit that actually marked HP | `content/registry.py` → `harden_damage`, `severity_increase`; `features/adversaries.py` → `weak_structure` | "When the Construct marks HP … they must mark an additional HP" doesn't say whether that's the HP the damage started at or the HP it ended at. Reading it as the final amount means a hit an Armor Slot or a domain card absorbed entirely marked nothing, so there is nothing to add to - which is what the trigger says on its face. Fixing the order in the dispatch rather than in each feature keeps the answer the same however many features register |
+| An adversary feature's text is about **that adversary**: "when the Captain marks 2 or fewer HP" is the Captain marking it, not the Captain making a PC mark it | `features/adversaries.py` → `swashbuckler` | Daggerheart's design language throughout, and worth recording because the other reading is grammatically available and would turn a defensive quirk into a second attack. It also settles the lower bound: **adversaries have no Armor Slots**, so an attack that lands on one always marks 1 or 2 HP against a threshold band and the zero case cannot arise. A PC is the asymmetric case — the free slot means they routinely mark none — which is why content on the party side has to check for zero and this doesn't. |
+| **No Quarter**'s "three or more Pirates" counts any living adversary with "Pirate" in its name, and asks the **area rule** how many are in range | `features/adversaries.py` → `no_quarter`, `PIRATE`, `NO_QUARTER_PIRATES` | The SRD writes the requirement as a *kind* rather than naming stat blocks, unlike On My Signal's "all Archer Guards" — so this is the one feature that matches on part of a name. The range half follows Pack Tactics exactly. Consequence worth knowing: the Melee band reaches at most 3, and only on a field of `MANY_ADVERSARIES` or more with the clustered roll, so **the feature cannot fire below six pirates**. That falls out of the printed 3 meeting the band; lowering it to 2 was offered and declined. |
 | **Pack Tactics** asks the **area rule** whether the pack converged: of the wolves alive, `targets_reached(MELEE, ...)` says how many are on this target, and the feature needs 2 - the attacker and one more | `features/adversaries.py` → `pack_tactics`, `PACK_TACTICS_WOLVES` | "Another Dire Wolf within Melee range of the target" is positioning, and none is tracked. Reading it as "is another wolf alive anywhere?" would fire on every standard attack for as long as any packmate stood, which is far more than the page promises - so the Melee band answers instead. Since that band is rolled, a pair converges about half the time and a pack of six always does, and how often the band lets it through is the whole of what holds the feature back. |
 | **Armor-Shredding Shards** reads "within Melee range" off the **attacker's weapon**: everyone is assumed to have attacked from the greatest range their weapon allows, so a Melee-only weapon triggers it and anything reaching further does not | `features/adversaries.py` → `armor_shredding_shards`; `items/weapons.py` → `attack_with` | No positions are tracked, so the trigger needs some handle on distance and the weapon is the only one there is. It makes the feature a tax on the front line and free for archers, which is the shape it has at a table - and it means a party's answer to the Glass Snake is a weapon choice. Only weapon attacks reach it; content that rolls an attack of its own has no weapon and no range, declared as a gap |
 | A **Minion Group Attack** is **one activation** however many Minions it sweeps, but each Minion swept has its own spotlight consumed and doesn't act again that GM turn | `features/adversaries.py` → `group_attack`; `combat/state.py` → `consume_activation`; `combat/fight.py` → `_next_adversary` | "Spend a Fear to choose a target and spotlight all Giant Rats within Close range" - the SRD spotlights several combatants with one feature, which nothing in the loop had a shape for. Charging one activation follows from it being one shared attack roll; consuming the rest follows from them having been spotlighted. Reading it the other way (one activation each) would let a swarm act, then act again, and would empty the GM turn's budget into a single feature |

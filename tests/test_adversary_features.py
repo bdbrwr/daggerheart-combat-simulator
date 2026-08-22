@@ -1385,7 +1385,7 @@ def test_shards_cost_a_melee_attacker_an_armor_slot():
     fight = _fight(adversaries=[snake])
     attacker = fight.party[0]
 
-    armor_shredding_shards(snake, attacker, find_weapon("Broadsword"), 7, fight)
+    armor_shredding_shards(snake, attacker, find_weapon("Broadsword"), 7, 1, fight)
 
     assert attacker.armor_marked == 1
 
@@ -1397,7 +1397,7 @@ def test_shards_do_not_reach_someone_attacking_from_further_off():
     fight = _fight(adversaries=[snake])
     attacker = fight.party[0]
 
-    armor_shredding_shards(snake, attacker, find_weapon("Shortbow"), 7, fight)
+    armor_shredding_shards(snake, attacker, find_weapon("Shortbow"), 7, 1, fight)
 
     assert attacker.armor_marked == 0
     assert attacker.hp_marked == 0
@@ -1410,7 +1410,7 @@ def test_shards_cost_an_hp_when_there_is_no_armor_left():
     fight = _fight(party=_party(armor_max=0), adversaries=[snake])
     attacker = fight.party[0]
 
-    armor_shredding_shards(snake, attacker, find_weapon("Broadsword"), 7, fight)
+    armor_shredding_shards(snake, attacker, find_weapon("Broadsword"), 7, 1, fight)
 
     assert attacker.hp_marked == 1
 
@@ -2870,7 +2870,7 @@ def test_magical_reflection_costs_a_close_attacker_half_of_what_they_dealt():
     fight = _fight(party=_party(armor_max=0), adversaries=[elemental])
     attacker = fight.party[0]
 
-    magical_reflection(elemental, attacker, find_weapon("Broadsword"), 9, fight)
+    magical_reflection(elemental, attacker, find_weapon("Broadsword"), 9, 1, fight)
 
     assert attacker.hp_marked >= 1
 
@@ -2882,7 +2882,7 @@ def test_magical_reflection_does_not_reach_an_archer():
     fight = _fight(party=_party(armor_max=0), adversaries=[elemental])
     attacker = fight.party[0]
 
-    magical_reflection(elemental, attacker, find_weapon("Shortbow"), 9, fight)
+    magical_reflection(elemental, attacker, find_weapon("Shortbow"), 9, 1, fight)
 
     assert attacker.hp_marked == 0
 
@@ -2898,10 +2898,10 @@ def test_magical_reflection_halves_downward_and_ignores_a_scratch():
     )
     attacker = fight.party[0]
 
-    magical_reflection(elemental, attacker, find_weapon("Broadsword"), 9, fight)
+    magical_reflection(elemental, attacker, find_weapon("Broadsword"), 9, 1, fight)
     assert attacker.hp_marked == 1, "half of 9 is 4, which is below Major"
 
-    magical_reflection(elemental, attacker, find_weapon("Broadsword"), 1, fight)
+    magical_reflection(elemental, attacker, find_weapon("Broadsword"), 1, 1, fight)
     assert attacker.hp_marked == 1, "half of 1 rounds down to nothing"
 
 
@@ -3018,6 +3018,128 @@ def test_a_critical_reaction_roll_still_takes_nothing_at_all():
         scorched_earth(elemental, fight.party[0], fight)
 
     assert not any(pc.hp_marked for pc in fight.party)
+
+
+def test_an_adversary_makes_its_reaction_roll_on_a_flat_d20():
+    """No traits to add, so the bare die against the Difficulty."""
+    from features.adversaries import _reaction_roll
+
+    other = _adversary("Bystander")
+    fight = _fight(adversaries=[other])
+
+    with patch("features.adversaries.roll_d20", return_value=_d20(19)) as rolled:
+        roll = _reaction_roll(other, "agility", 13, fight)
+
+    assert rolled.call_args.kwargs["modifier"] == 0
+    assert roll.is_success
+
+
+def test_a_pc_still_makes_theirs_on_duality_dice():
+    from features.adversaries import _reaction_roll
+
+    fight = _fight()
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ) as rolled:
+        _reaction_roll(fight.party[0], "agility", 13, fight)
+
+    assert rolled.call_args.kwargs["modifier"] == 1, "the PC's Agility"
+
+
+def _wounded_bystander() -> Adversary:
+    """An ally the Very Close band is certain to catch.
+
+    Very Close reaches `n // 3` held to two, so on a small field it catches
+    exactly one - and `targets_in_area` takes the **most wounded first**. Marking
+    an HP is therefore how a test puts a chosen combatant inside the area without
+    pinning the spread roll or building a nine-body field.
+    """
+    bystander = _adversary(
+        "Bystander", hp_max=9, major_threshold=6, severe_threshold=20
+    )
+    bystander.mark_hp(1)
+    return bystander
+
+
+def test_scorched_earth_catches_the_elementals_own_allies():
+    """"All creatures" - and they roll a d20 to save, like anybody else."""
+    from features.adversaries import scorched_earth
+
+    elemental = _fire_elemental()
+    bystander = _wounded_bystander()
+    fight = _fight(party=_party(size=1, armor_max=0), adversaries=[elemental, bystander])
+
+    with _fixed_damage(10), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ), patch("features.adversaries.roll_d20", return_value=_d20(1, evasion=99)):
+        scorched_earth(elemental, fight.party[0], fight)
+
+    assert bystander.hp_marked > 1, "an ally that failed its save burns too"
+    assert elemental.hp_marked == 0, "but the Elemental does not burn itself"
+
+
+def test_an_ally_that_saves_against_scorched_earth_takes_half():
+    from features.adversaries import scorched_earth
+
+    elemental = _fire_elemental()
+    bystander = _wounded_bystander()
+    fight = _fight(party=_party(size=1, armor_max=0), adversaries=[elemental, bystander])
+
+    with _fixed_damage(10), patch("features.adversaries.roll_d20", return_value=_d20(15)):
+        scorched_earth(elemental, fight.party[0], fight)
+
+    # Half of 10 is 5, below the bystander's Major of 6, so one more HP.
+    assert bystander.hp_marked == 2
+
+
+def test_hellfire_reaches_only_the_party():
+    """"All targets", where Scorched Earth says creatures - the noun is the rule."""
+    from features.adversaries import hellfire
+
+    demon = _demon()
+    bystander = _adversary("Bystander", hp_max=9, major_threshold=6, severe_threshold=20)
+    fight = _fight(party=_burnable(), adversaries=[demon, bystander], fear=1)
+
+    with _fixed_damage(10), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ), patch("features.adversaries.roll_d20", return_value=_d20(1, evasion=99)):
+        hellfire(demon, fight.party[0], fight)
+
+    assert bystander.hp_marked == 0
+    assert any(pc.hp_marked for pc in fight.party)
+
+
+def test_earth_eruption_can_knock_over_the_burrowers_allies():
+    """The same word, and now a real opening for the party."""
+    from features.adversaries import earth_eruption
+
+    burrower = _adversary("Acid Burrower", features=["Earth Eruption"], hp_max=8)
+    bystander = _wounded_bystander()
+    fight = _fight(party=_party(size=1), adversaries=[burrower, bystander])
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ), patch("features.adversaries.roll_d20", return_value=_d20(1, evasion=99)):
+        earth_eruption(burrower, fight.party[0], fight)
+
+    assert fight.is_vulnerable(bystander)
+    assert not fight.is_vulnerable(burrower), "it does not knock itself over"
+
+
+def test_an_ally_that_makes_its_save_keeps_its_feet():
+    from features.adversaries import earth_eruption
+
+    burrower = _adversary("Acid Burrower", features=["Earth Eruption"], hp_max=8)
+    bystander = _wounded_bystander()
+    fight = _fight(party=_party(size=1), adversaries=[burrower, bystander])
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ), patch("features.adversaries.roll_d20", return_value=_d20(20)):
+        earth_eruption(burrower, fight.party[0], fight)
+
+    assert not fight.is_vulnerable(bystander)
 
 
 def test_scorched_earth_declines_without_the_stress():
@@ -3285,7 +3407,7 @@ def test_the_treants_minion_number_is_read_off_its_own_stat_block():
 def _green_ooze(**overrides) -> Adversary:
     """The printed Green Ooze: 5 HP, 2 Stress, 1d6+1 at Melee, Difficulty 8."""
     defaults = dict(
-        features=["Slow", "Acidic Form", "Envelop", "Split"],
+        features=["Slow", "Acidic Form", "Envelop", "Split (Tiny Green Ooze)"],
         hp_max=5,
         stress_max=2,
         difficulty=8,
@@ -3443,7 +3565,7 @@ def test_envelop_deals_the_oozes_standard_damage():
 
 
 def test_split_replaces_the_ooze_with_two_tiny_ones():
-    from features.adversaries import SPLIT_COUNT, SPLIT_INTO, split
+    from features.adversaries import SPLIT_COUNT, split
 
     ooze = _green_ooze()
     ooze.mark_hp(3)
@@ -3457,10 +3579,44 @@ def test_split_replaces_the_ooze_with_two_tiny_ones():
     assert all(a is not ooze for a in fight.adversaries), "it left the field"
     assert not ooze.is_defeated, "and it was not defeated doing so"
 
-    tinies = [a for a in fight.living_adversaries if a.name == SPLIT_INTO]
+    tinies = [a for a in fight.living_adversaries if a.name == "Tiny Green Ooze"]
     assert len(tinies) == SPLIT_COUNT
     assert all(tiny.hp_marked == 0 and tiny.stress_marked == 0 for tiny in tinies)
     assert all(fight.granted_activations(tiny) == 1 for tiny in tinies)
+
+
+def test_split_becomes_whatever_its_parameter_names():
+    """One feature, two products - which is why it is parameterised at all."""
+    from features.adversaries import split
+
+    red = _adversary(
+        "Red Ooze",
+        features=["Creeping Fire", "Ignite", "Split (Tiny Red Ooze)"],
+        hp_max=5,
+        major_threshold=6,
+        severe_threshold=11,
+        damage_type="magic",
+    )
+    red.mark_hp(3)
+    fight = _fight(adversaries=[red], fear=1)
+
+    split(red, 4, 1, fight)
+
+    assert [a.name for a in fight.living_adversaries] == ["Tiny Red Ooze"] * 2
+
+
+def test_split_without_a_parameter_becomes_nothing():
+    """The number - here the name - is the whole of what it turns into."""
+    from features.adversaries import split
+
+    ooze = _green_ooze(features=["Split"])
+    ooze.mark_hp(3)
+    fight = _fight(adversaries=[ooze], fear=1)
+
+    split(ooze, 4, 1, fight)
+
+    assert any(a is ooze for a in fight.adversaries)
+    assert fight.fear == 1
 
 
 def test_splitting_frees_whoever_the_ooze_had_swallowed():
@@ -3591,6 +3747,390 @@ def test_the_tiny_ooze_carries_acidic_form_from_the_same_registration():
     tiny = _adversary("Tiny Green Ooze", features=["Acidic Form"])
 
     assert assess(tiny.named_features[0]).status is Status.MODELLED
+
+
+# --- Batch 6: the Red Oozes ---------------------------------------------------
+
+
+def _red_ooze(**overrides) -> Adversary:
+    """The printed Red Ooze: 5 HP, 3 Stress, 1d8+3 at Melee."""
+    defaults = dict(
+        features=["Creeping Fire", "Ignite", "Split (Tiny Red Ooze)"],
+        hp_max=5,
+        stress_max=3,
+        difficulty=10,
+        major_threshold=6,
+        severe_threshold=11,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=3,
+        damage_type="magic",
+    )
+    defaults.update(overrides)
+    return _adversary("Red Ooze", **defaults)
+
+
+def test_creeping_fire_is_declared_as_having_no_combat_effect():
+    assert assess("adversary:Creeping Fire").status is Status.NO_COMBAT_EFFECT
+    assert assess("adversary:Creeping Fire").reason
+
+
+def test_ignite_sets_the_target_alight():
+    from features.adversaries import IGNITED, ignite
+
+    ooze = _red_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        ignite(ooze, target, fight)
+
+    assert fight.has_condition(target, IGNITED)
+
+
+def test_being_ignited_costs_damage_on_every_action_roll():
+    """The first condition whose per-roll cost is damage rather than Stress."""
+    from features.adversaries import IGNITED, ignite
+
+    ooze = _red_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        ignite(ooze, target, fight)
+
+    before = target.hp_marked
+    fight.apply_condition_effects(target, BEFORE_AN_ACTION_ROLL)
+
+    assert target.hp_marked > before
+    assert fight.has_condition(target, IGNITED), "and it keeps burning"
+
+
+def test_a_successful_finesse_roll_puts_the_fire_out():
+    from features.adversaries import IGNITED, ignite
+
+    ooze = _red_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        ignite(ooze, target, fight)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        assert fight.expire_conditions(target, WHEN_THEY_ACT) == []
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        assert fight.expire_conditions(target, WHEN_THEY_ACT) == [IGNITED]
+
+
+def test_the_fire_outlives_the_ooze_that_lit_it():
+    """Ignited carries its own ender, so it is not a hold and does not lift."""
+    from features.adversaries import IGNITED, ignite
+
+    ooze = _red_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        ignite(ooze, target, fight)
+
+    ooze.mark_hp(ooze.hp_unmarked - 1)
+    ooze.take_damage(1, fight)
+
+    assert ooze.is_defeated
+    assert fight.has_condition(target, IGNITED)
+
+
+def test_ignite_is_not_used_on_a_target_already_burning():
+    """Rule 3: its point is the condition, and 1d8 is less than the staff."""
+    from features.adversaries import ignite
+
+    ooze = _red_ooze()
+    fight = _fight(party=_party(armor_max=0), adversaries=[ooze])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        ignite(ooze, target, fight)
+        assert ignite(ooze, target, fight) is None
+
+
+def test_burning_scorches_a_melee_attacker():
+    from features.adversaries import burning
+
+    tiny = _adversary("Tiny Red Ooze", features=["Burning"], hp_max=2, damage_type="magic")
+    fight = _fight(party=_party(armor_max=2), adversaries=[tiny])
+    attacker = fight.party[0]
+
+    burning(tiny, attacker, find_weapon("Broadsword"), 7, 1, fight)
+
+    assert attacker.hp_marked >= 1
+    assert attacker.armor_marked == 0, "direct damage marks no Armor Slot"
+
+
+def test_burning_does_not_reach_an_archer():
+    from features.adversaries import burning
+
+    tiny = _adversary("Tiny Red Ooze", features=["Burning"], hp_max=2, damage_type="magic")
+    fight = _fight(party=_party(armor_max=0), adversaries=[tiny])
+    attacker = fight.party[0]
+
+    burning(tiny, attacker, find_weapon("Shortbow"), 7, 1, fight)
+
+    assert attacker.hp_marked == 0
+
+
+def test_burning_needs_damage_to_have_been_dealt():
+    from features.adversaries import burning
+
+    tiny = _adversary("Tiny Red Ooze", features=["Burning"], hp_max=2, damage_type="magic")
+    fight = _fight(party=_party(armor_max=0), adversaries=[tiny])
+    attacker = fight.party[0]
+
+    burning(tiny, attacker, find_weapon("Broadsword"), 0, 0, fight)
+
+    assert attacker.hp_marked == 0
+
+
+# --- Batch 6: the pirates -----------------------------------------------------
+
+
+def _captain(**overrides) -> Adversary:
+    """The printed Pirate Captain: 7 HP, 5 Stress, a 1d12+2 cutlass."""
+    defaults = dict(
+        features=["Swashbuckler", "Reinforcements", "No Quarter", "Momentum"],
+        hp_max=7,
+        stress_max=5,
+        difficulty=14,
+        major_threshold=7,
+        severe_threshold=14,
+        attack_modifier=4,
+        damage_dice=[DiceGroup(count=1, sides=12)],
+        damage_modifier=2,
+    )
+    defaults.update(overrides)
+    return _adversary("Pirate Captain", **defaults)
+
+
+def _tough(**overrides) -> Adversary:
+    """The printed Pirate Tough: 5 HP, 3 Stress, 2d6 fists with no flat bonus."""
+    defaults = dict(
+        features=["Swashbuckler", "Clear the Decks"],
+        hp_max=5,
+        stress_max=3,
+        difficulty=13,
+        major_threshold=8,
+        severe_threshold=15,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=2, sides=6)],
+        damage_modifier=0,
+    )
+    defaults.update(overrides)
+    return _adversary("Pirate Tough", **defaults)
+
+
+def test_swashbuckler_costs_a_glancing_melee_attacker_a_stress():
+    from features.adversaries import swashbuckler
+
+    captain = _captain()
+    fight = _fight(adversaries=[captain])
+    attacker = fight.party[0]
+
+    swashbuckler(captain, attacker, find_weapon("Broadsword"), 6, 2, fight)
+
+    assert attacker.stress_marked == 1
+
+
+def test_swashbuckler_says_nothing_about_a_solid_hit():
+    """"2 or fewer HP" - a hit that really hurt is not what it punishes."""
+    from features.adversaries import swashbuckler
+
+    captain = _captain()
+    fight = _fight(adversaries=[captain])
+    attacker = fight.party[0]
+
+    swashbuckler(captain, attacker, find_weapon("Broadsword"), 20, 3, fight)
+
+    assert attacker.stress_marked == 0
+
+
+def test_swashbuckler_does_not_reach_an_archer():
+    from features.adversaries import swashbuckler
+
+    captain = _captain()
+    fight = _fight(adversaries=[captain])
+    attacker = fight.party[0]
+
+    swashbuckler(captain, attacker, find_weapon("Shortbow"), 6, 1, fight)
+
+    assert attacker.stress_marked == 0
+
+
+def test_swashbuckler_reaches_every_pirate_from_one_registration():
+    from features.adversaries import swashbuckler
+
+    for pirate in (_captain(), _tough()):
+        fight = _fight(adversaries=[pirate])
+        attacker = fight.party[0]
+
+        swashbuckler(pirate, attacker, find_weapon("Broadsword"), 6, 1, fight)
+
+        assert attacker.stress_marked == 1
+
+
+def test_swashbuckler_reaches_the_captain_through_dispatch():
+    """The signature change is only worth anything if the call site passes it."""
+    from content.registry import apply_on_attacked
+
+    captain = _captain()
+    fight = _fight(adversaries=[captain])
+    attacker = fight.party[0]
+
+    apply_on_attacked(captain, attacker, find_weapon("Broadsword"), 6, 1, fight)
+
+    assert attacker.stress_marked == 1
+
+
+def test_reinforcements_summons_a_raiders_horde_once():
+    from features.adversaries import REINFORCEMENTS_SUMMON, reinforcements
+
+    captain = _captain()
+    captain.mark_hp(3)  # inside the Stress-desperation line
+    fight = _fight(adversaries=[captain])
+
+    result = reinforcements(captain, fight.party[0], fight)
+
+    assert result.made_an_attack is False
+    assert captain.stress_marked == 1
+    raiders = [a for a in fight.living_adversaries if a.name == REINFORCEMENTS_SUMMON]
+    assert len(raiders) == 1
+
+    assert reinforcements(captain, fight.party[0], fight) is None, "once per scene"
+    assert captain.stress_marked == 1
+
+
+def test_no_quarter_needs_a_crew_around_the_target():
+    """At three pirates the Melee band reaches two, which is not enough."""
+    from features.adversaries import no_quarter
+
+    crew = [_captain(), _tough(), _tough()]
+    fight = _fight(adversaries=crew, fear=2)
+
+    with _bunched():
+        assert no_quarter(crew[0], fight.party[0], fight) is None
+    assert fight.fear == 2
+
+
+def test_no_quarter_lands_once_the_crew_is_big_enough():
+    from features.adversaries import no_quarter
+
+    crew = [_captain()] + [_tough() for _ in range(5)]
+    fight = _fight(party=_party(armor_max=0), adversaries=crew, fear=2)
+    target = fight.party[0]
+
+    with _bunched(), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        result = no_quarter(crew[0], target, fight)
+
+    assert fight.fear == 1
+    assert result.made_an_attack is False
+    assert target.stress_marked >= 2, "1d4+1 is at least 2"
+
+
+def test_holding_your_nerve_against_no_quarter_costs_one_stress():
+    from features.adversaries import no_quarter
+
+    crew = [_captain()] + [_tough() for _ in range(5)]
+    fight = _fight(party=_party(armor_max=0), adversaries=crew, fear=2)
+    target = fight.party[0]
+
+    with _bunched(), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        no_quarter(crew[0], target, fight)
+
+    assert target.stress_marked == 1
+
+
+def test_a_critical_shrugs_no_quarter_off_entirely():
+    from features.adversaries import no_quarter
+
+    crew = [_captain()] + [_tough() for _ in range(5)]
+    fight = _fight(party=_party(armor_max=0), adversaries=crew, fear=2)
+    target = fight.party[0]
+
+    with _bunched(), patch(
+        "features.adversaries.roll_duality",
+        return_value=_duality(succeeds=True, critical=True),
+    ):
+        no_quarter(crew[0], target, fight)
+
+    assert target.stress_marked == 0
+
+
+def test_no_quarter_counts_anything_with_pirate_in_its_name():
+    """"Pirates" is a kind rather than a stat block, unlike On My Signal's."""
+    from features.adversaries import no_quarter
+
+    crew = [_captain()] + [_tough() for _ in range(5)]
+    landlubbers = [_adversary(f"Bandit {index}") for index in range(6)]
+    fight = _fight(adversaries=[*crew, *landlubbers], fear=2)
+
+    with _bunched(), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        assert no_quarter(crew[0], fight.party[0], fight) is not None
+
+    # The same field with nobody piratical in it reaches nothing.
+    alone = _fight(adversaries=[_captain(), *landlubbers], fear=2)
+    with _bunched():
+        assert no_quarter(alone.adversaries[0], alone.party[0], alone) is None
+
+
+def test_no_quarter_declines_without_the_fear():
+    from features.adversaries import no_quarter
+
+    crew = [_captain()] + [_tough() for _ in range(5)]
+    fight = _fight(adversaries=crew, fear=0)
+
+    with _bunched():
+        assert no_quarter(crew[0], fight.party[0], fight) is None
+
+
+def test_clear_the_decks_costs_a_stress_on_a_landed_hit():
+    from features.adversaries import clear_the_decks
+
+    tough = _tough()
+    fight = _fight(party=_party(armor_max=0), adversaries=[tough])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = clear_the_decks(tough, fight.party[0], fight)
+
+    assert tough.stress_marked == 1
+    # 3d4, so at least 3 and never the 2d6 the stat block prints.
+    assert result.damage_roll.total >= 3
+
+
+def test_clear_the_decks_keeps_its_stress_on_a_miss():
+    from features.adversaries import clear_the_decks
+
+    tough = _tough()
+    fight = _fight(adversaries=[tough])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(1)):
+        clear_the_decks(tough, fight.party[0], fight)
+
+    assert tough.stress_marked == 0
+
+
+def test_the_pirate_raiders_needed_no_new_code():
+    """Horde (X) was generic from batch 2, and Swashbuckler is shared."""
+    assert assess("adversary:Horde (1d4+1)").status is Status.MODELLED
+    assert assess("adversary:Swashbuckler").status is Status.MODELLED
 
 
 def test_a_mixed_threshold_reads_major_and_leaves_severe_out_of_reach():
