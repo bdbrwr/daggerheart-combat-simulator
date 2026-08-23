@@ -42,6 +42,7 @@ from content.registry import (
     resistance_to,
     soften_damage,
     standard_attack_damage,
+    standard_attack_damage_type,
     total_damage_bonus,
     total_difficulty_bonus,
 )
@@ -264,8 +265,17 @@ class Adversary:
         through either - a reflection, a splash, a countdown volley - has to ask
         it directly rather than reading `damage_type` off the stat block itself,
         so the fallback can never be spelled two different ways.
+
+        **Content can override the printed attack's type**, which is what the
+        Spellblade's `Arcane Steel` does ("considered both physical and magic").
+        Asked only when nothing was stated, so it reaches the standard attack and
+        never a feature that brought its own type - the same discriminator
+        `standard_damage` uses for dice.
         """
-        return self.damage_type if stated is None else stated
+        if stated is not None:
+            return stated
+        overridden = standard_attack_damage_type(self)
+        return self.damage_type if overridden is None else overridden
 
     def _dealt(self, damage_roll, target, fight) -> int:
         """The damage this roll actually delivers, after anything multiplies it.

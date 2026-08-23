@@ -31,7 +31,7 @@ not ruled on and not implemented stays `unimplemented`.
 """
 
 from combat.results import AttackResult
-from content.damage_types import DamageType
+from content.damage_types import DamageType, includes
 from content.registry import (
     Fight,
     Holder,
@@ -87,7 +87,7 @@ def iron_will(
     hit would otherwise put the Guardian down, and otherwise only when the hit
     is still marking 2 or more HP after the free slot.
     """
-    if damage_type is not DamageType.PHYSICAL:
+    if not includes(damage_type, DamageType.PHYSICAL):
         return hp_to_mark
     if hp_to_mark <= 0:
         return hp_to_mark

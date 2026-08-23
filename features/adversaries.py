@@ -42,6 +42,7 @@ from combat.results import AttackResult
 from content.aoe import Range, chance_within, targets_in_area, targets_reached
 from content.conditions import (
     BEFORE_AN_ACTION_ROLL,
+    HIDDEN,
     POISONED,
     RESTRAINED,
     VULNERABLE,
@@ -49,7 +50,7 @@ from content.conditions import (
     until_they_clear_hp,
     when_they_act,
 )
-from content.damage_types import RESISTED, DamageType
+from content.damage_types import BOTH, RESISTED, DamageType, includes
 from content.names import ADVERSARY, canonical, qualified
 from content.registry import (
     Fight,
@@ -75,10 +76,13 @@ from content.registry import (
     on_hit,
     on_party_attack_roll,
     on_spotlight,
+    party_attack_disadvantage,
     severity_increase,
     skip_spotlight,
     spotlight_cost,
+    spotlight_while_defeated,
     standard_damage,
+    standard_damage_type,
 )
 from dice.common import AdvantageState
 from dice.d20 import roll_d20
@@ -244,7 +248,7 @@ def weak_structure(
     Now that the restriction bites, a party carrying magic damage is the answer
     to it - which is the choice the printed page was offering all along.
     """
-    if damage_type is not DamageType.PHYSICAL:
+    if not includes(damage_type, DamageType.PHYSICAL):
         return hp_to_mark
     if hp_to_mark <= 0:
         return hp_to_mark
@@ -1070,14 +1074,36 @@ PACK_TACTICS = qualified(ADVERSARY, "Pack Tactics")
 # the target" says.
 PACK_TACTICS_WOLVES = 2
 
+# The word a stat block adds to the parameter when its printed text pays the GM a
+# Fear - `Pack Tactics (1d6+5, Fear)`. See the docstring for why the parameter
+# carries two things rather than one.
+PACK_TACTICS_FEAR = "Fear"
+
 
 @standard_damage(PACK_TACTICS)
 def pack_tactics(adversary, target, roll=None, fight=None):
-    """A successful standard attack deals 1d6+5 instead, and hands the GM a Fear.
+    """A successful standard attack deals X instead, and may hand the GM a Fear.
 
-    SRD: "If the Wolf makes a successful standard attack and another Dire Wolf is
-    within Melee range of the target, deal 1d6+5 physical damage instead of their
-    standard damage and you gain a Fear."
+    SRD, Dire Wolf: "If the Wolf makes a successful standard attack and another
+    Dire Wolf is within Melee range of the target, deal 1d6+5 physical damage
+    instead of their standard damage **and you gain a Fear**."
+
+    SRD, Sylvan Soldier: "If the Soldier makes a standard attack and another
+    Sylvan Soldier is within Melee range of the target, deal **1d8+5** physical
+    damage instead of their standard damage." No Fear.
+
+    **Parameterised on both halves that differ**, which is why the argument is
+    two terms rather than one: `Pack Tactics (1d6+5, Fear)` on the Dire Wolf and
+    `Pack Tactics (1d8+5)` on the Sylvan Soldier. The alternative - dropping the
+    Fear so a single number would do - was offered and declined, on the grounds
+    that it would quietly change a stat block that is already ported rather than
+    changing how one is authored. So the printed difference lives in the JSON,
+    where a reader can check it against the page, exactly as `Horde (X)` and
+    `Split (X)` already do.
+
+    A stat block writing `Pack Tactics` bare gets nothing rather than a guess,
+    the way Relentless and Flying do - and the same is true of the Fear, which
+    has to be asked for by name.
 
     Asked from inside the damage roll, so the success is already established -
     which is what lets the Fear be paid out here rather than needing a second
@@ -1094,30 +1120,45 @@ def pack_tactics(adversary, target, roll=None, fight=None):
     latter would fire on every attack while any packmate stood anywhere, which
     is far more than the page promises.
 
-    Worth knowing for tuning: 1d6+5 averages 8.5 against the Wolf's printed
+    Worth knowing for tuning: the Wolf's 1d6+5 averages 8.5 against its printed
     1d6+2 at 5.5, and the Fear rides on top of every one that lands. Like the
-    Bear's Momentum, a pack of these partly pays for its own extra activations -
+    Bear's Momentum, a pack of Wolves partly pays for its own extra activations -
     and unlike Momentum it needs no Stress and has no cap, so how often the band
-    lets it through is the whole of what holds it back.
+    lets it through is the whole of what holds it back. A pack of Sylvan Soldiers
+    buys the damage and none of that.
     """
     if fight is None:
         return None
+
+    written = feature_parameter(adversary, PACK_TACTICS)
+    if written is None:
+        return None
+    terms = [term.strip() for term in str(written).split(",") if term.strip()]
+    if not terms:
+        return None
+    pays_fear = any(canonical(term) == canonical(PACK_TACTICS_FEAR) for term in terms[1:])
+    dice, modifier = _damage_spec(terms[0])
 
     pack = [
         other
         for other in fight.living_adversaries
         if canonical(other.name) == canonical(adversary.name)
     ]
-    # The attacker counts: the question is how many wolves are on this target,
-    # and it is one of them.
+    # The attacker counts: the question is how many of the pack are on this
+    # target, and it is one of them.
     if len(pack) < PACK_TACTICS_WOLVES:
         return None
     if targets_reached(Range.MELEE, len(pack)) < PACK_TACTICS_WOLVES:
         return None
 
-    fight.gain_fear(1)
-    fight.note(f"{adversary.name} closes in as a pack (Pack Tactics: GM gains a Fear)")
-    return [DiceGroup(count=1, sides=6)], 5
+    if pays_fear:
+        fight.gain_fear(1)
+        fight.note(
+            f"{adversary.name} closes in as a pack (Pack Tactics: GM gains a Fear)"
+        )
+    else:
+        fight.note(f"{adversary.name} closes in as a pack (Pack Tactics)")
+    return dice, modifier
 
 
 HOBBLING_STRIKE = qualified(ADVERSARY, "Hobbling Strike")
@@ -2548,16 +2589,29 @@ CLOAKED_TOKEN = "Cloaked"
 @action(
     CLOAKED,
     unmodelled=[
-        "Cloaked: being Hidden itself, which the SRD also uses to stop a "
-        "combatant being targeted. Nothing here tracks Hidden as a condition, so "
-        "only the Advantage on the next attack is modelled",
+        "Cloaked: the SRD also uses Hidden to stop a combatant being targeted at "
+        "all. What is modelled is the Disadvantage every roll against a hidden "
+        "combatant takes, plus this feature's own Advantage - targeting itself "
+        "still ignores it",
     ],
 )
 def cloaked(adversary, target, fight: Fight):
-    """Vanish: the next attack this adversary makes has Advantage.
+    """Vanish: rolls against this adversary are hobbled, and its next attack isn't.
 
     SRD: "Become Hidden until after the Shadow's next attack. Attacks made while
     Hidden from this feature have advantage."
+
+    **Both halves are now modelled.** The Advantage was always here; the Hidden
+    itself used to be a declared gap, because nothing tracked the condition. It
+    does now - every roll against a hidden combatant has Disadvantage - so the
+    condition is applied for real and the gap is gone. That makes the Shadow
+    meaningfully harder to hit for the turn it spends cloaking, which is a change
+    to a stat block that was already ported: it follows from the ruling on
+    Hidden rather than from any decision about the Shadow.
+
+    **No `found_by`**, unlike the Sylvan Soldier's Blend In. The page offers no
+    roll to find a cloaked Shadow, so the party cannot spend an action hunting
+    for one - it simply ends when the Shadow strikes.
 
     Spends the whole spotlight and rolls nothing, which is the trade: a turn of
     no damage buys Advantage, and with Backstab it also buys 1d6+6 instead of
@@ -2574,6 +2628,7 @@ def cloaked(adversary, target, fight: Fight):
         return None
 
     fight.set_token(adversary, CLOAKED_TOKEN, 1)
+    fight.apply_condition(adversary, Condition(name=HIDDEN, source=adversary))
     fight.note(f"{adversary.name} melts into the shadows (Cloaked)")
     # The spotlight is spent, but nothing rolled to hit anybody.
     return AttackResult(attack_roll=None, damage_roll=None)
@@ -2587,11 +2642,16 @@ def cloaked_grants_advantage(adversary, target, fight=None):
     immediately before the roll - so the token is cleared here rather than
     needing something afterwards to notice the attack happened. That is what
     "until after the Shadow's next attack" comes to.
+
+    The Hidden condition ends in the same breath, since the page ends both with
+    the same clause. Cleared here rather than by anything watching the attack,
+    for the same reason the token is.
     """
     if fight is None or not fight.token_count(adversary, CLOAKED_TOKEN):
         return None
 
     fight.set_token(adversary, CLOAKED_TOKEN, 0)
+    fight.clear_condition(adversary, HIDDEN)
     fight.note(f"{adversary.name} strikes from hiding")
     return AdvantageState.ADVANTAGE
 
@@ -2624,7 +2684,7 @@ def arcane_form(adversary, damage_type, fight=None) -> float | None:
     weapon choice - the front line's steel gets through in full, and the
     spellcasters do not.
     """
-    if damage_type is not DamageType.MAGIC:
+    if not includes(damage_type, DamageType.MAGIC):
         return None
     return RESISTED
 
@@ -3667,6 +3727,1016 @@ def clear_the_decks(adversary, target, fight: Fight):
     return result
 
 
+# --- Skeleton Archer ---------------------------------------------------------
+
+OPPORTUNIST = qualified(ADVERSARY, "Opportunist")
+
+# "Two or more adversaries within Very Close range of a creature", as printed,
+# and "double" for the damage.
+OPPORTUNIST_ADVERSARIES = 2
+OPPORTUNIST_MULTIPLIER = 2
+
+
+@damage_multiplier(OPPORTUNIST)
+def opportunist(adversary, target, attacker, fight=None) -> int | None:
+    """Double this adversary's damage to a creature two or more of its side crowd.
+
+    SRD: "When two or more adversaries are within Very Close range of a creature,
+    all damage the Archer deals to that creature is doubled."
+
+    Registered on the same hook as the Kneebreaker's `I've Got 'Em`, and the two
+    are near mirror images: that one belongs to a **third party** and doubles
+    what *other* adversaries deal, while this one belongs to the attacker and
+    doubles only its own. So the check here is `attacker is adversary`, exactly
+    where I've Got 'Em checks `attacker is not adversary`.
+
+    **All damage the Archer deals**, not only its standard attack - so Deadly
+    Shot's 3d4+8 is doubled too, which is the largest single number a tier 1
+    stat block can produce. Doubling lands before the target's thresholds, the
+    same place I've Got 'Em's does.
+
+    SIMULATION RULE - policy. "Two or more adversaries within Very Close range of
+    a creature" is positioning, so the **area rule answers it** the way it
+    answers Pack Tactics and No Quarter: of the adversaries alive,
+    `targets_reached(VERY_CLOSE, ...)` says how many are on this target.
+
+    RULED. **The Archer counts itself**, the same reading No Quarter takes when
+    it counts the Captain among its three Pirates - the page names a number of
+    adversaries rather than "other adversaries", where Pack Tactics is explicit
+    about "*another* Dire Wolf".
+
+    Worth knowing before reading numbers, because the consequence is large. Very
+    Close reaches `n // 3` capped at 2, so **this cannot fire below six
+    adversaries** - the No Quarter situation again, and arriving the same way,
+    from a printed 2 meeting the band rather than from any threshold of ours. A
+    Skeleton Archer in a small skirmish is a plain 1d8+1 shooter; one standing
+    behind a crowd of Dredges is something else entirely, which is what the
+    Dredge's own feeble stat block is for.
+    """
+    if fight is None or attacker is not adversary:
+        return None
+
+    crowd = fight.living_adversaries
+    if len(crowd) < OPPORTUNIST_ADVERSARIES:
+        return None
+    if targets_reached(Range.VERY_CLOSE, len(crowd)) < OPPORTUNIST_ADVERSARIES:
+        return None
+
+    # Worth a line of its own for the same reason I've Got 'Em's is: the loop
+    # reports the damage *rolled*, and what lands is twice that.
+    fight.note(
+        f"{target.name} is surrounded, and takes double damage "
+        f"(Opportunist: {adversary.name})"
+    )
+    return OPPORTUNIST_MULTIPLIER
+
+
+DEADLY_SHOT = qualified(ADVERSARY, "Deadly Shot")
+
+
+@action(DEADLY_SHOT)
+def deadly_shot(adversary, target, fight: Fight):
+    """Mark a Stress to shoot a Vulnerable target at Far range for 3d4+8.
+
+    SRD: "Make an attack against a Vulnerable target within Far range. On a
+    success, mark a Stress to deal 3d4+8 physical damage."
+
+    3d4+8 averages 15.5 against the Archer's printed 1d8+1 at 5.5, so this is
+    most of what a Skeleton Archer is worth - and it is gated on the target
+    already being Vulnerable, which is a **printed requirement** rather than a
+    policy of ours. Coup de Grace is the same shape and the same reading.
+
+    Nothing in the Archer's own kit makes anybody Vulnerable, so like Coup de
+    Grace this is the payoff card of a kit rather than a feature that stands by
+    itself: a PC who has marked their last Stress qualifies, and so does one the
+    Minor Chaos Elemental's Sickening Flux or a Kneebreaker's hold has caught.
+
+    Rolled through the shared advantage rule rather than flat, since a Vulnerable
+    target hands every roll against them Advantage - which, this feature being
+    what it is, is always true when it fires.
+
+    The Stress is paid on a success, so the attack is rolled first and a miss
+    costs nothing - the shape Hobbling Shot uses.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
+    rule decides when it is on the table. 3 HP against two Stress puts the Archer
+    inside the line from full health, so the rule never actually holds this back
+    and the printed Vulnerable requirement is the whole of the gate.
+    """
+    from combat.policy import adversary_attack_advantage
+
+    if not fight.is_vulnerable(target):
+        return None
+    if not adversary.will_spend_stress(1):
+        return None
+
+    result = adversary.attack(
+        target,
+        adversary_attack_advantage(adversary, target, fight),
+        fight,
+        damage_dice=[DiceGroup(count=3, sides=4)],
+        damage_modifier=8,
+        damage_type=DamageType.PHYSICAL,
+    )
+    if result.damage_roll is None:
+        return result
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} looses a deadly shot at {target.name}")
+    return result
+
+
+# --- Skeleton Knight ---------------------------------------------------------
+
+TERRIFYING = qualified(ADVERSARY, "Terrifying")
+
+
+@on_hit(TERRIFYING)
+def terrifying(adversary, target, result, fight: Fight) -> None:
+    """A landed attack costs every PC in Close range a Hope, and hands the GM a Fear.
+
+    SRD: "When the Knight makes a successful attack, all PCs within Close range
+    lose a Hope and you gain a Fear."
+
+    Dispatch only reaches an on-hit rider once the attack has landed, so the
+    success is already established - and it reaches *every* attack the Knight
+    makes, its standard swing and Cut to the Bone alike, which is what "a
+    successful attack" says.
+
+    **One Fear, not one per PC.** The corroboration is two entries further down
+    the same page: the Patchwork Zombie Hulk's *Tormented Screams* has to write
+    "you gain a Fear **for each**" to get the other reading, which is only worth
+    printing if a bare "you gain a Fear" means one.
+
+    "All PCs within Close range" is an area rather than one named person, so
+    `targets_in_area` answers it - the shape Ground Slam and Death Quake use -
+    where the Minor Demon's *All Must Fall* asks `chance_within` because its
+    trigger is one particular PC's roll.
+
+    The Hope is taken through `spend_hope`, which clamps, so a PC with none
+    simply loses nothing. It is counted as *spent* in the report for the reason
+    All Must Fall gives: a PC losing a Hope to fear has not strictly spent it,
+    but the alternative is a fifth Hope figure nobody asked for and four that
+    stop reconciling.
+
+    This is the second free Hope drain in the catalogue and much the more
+    reliable one - All Must Fall needs the party to roll a failure with Fear,
+    where this needs only the Knight to connect - and it pays the GM a Fear on
+    top, which is Momentum's effect without Momentum's name.
+    """
+    caught = targets_in_area(Range.CLOSE, fight.conscious_party)
+    if not caught:
+        return
+
+    for pc in caught:
+        if not pc.can_spend_hope(1):
+            continue
+        pc.spend_hope(1)
+        fight.note(f"{pc.name} loses a Hope to the Knight's advance (Terrifying)")
+
+    gained = fight.gain_fear(1)
+    if gained:
+        fight.note(f"{adversary.name} is terrifying (GM gains a Fear)")
+
+
+CUT_TO_THE_BONE = qualified(ADVERSARY, "Cut to the Bone")
+
+
+@action(CUT_TO_THE_BONE)
+def cut_to_the_bone(adversary, target, fight: Fight):
+    """Mark a Stress to sweep everyone Very Close for 1d8+2 and a Stress each.
+
+    SRD: "Mark a Stress to make an attack against all targets within Very Close
+    range. Targets the Knight succeeds against take 1d8+2 physical damage and
+    must mark a Stress."
+
+    1d8+2 averages 6.5 against the Knight's printed 1d10+2 at 7.5, so as damage
+    this is a small step down and what it buys is reach plus the forced Stress -
+    which is worth more than it looks, since a PC with every Stress marked is
+    Vulnerable for the rest of the fight and can't pay for their own cards. The
+    Stress is forced, so a PC with no free slot marks an HP instead.
+
+    Worth knowing what the area rule costs it: Very Close is held to two, so
+    against a party of four this reaches one PC and the sweep buys nothing - the
+    same tax Spinning Serpent pays, and the reason a lone Knight is really just a
+    greatsword.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
+    rule decides when it is on the table, with deliberately no threshold on how
+    many PCs it reaches. 5 HP against two Stress puts the Knight inside the line
+    from full health, so both its Stress go early and then it is a plain
+    attacker.
+    """
+    caught = targets_in_area(Range.VERY_CLOSE, fight.conscious_party)
+    if not caught or not adversary.will_spend_stress(1):
+        return None
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} sweeps the rusty greatsword (Cut to the Bone)")
+    result, struck = adversary.area_attack(
+        caught,
+        fight=fight,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=2,
+        damage_type=DamageType.PHYSICAL,
+    )
+    for pc in struck:
+        pc.mark_stress(1)
+        fight.note(f"{pc.name} is cut to the bone, and marks a Stress")
+    return result
+
+
+DIG_TWO_GRAVES = qualified(ADVERSARY, "Dig Two Graves")
+
+# "Loses 1d4 Hope", as printed. Rolled with `random` directly, the way the
+# Spitter Die and No Quarter's Stress are - this is neither an attack, a damage
+# roll nor a duality roll, so nothing in dice/ has a shape for it.
+DIG_TWO_GRAVES_HOPE_DIE = 4
+
+
+@on_damaged(
+    DIG_TWO_GRAVES,
+    unmodelled=[
+        "Dig Two Graves: a PC the dying blow knocks unconscious still completes "
+        "the attack they had already started - the swing resolves inside their "
+        "own, and a spotlight under way can't be unwound. The same gap Fall Back "
+        "declares",
+    ],
+)
+def dig_two_graves(adversary, amount: int, hp_marked: int, fight=None) -> None:
+    """When this adversary is defeated, it swings once more for 1d4+8 and 1d4 Hope.
+
+    SRD: "When the Knight is defeated, they make an attack against a target
+    within Very Close range (prioritizing the creature who killed them). On a
+    success, the target takes 1d4+8 physical damage and loses 1d4 Hope."
+
+    Fires from `on_damaged`, which runs after the marking is settled - so
+    `is_defeated` is already true here and the Knight is swinging as it dies,
+    the same window the Construct's Death Quake explodes in. Firing from there
+    rather than from `on_attacked` is what makes it reach **however the Knight
+    died**: a spell that rolled its own attack, an area effect, or another
+    adversary's splash all get the parting swing, where the attack-side hook only
+    sees a PC's weapon.
+
+    RULED. **"Prioritizing the creature who killed them" is modelled**, not
+    declared as a gap - and it needed one thing moving to be true. The standing
+    targeting rule already answers "whoever hit this adversary last", but the
+    memory behind it was written *after* an attack resolved, so at this moment it
+    still named whoever hit the Knight the time before. `combat/policy.py` now
+    records it before the attack instead, which nothing outside an attack can
+    tell apart, and this feature simply asks the standing rule.
+
+    1d4+8 averages 10.5 against the Knight's printed 1d10+2 at 7.5, so killing
+    this stat block costs something - and the Hope hurts more than the damage
+    does, since 1d4 off a six-Hope track is most of what a PC has banked for
+    their class feature. Note the Knight's own *Terrifying* fires off this attack
+    too, through the generic on-hit dispatch, so the parting swing also drains
+    the whole front line and pays the GM a Fear.
+
+    USAGE POLICY - ruled. A Reaction: it fires whenever its trigger happens, and
+    it costs nothing at all, so there is nothing to gate.
+    """
+    if fight is None or not adversary.is_defeated:
+        return
+
+    # The standing targeting rule, which now names the killer - see above.
+    # Imported here rather than at module level: combat/ reaches content/, which
+    # discovers this package, so the two only meet at call time.
+    from combat.policy import choose_adversary_target
+
+    target = choose_adversary_target(adversary, fight)
+    if target is None:
+        return
+
+    fight.note(f"{adversary.name} swings as it falls (Dig Two Graves)")
+    result = adversary.attack(
+        target,
+        fight=fight,
+        damage_dice=[DiceGroup(count=1, sides=4)],
+        damage_modifier=8,
+        damage_type=DamageType.PHYSICAL,
+    )
+    if result.damage_roll is None:
+        fight.note(f"{adversary.name} misses {target.name} ({result.attack_roll})")
+        return
+
+    # `spend_hope` clamps, so a PC with less than the roll simply loses what they
+    # had. Counted as spent for the reason Terrifying and All Must Fall are.
+    lost = random.randint(1, DIG_TWO_GRAVES_HOPE_DIE)
+    target.spend_hope(lost)
+    fight.note(f"{target.name} loses {lost} Hope to the Knight's dying blow")
+
+    # A Reaction's attack is made outside the spotlight loop, so the loop isn't
+    # there to hand out the riders a landed attack triggers - the Harrier's Fall
+    # Back has the same problem and the same answer. Asked generically; it is
+    # what carries the Knight's own Terrifying onto this swing.
+    apply_on_hit(adversary, target, result, fight)
+
+
+# --- Skeleton Warrior --------------------------------------------------------
+
+ONLY_BONES = qualified(ADVERSARY, "Only Bones")
+
+
+@damage_resistance(ONLY_BONES)
+def only_bones(adversary, damage_type, fight=None) -> float | None:
+    """This adversary is resistant to physical damage.
+
+    SRD: "The Warrior is resistant to physical damage."
+
+    The mirror of the Minor Chaos Elemental's `Arcane Form`, registered on the
+    same hook and pointed at the other type. Arcane Form is answered by drawing
+    steel; this one is answered by magic damage.
+
+    Halving lands **before** the Warrior's thresholds of 4 and 8, which is what
+    the effect is made of: 9 physical marks 2 HP where 9 magic marks 3, and it
+    takes 16 physical to reach Severe.
+
+    One bound worth having, because it is arithmetic rather than a guess: the
+    thresholds are one HP apart per band, so **halving can save at most 1 HP on
+    any single hit**, against a 3 HP track. That is the ceiling on what this
+    feature can do per swing, whatever the damage rolled.
+
+    **How much that is worth is a question for a run, not for this docstring.**
+    The arithmetic above is one hit; what it does to a fight depends on what the
+    party is carrying and how often thresholds are near a boundary, which is
+    exactly the sort of thing this simulator exists to measure rather than to be
+    told. Early observation from the user is that it matters *less* than the
+    per-hit arithmetic suggests.
+
+    Declines on anything that isn't physical, which includes untyped damage - a
+    resistance applies to a type that was stated.
+    """
+    if not includes(damage_type, DamageType.PHYSICAL):
+        return None
+    return RESISTED
+
+
+WONT_STAY_DEAD = qualified(ADVERSARY, "Won't Stay Dead")
+
+# The die and the face that brings it back, as printed.
+WONT_STAY_DEAD_DIE = 6
+WONT_STAY_DEAD_REFORMS_AT = 6
+
+
+@spotlight_while_defeated(WONT_STAY_DEAD)
+def wont_stay_dead_waits(adversary, fight=None) -> bool:
+    """A defeated Warrior can still be spotlighted, while it has company.
+
+    The permission half of the feature, and the reason `spotlight_while_defeated`
+    exists at all: the GM has to be able to spend a spotlight on a pile of bones
+    before the d6 below can be rolled.
+
+    The printed condition - "if there are other adversaries on the battlefield" -
+    is checked here as well as at the roll, so the GM never pays for a spotlight
+    that cannot possibly do anything. The Warrior itself is defeated and so is
+    not among `living_adversaries`, which means a *lone* Warrior asks for
+    nothing: the fight is already over by the time the loop would ask.
+    """
+    return fight is not None and bool(fight.living_adversaries)
+
+
+@on_spotlight(WONT_STAY_DEAD)
+def wont_stay_dead(adversary, fight=None) -> None:
+    """Roll a d6 on being spotlighted while defeated; on a 6, re-form.
+
+    SRD: "When the Warrior is defeated, you can spotlight them and roll a d6. On
+    a result of 6, if there are other adversaries on the battlefield, the Warrior
+    re-forms with no marked HP."
+
+    RULED. **"You can spotlight them" is an activation, charged as usual.** The
+    roll is not free and does not happen at the moment of death: it waits for a
+    GM turn with a spotlight to spare, costs the usual Fear for every activation
+    past the turn's first, and counts against the party size + 1 cap like
+    everything else. So a Warrior cut down on a PC's spotlight lies there until
+    the GM comes round, and a GM with an empty Fear pool and a busy field may
+    never get the roll at all. What was *not* ruled is the stricter reading: a
+    Warrior that comes back has **not** spent its spotlight doing so, and acts on
+    the same activation.
+
+    **No marked HP, and the Stress stays.** The page says HP and only HP, so a
+    Warrior that has already spent its Stress comes back with it still spent.
+
+    Uncapped, because the page prints no limit: each defeat is a fresh 1-in-6.
+    That cannot stall a fight - the roll needs another adversary standing, so the
+    last thing on the field never comes back and `adversaries_are_cleared` still
+    ends things.
+
+    Rolled with `random` directly, the way the Spitter Die is: this is neither an
+    attack, a damage roll nor a duality roll, so nothing in dice/ has a shape
+    for it.
+    """
+    if fight is None or not adversary.is_defeated:
+        return
+    if not fight.living_adversaries:
+        return
+
+    rolled = random.randint(1, WONT_STAY_DEAD_DIE)
+    if rolled < WONT_STAY_DEAD_REFORMS_AT:
+        fight.note(f"{adversary.name}'s bones rattle and lie still ({rolled})")
+        return
+
+    adversary.clear_hp(adversary.hp_marked)
+    fight.note(
+        f"{adversary.name} re-forms with no marked HP (Won't Stay Dead: {rolled})"
+    )
+
+
+@skip_spotlight(WONT_STAY_DEAD)
+def wont_stay_dead_skips(adversary, fight=None) -> bool:
+    """A Warrior that failed to re-form spends the activation on nothing.
+
+    The third registration, and the one that keeps a pile of bones from swinging
+    a sword. `on_spotlight` above has already had its say by the time this is
+    asked - that ordering is fixed in `combat/policy.py` - so a Warrior that
+    rolled a 6 is no longer defeated here and carries on to act, while one that
+    didn't stops. A Warrior that was never defeated answers False and this costs
+    it nothing.
+    """
+    return adversary.is_defeated
+
+
+# --- Spellblade ---------------------------------------------------------------
+
+ARCANE_STEEL = qualified(ADVERSARY, "Arcane Steel")
+
+
+@standard_damage_type(ARCANE_STEEL)
+def arcane_steel(adversary):
+    """This adversary's standard attack is both physical and magic at once.
+
+    SRD: "Damage dealt by the Spellblade's standard attack is considered both
+    physical and magic." The page prints the same thing beside the attack itself
+    - `1d8+4 phy/mag`.
+
+    RULED. **A hit that is both is resisted if the target resists *either*.** So
+    the Skeleton Warrior's `Only Bones` halves a Spellblade's swing exactly as the
+    Minor Chaos Elemental's `Arcane Form` would, and a physical-only restriction
+    like the Construct's `Weak Structure` fires on it too. The other reading -
+    resisted only by something resistant to both, which would have made this an
+    upgrade rather than a liability against a resistant target - was offered and
+    declined.
+
+    Only the **standard** attack, which is what the page says and what
+    `Adversary.type_of_damage` enforces: a feature that states its own type is
+    never asked. The Spellblade's own Suppressing Blast is printed as magic and
+    stays magic.
+    """
+    return BOTH
+
+
+SUPPRESSING_BLAST = qualified(ADVERSARY, "Suppressing Blast")
+
+
+@action(SUPPRESSING_BLAST)
+def suppressing_blast(adversary, target, fight: Fight):
+    """Mark a Stress: everyone at Far saves or takes 1d8+2, and each wound pays a Fear.
+
+    SRD: "Mark a Stress and target a group within Far range. All targets must
+    succeed on an Agility Reaction Roll or take 1d8+2 magic damage. You gain a
+    Fear for each target who marked HP from this attack."
+
+    **A clean escape, not a save for half** - unlike Scorched Earth and Hellfire,
+    which print "targets who succeed take half damage" and share `_flames`. This
+    one says nothing of the kind, so a successful roll takes nothing and the
+    feature is not written through that helper.
+
+    **"All targets", not "all creatures"**, so it reaches the party alone and the
+    Spellblade's own line stands in it untouched - the distinction the SRD
+    alternates deliberately, and the same one that separates Hellfire from
+    Scorched Earth.
+
+    The Fear is paid **per target who marked HP**, not per target caught, so a
+    hit an Armor Slot swallowed whole earns the GM nothing. That is a different
+    trigger from Hail of Boulders' "if they succeed against more than one target",
+    and it is the one place in the catalogue where a single Action can pay the GM
+    several Fear at once.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
+    rule decides when it is on the table, with no threshold on how many it
+    reaches. 6 HP against three Stress puts the Spellblade inside the line from
+    full health - three slots free open at 10 or fewer unmarked HP - so in
+    practice this is simply what it does until the Stress runs out.
+    """
+    caught = targets_in_area(Range.FAR, fight.conscious_party)
+    if not caught or not adversary.will_spend_stress(1):
+        return None
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} looses a suppressing blast")
+
+    # One roll shared by everyone caught, the way `_flames` does it - the page
+    # describes a single blast rather than a roll per target.
+    damage = roll_damage(dice_groups=[DiceGroup(count=1, sides=8)], modifier=2)
+    wounded = 0
+    for pc in caught:
+        roll = _reaction_roll(pc, "agility", adversary.difficulty, fight)
+        if roll.is_success:
+            fight.note(f"{pc.name} dives clear of the blast ({roll})")
+            continue
+        marked = pc.take_damage(damage.total, fight, damage_type=DamageType.MAGIC)
+        fight.note(f"{pc.name} is caught for {damage.total}")
+        if marked > 0:
+            wounded += 1
+
+    for _ in range(wounded):
+        fight.gain_fear(1)
+    if wounded:
+        fight.note(
+            f"The blast draws blood from {wounded} of them (GM gains {wounded} Fear)"
+        )
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+MOVE_AS_A_UNIT = qualified(ADVERSARY, "Move as a Unit")
+MOVE_AS_A_UNIT_FEAR = 2
+
+# "Up to five allies", as printed.
+MOVE_AS_A_UNIT_ALLIES = 5
+
+
+@action(MOVE_AS_A_UNIT)
+def move_as_a_unit(adversary, target, fight: Fight):
+    """Spend 2 Fear to spotlight up to five allies within Far range.
+
+    SRD: "Spend 2 Fear to spotlight up to five allies within Far range."
+
+    The Head Guard's Rally Guards with a fixed number instead of a rolled one,
+    and one real difference: Rally Guards spotlights the Head Guard **as well**
+    ("spotlight the Head Guard and up to 2d4 allies"), where this names allies
+    only. So the Spellblade spends its own spotlight rallying and does not act.
+
+    Every spotlight it hands out is a `grant_activation`, which means what it
+    means everywhere else: the extra activations sit inside the GM turn's cap and
+    each still costs the loop its usual Fear. On a big field the cap rather than
+    the pool is usually what limits it.
+
+    Who is within Far goes through the area rule, and which allies get picked is
+    random among those in range, for the reason every unordered list in this
+    project is shuffled.
+
+    USAGE POLICY - ruled. Used whenever the GM can afford the 2 Fear, and among
+    the options that pass the choice is random - the standing default. No
+    target-count threshold, the same ruling Rally Guards got: a Spellblade alone
+    will spend 2 Fear on nothing rather than being held back by a knob nobody
+    chose.
+    """
+    if fight.fear < MOVE_AS_A_UNIT_FEAR:
+        return None
+
+    allies = [other for other in fight.living_adversaries if other is not adversary]
+    within = targets_reached(Range.FAR, len(allies)) if allies else 0
+    rallied = (
+        random.sample(allies, min(within, MOVE_AS_A_UNIT_ALLIES)) if within else []
+    )
+
+    fight.spend_fear(MOVE_AS_A_UNIT_FEAR)
+    for ally in rallied:
+        fight.grant_activation(ally)
+
+    fight.note(
+        f"{adversary.name} moves the line as one, rallying {len(rallied)} "
+        f"{'ally' if len(rallied) == 1 else 'allies'} (Move as a Unit: GM spends "
+        f"{MOVE_AS_A_UNIT_FEAR} Fear)"
+    )
+    # The spotlight is spent, but nothing rolled to hit anybody.
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+# --- Swarm of Rats -------------------------------------------------------------
+
+IN_YOUR_FACE = qualified(ADVERSARY, "In Your Face")
+
+
+@party_attack_disadvantage(
+    IN_YOUR_FACE,
+    unmodelled=[
+        "In Your Face: only a weapon attack reaches this, as with "
+        "Armor-Shredding Shards. Content that rolls an attack of its own - a "
+        "Grimoire spell, the Beastbound companion - has no weapon and so no "
+        "range to read, and swings at anything unhobbled",
+    ],
+)
+def in_your_face(adversary, attacker, target, weapon, fight=None) -> bool:
+    """A creature in this adversary's face swings at anything else at Disadvantage.
+
+    SRD: "All targets within Melee range have disadvantage on attacks against
+    targets other than the Swarm."
+
+    The first feature in the catalogue that hobbles a PC's roll depending on
+    **who they chose to attack**, which is why `party_attack_disadvantage` exists:
+    the trait hobble already in `Condition.disadvantage_on` cannot express it,
+    since the trait is the same whichever adversary is being swung at.
+
+    SIMULATION RULE - policy. "Within Melee range" is read off the **attacker's
+    weapon**, the handle Armor-Shredding Shards, Fall Back, Magical Reflection and
+    Burning all already use: a PC swinging a Melee weapon is in the rats' faces
+    and one shooting from Far is not. That makes the Swarm a tax on the front line
+    and free for archers, which is the shape it has at a table.
+
+    Declines when the Swarm *is* the target, which is the whole of the feature -
+    it does not stop anybody hitting the rats, it makes hitting anything else
+    harder. A party's answer is to kill the Swarm first, which is what a swarm in
+    your face is for.
+    """
+    if fight is None or target is adversary:
+        return False
+    return canonical(weapon.range) == canonical(Range.MELEE.value)
+
+
+# --- Sylvan Soldier ------------------------------------------------------------
+
+FOREST_CONTROL = qualified(ADVERSARY, "Forest Control")
+FOREST_CONTROL_FEAR = 1
+
+# "An Agility Reaction Roll (15)" - printed, unlike most, so it doesn't fall back
+# on the Soldier's own Difficulty of 11.
+FOREST_CONTROL_DIFFICULTY = 15
+
+
+@action(
+    FOREST_CONTROL,
+    unmodelled=[
+        "Forest Control: pulling the tree down *within Close range* is where the "
+        "Soldier can reach, which is positioning. Who it lands on is the standing "
+        "targeting rule's answer",
+    ],
+)
+def forest_control(adversary, target, fight: Fight):
+    """Spend a Fear to drop a tree on one creature for 1d10, saved on a 15.
+
+    SRD: "Spend a Fear to pull down a tree within Close range. A creature hit by
+    the tree must succeed on an Agility Reaction Roll (15) or take 1d10 physical
+    damage."
+
+    RULED. **One creature, not an area.** The SRD writes "a creature", singular,
+    and it is careful everywhere else to write "all targets" or "all creatures"
+    when it means an area - Suppressing Blast does so on the very same page. The
+    alternative, everyone the Close band reaches, was offered and declined.
+
+    No attack roll: the tree either catches them or it doesn't, and the Agility
+    Reaction Roll is the only thing between the target and 1d10. The Difficulty is
+    **printed** (15) rather than falling back on the Soldier's own 11, which makes
+    this one of the few reaction rolls in the catalogue that states its own - and
+    a hard one, four above what the stat block would otherwise ask.
+
+    USAGE POLICY - ruled. Used whenever the GM can afford the Fear, and among the
+    options that pass the choice is random - the standing default.
+    """
+    if fight.fear < FOREST_CONTROL_FEAR:
+        return None
+
+    fight.spend_fear(FOREST_CONTROL_FEAR)
+    fight.note(f"{adversary.name} pulls down a tree (Forest Control: GM spends a Fear)")
+
+    roll = _reaction_roll(target, "agility", FOREST_CONTROL_DIFFICULTY, fight)
+    if roll.is_success:
+        fight.note(f"{target.name} rolls clear of the falling tree ({roll})")
+    else:
+        damage = roll_damage(dice_groups=[DiceGroup(count=1, sides=10)], modifier=0)
+        target.take_damage(damage.total, fight, damage_type=DamageType.PHYSICAL)
+        fight.note(f"{target.name} is crushed for {damage.total} ({roll})")
+
+    # The spotlight is spent, but nothing rolled to hit anybody.
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+BLEND_IN = qualified(ADVERSARY, "Blend In")
+
+# "A PC succeeds on an Instinct Roll (14) to find them", as printed.
+BLEND_IN_FOUND_BY = ("instinct", 14)
+
+
+@on_hit(BLEND_IN)
+def blend_in(adversary, target, result, fight: Fight) -> None:
+    """Mark a Stress on a landed attack to vanish until this adversary strikes again.
+
+    SRD: "When the Soldier makes a successful attack, you can mark a Stress to
+    become Hidden until the Soldier's next attack or a PC succeeds on an Instinct
+    Roll (14) to find them."
+
+    **Hidden is modelled**, on the user's ruling: every roll against a hidden
+    combatant has Disadvantage. That is what this feature buys, and it is the
+    reason the condition exists at all - the page says only "become Hidden", so
+    what being Hidden is worth had to be decided rather than read.
+
+    Two ways out, both printed and both modelled. The Soldier's next attack ends
+    it, which `blend_in_reveals` below does on its next spotlight; and a PC can
+    spend an action roll on an Instinct Roll (14), which the condition carries as
+    its `found_by` and `combat/policy.py` acts on. **One such attempt per
+    hiding**, ruled - the party does not throw spotlight after spotlight at it.
+
+    USAGE POLICY - ruled. A Reaction, so it fires on every trigger it can pay for
+    and the Stress-desperation rule that gates Actions deliberately does not
+    apply. Two Stress against 4 HP means the Soldier's first two landed attacks
+    each buy a turn of cover, from full health.
+    """
+    if result is None or result.damage_roll is None:
+        return
+    if not adversary.can_spend_stress(1):
+        return
+
+    adversary.spend_stress(1)
+    fight.apply_condition(
+        adversary,
+        Condition(name=HIDDEN, source=adversary, found_by=BLEND_IN_FOUND_BY),
+    )
+    fight.note(f"{adversary.name} melts into the undergrowth (Blend In)")
+
+
+@on_spotlight(BLEND_IN)
+def blend_in_reveals(adversary, fight=None) -> None:
+    """Coming out to attack ends the hiding.
+
+    "Until the Soldier's next attack" - and the Soldier attacks on its spotlight,
+    so the condition is lifted as the spotlight arrives. The difference between
+    that and lifting it on the attack itself is invisible: being Hidden only
+    changes rolls made *against* this adversary, and those happen on the party's
+    spotlights, not on its own.
+
+    Registered against the same name as the half above, so Blend In stays one
+    piece of content in one place.
+    """
+    if fight is None:
+        return
+    if fight.has_condition(adversary, HIDDEN):
+        fight.clear_condition(adversary, HIDDEN)
+        fight.note(f"{adversary.name} breaks cover")
+
+
+# --- The Tangle Brambles -------------------------------------------------------
+
+ENCUMBER = qualified(ADVERSARY, "Encumber")
+CRUSH = qualified(ADVERSARY, "Crush")
+DRAIN_AND_MULTIPLY = qualified(ADVERSARY, "Drain and Multiply")
+
+# The bramble tokens themselves, and the two counts the page keys on.
+BRAMBLE_TOKEN = "Bramble token"
+BRAMBLE_TOKENS_VULNERABLE = 3
+
+# "A Finesse Roll (12 + the number of bramble tokens)", as printed.
+BRAMBLE_ESCAPE_BASE = 12
+
+# What the Minions that spring loose are, and what the Swarm is, by name.
+TANGLE_BRAMBLE = "Tangle Bramble"
+TANGLE_BRAMBLE_SWARM = "Tangle Bramble Swarm"
+
+# "Three or more Tangle Bramble Minions within Close range", as printed.
+DRAIN_AND_MULTIPLY_MINIONS = 3
+
+
+def _bramble_escape(adversary):
+    """The Finesse Roll that shakes every bramble token off, and what it spawns.
+
+    SRD: "All bramble tokens can be removed by succeeding on a Finesse Roll (12 +
+    the number of bramble tokens) ... If bramble tokens are removed from a target
+    using a Finesse Roll, a number of Tangle Bramble Minions spawn within Melee
+    range equal to the number of tokens removed."
+
+    The Difficulty **rises with the count**, which is the only escape roll in the
+    catalogue whose number moves - so the longer a PC is held the harder it gets
+    to get out, and the more Minions they let loose when they do. Built as a
+    closure over the Swarm rather than a plain predicate for that reason: it has
+    to read the holder's own token count at the moment it is asked.
+    """
+
+    def ended(holder, fight, moment: str) -> bool:
+        tokens = fight.token_count(holder, BRAMBLE_TOKEN)
+        if tokens <= 0:
+            return True
+
+        roll = _reaction_roll(
+            holder, "finesse", BRAMBLE_ESCAPE_BASE + tokens, fight
+        )
+        if not roll.is_success:
+            return False
+
+        fight.set_token(holder, BRAMBLE_TOKEN, 0)
+        fight.clear_condition(holder, VULNERABLE)
+        fight.note(f"{holder.name} tears free of the brambles ({roll})")
+
+        # The tokens don't vanish - they get up and walk. Declines quietly if the
+        # Minion isn't in the catalogue, the way every other summon does.
+        try:
+            definition = find_adversary(TANGLE_BRAMBLE)
+        except KeyError:
+            return True
+        for _ in range(tokens):
+            fight.summon(definition.spawn())
+        fight.note(f"{tokens} {TANGLE_BRAMBLE}s spring loose where they fell")
+        return True
+
+    return ended
+
+
+def _bramble_up(adversary, target, fight) -> None:
+    """Add a bramble token to `target`, and apply what the count now buys."""
+    tokens = fight.token_count(target, BRAMBLE_TOKEN) + 1
+    fight.set_token(target, BRAMBLE_TOKEN, tokens)
+
+    # "If a target has any bramble tokens, they are Restrained" - recorded rather
+    # than merely declared, so content that keys on being held can see it, and
+    # carrying its own way out so it survives the Swarm leaving the field.
+    fight.apply_condition(
+        target,
+        Condition(name=RESTRAINED, end=_bramble_escape(adversary), source=adversary),
+    )
+    if tokens >= BRAMBLE_TOKENS_VULNERABLE:
+        fight.apply_condition(target, Condition(name=VULNERABLE, source=adversary))
+        fight.note(
+            f"{target.name} is wrapped in {tokens} brambles - Restrained and Vulnerable"
+        )
+        return
+    fight.note(f"{target.name} is tangled in {tokens} brambles, and is Restrained")
+
+
+@on_hit(
+    ENCUMBER,
+    unmodelled=[
+        "Encumber: what being Restrained stops - moving - which has no "
+        "representation here. The tokens, the Vulnerable at three of them, the "
+        "Finesse Roll out and the Minions it spawns are all modelled",
+    ],
+)
+def encumber(adversary, target, result, fight: Fight) -> None:
+    """A landed attack leaves a bramble token; three of them make the target Vulnerable.
+
+    SRD: "When the Swarm succeeds on an attack, give the target a bramble token.
+    If a target has any bramble tokens, they are Restrained. If a target has 3 or
+    more bramble tokens, they are also Vulnerable. All bramble tokens can be
+    removed by succeeding on a Finesse Roll (12 + the number of bramble tokens)
+    or dealing Major or greater damage to the Swarm. If bramble tokens are removed
+    from a target using a Finesse Roll, a number of Tangle Bramble Minions spawn
+    within Melee range equal to the number of tokens removed."
+
+    A **Reaction** on the page despite reading like a choice, so it fires on every
+    landed attack and costs nothing - there is nothing here to gate.
+
+    The tokens are the point, and they compound: each one raises the Finesse
+    Difficulty to escape, the third makes the target Vulnerable (every roll
+    against them at Advantage), and every token shaken off becomes a Tangle
+    Bramble Minion standing next to them. So a PC who waits gets harder to free
+    and lets more loose when they finally are.
+
+    **Two ways out, and they are not equivalent.** The Finesse Roll spawns the
+    Minions; Major damage to the Swarm simply clears the tokens
+    (`encumber_releases` below). That asymmetry is printed, and it is the whole
+    tactical shape of the stat block - hitting the brambles is cleaner than
+    struggling out of them.
+    """
+    if result is None or result.damage_roll is None:
+        return
+    _bramble_up(adversary, target, fight)
+
+
+@on_damaged(ENCUMBER)
+def encumber_releases(adversary, amount: int, hp_marked: int, fight=None) -> None:
+    """Major damage to this adversary shakes every bramble token loose.
+
+    "Or dealing Major or greater damage to the Swarm" - the other printed way
+    out, keyed on the damage rolled rather than the HP it cost, the reading Acid
+    Bath established.
+
+    **No Minions spawn on this route.** The page attaches that only to the
+    Finesse Roll, which is what makes cutting the Swarm the better answer.
+    """
+    if fight is None or amount < adversary.major_threshold:
+        return
+
+    freed = False
+    for pc in fight.conscious_party:
+        if not fight.token_count(pc, BRAMBLE_TOKEN):
+            continue
+        fight.set_token(pc, BRAMBLE_TOKEN, 0)
+        held = fight.condition_on(pc, RESTRAINED)
+        if held is not None and held.source is adversary:
+            fight.clear_condition(pc, RESTRAINED)
+        fight.clear_condition(pc, VULNERABLE)
+        freed = True
+
+    if freed:
+        fight.note(f"The blow scatters {adversary.name}'s brambles, freeing the party")
+
+
+@action(CRUSH)
+def crush(adversary, target, fight: Fight):
+    """Mark a Stress: 2d6+8 direct damage to somebody wrapped in three brambles.
+
+    SRD: "Mark a Stress to deal 2d6+8 direct physical damage to a target with 3 or
+    more bramble tokens."
+
+    No attack roll at all - the brambles are already holding them - and **direct**,
+    so no Armor Slot softens it. 2d6+8 averages 15 against the Swarm's printed
+    1d6+3 at 6.5, and it is gated on a printed requirement rather than a policy of
+    ours, the same shape as Coup de Grace and Deadly Shot.
+
+    Chooses whoever is most wrapped up rather than the standing target, since the
+    requirement is the whole point of the feature and the loop's target may not
+    qualify at all.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
+    rule decides when it is on the table, plus the printed three-token gate. The
+    Stress rule never actually holds this back - 6 HP against three Stress is
+    inside the line from full health - so the **tokens** are the whole of the
+    gate, and the Swarm has to have landed three attacks on somebody first.
+    """
+    if not adversary.will_spend_stress(1):
+        return None
+
+    wrapped = [
+        pc
+        for pc in fight.conscious_party
+        if fight.token_count(pc, BRAMBLE_TOKEN) >= BRAMBLE_TOKENS_VULNERABLE
+    ]
+    if not wrapped:
+        return None
+    caught = max(wrapped, key=lambda pc: fight.token_count(pc, BRAMBLE_TOKEN))
+
+    adversary.spend_stress(1)
+    damage = roll_damage(dice_groups=[DiceGroup(count=2, sides=6)], modifier=8)
+    caught.take_damage(
+        damage.total, fight, direct=True, damage_type=DamageType.PHYSICAL
+    )
+    fight.note(
+        f"{adversary.name} crushes {caught.name} in the brambles for {damage.total}"
+    )
+    # The spotlight is spent, but nothing rolled to hit anybody.
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+@on_hit(
+    DRAIN_AND_MULTIPLY,
+    unmodelled=[
+        "Drain and Multiply: 'within Close range' for the Minions being gathered "
+        "up is positioning. The area rule stands in for it, as it does for Pack "
+        "Tactics and No Quarter",
+    ],
+)
+def drain_and_multiply(adversary, target, result, fight: Fight) -> None:
+    """Three or more of these Minions can merge into a Horde when one draws blood.
+
+    SRD: "When an attack from the Bramble causes a target to mark HP and there are
+    three or more Tangle Bramble Minions within Close range, you can combine the
+    Minions into a Tangle Bramble Swarm Horde. The Horde's HP is equal to the
+    number of Minions combined."
+
+    The first feature in the catalogue that turns adversaries into a *different*
+    adversary, and the mirror of the Green Ooze's Split: that one is a single
+    stat block becoming two smaller ones, this is several becoming one larger.
+    Both go through `remove` and `summon` together, so the Minions leave without
+    being defeated - marking their HP would tell the reader the party had won
+    something at the moment they are worse off.
+
+    **The Horde's HP is the count, not the stat block's printed 6.** That is what
+    the page says, and it is the whole risk the feature carries for the GM: three
+    Minions make a 3 HP Horde, which is frailer than the printed one. Spawned with
+    an override, the way an encounter tunes a stat block.
+
+    Keyed on HP actually marked rather than on the attack landing, which is what
+    "causes a target to mark HP" says - a hit an Armor Slot swallowed whole
+    changes nothing.
+
+    Worth knowing what the area rule costs it, because the printed 3 and the band
+    disagree: Close reaches `min(n * 3 // 4, n - 1)`, which is 2 at three Minions
+    and only reaches 3 at **four**. So the feature cannot fire below four
+    Brambles on the field - the same shape No Quarter has at six pirates, and
+    arriving the same way, from a printed number meeting a proportional band.
+
+    USAGE POLICY - ruled. A Reaction costing nothing, so it fires whenever its
+    trigger happens and the area rule allows it. Nothing holds it back for the
+    Horde being frailer than the Minions were: that is a comparison of what a
+    combatant is worth, which is not something a policy here may turn on.
+    """
+    if result is None or result.hp_marked <= 0:
+        return
+
+    kin = [
+        other
+        for other in fight.living_adversaries
+        if canonical(other.name) == canonical(adversary.name)
+    ]
+    if len(kin) < DRAIN_AND_MULTIPLY_MINIONS:
+        return
+    gathered = kin[: targets_reached(Range.CLOSE, len(kin))]
+    if len(gathered) < DRAIN_AND_MULTIPLY_MINIONS:
+        return
+
+    try:
+        definition = find_adversary(TANGLE_BRAMBLE_SWARM)
+    except KeyError:
+        # An encounter can be run against a cut-down catalogue; a feature that
+        # can't find what it becomes leaves the Minions standing.
+        return
+
+    for minion in gathered:
+        fight.remove(minion)
+    fight.summon(definition.spawn(hp_max=len(gathered)))
+    fight.note(
+        f"{len(gathered)} {TANGLE_BRAMBLE}s knot together into a "
+        f"{TANGLE_BRAMBLE_SWARM} with {len(gathered)} HP (Drain and Multiply)"
+    )
+
+
 no_combat_effect(
     qualified(ADVERSARY, "Creeping Fire"),
     "The Red Ooze can only move within Very Close range, and lights any "
@@ -3730,6 +4800,8 @@ insignificant_combat_effect(
     "1d10+4 instead of the standard 1d10+2 while Hidden, +2 expected damage "
     "(9.5 against 7.5). Larger than From Above's bump but "
     "the same reasoning applies: damage reaches HP through threshold bands, so "
-    "most of it is absorbed within a band. Hidden isn't a tracked condition "
-    "either.",
+    "most of it is absorbed within a band. Hidden is now a tracked condition, "
+    "which the earlier version of this reason leaned on - but nothing on the "
+    "Jagged Knife Sniper's stat block makes it Hidden, so the trigger still "
+    "never arrives. The ruling itself is unchanged.",
 )

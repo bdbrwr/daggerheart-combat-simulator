@@ -16,7 +16,10 @@ Priority order for a PC, most preferred first:
   2. Use a Hope feature, if affordable and worth it.
   3. Use a class feature, if worth it.
   4. Help an ally, or spend Hope on an Experience, if Hope is plentiful.
-  5. Attack.
+  5. Look for something that has gone to ground, if anything has and nobody has
+     looked yet - see `_search_for_hidden`. This is the one step that takes the
+     action roll *ahead* of the shuffle rather than being one option among it.
+  6. Attack.
 
 Steps (2) and (3) aren't a list of features here: anything that needs no roll -
 a Hope feature, a class feature, a domain card - is reached through the single
@@ -39,6 +42,7 @@ from characters.player_character import PlayerCharacter
 from combat.results import AttackResult
 from combat.state import FightState
 import random
+from dataclasses import replace
 
 from content import (
     action_options,
@@ -48,6 +52,7 @@ from content import (
     granted_attack_advantage,
     hope_die_for,
     is_immune_to,
+    remake_action_roll,
     skips_spotlight,
     standard_attack_area,
     total_damage_bonus,
@@ -59,6 +64,7 @@ from content.conditions import BEFORE_AN_ACTION_ROLL, VULNERABLE
 from content.names import canonical
 from content.rolls import clear_experience_utilised, note_experience_utilised
 from dice.common import AdvantageState, combined
+from dice.duality import roll_duality
 from items.registry import find_consumable, find_weapon
 from items.weapons import attack_with
 
@@ -246,6 +252,69 @@ def _experience_bonus(pc: PlayerCharacter, state: FightState) -> int:
     return bonus
 
 
+def _search_for_hidden(pc: PlayerCharacter, state: FightState) -> AttackResult | None:
+    """Spend this PC's action roll hunting something that has gone to ground.
+
+    SIMULATION RULE - policy, ruled. A condition may print a roll somebody *else*
+    can make to end it - the Sylvan Soldier's Blend In lifts when "a PC succeeds
+    on an Instinct Roll (14) to find them" - and the ruling is that the party
+    spends **one action roll** on it. Not one per PC and not one per spotlight:
+    the attempt is made once, and if it fails the party lives with the
+    Disadvantage until the condition runs out on its own terms.
+
+    That "once" is enforced by taking the `found_by` off the condition after the
+    attempt rather than by a token, which means a *fresh* application brings a
+    fresh attempt - a Soldier who hides again is hunted again. `Condition` is
+    frozen, so the spent condition is replaced with a copy that offers no roll.
+
+    Taken **before** the shuffled options rather than among them, deliberately.
+    Everything else a PC could do that spotlight is chosen at random among the
+    viable, which is the standing default; this one is a decision the user made,
+    so it happens rather than coming up about half the time.
+
+    It is a real action roll - Duality Dice plus the trait, offered to the
+    party's reroll content, and its Hope or Fear outcome spent by the loop
+    exactly as a missed attack's would be. So the search costs the party the
+    spotlight when it comes up with Fear, which is most of what makes it a cost.
+
+    What it does *not* get is an Experience or a damage roll: there is nothing to
+    hit. Returns None when there is nobody to look for, so the caller falls
+    through to the ordinary options.
+    """
+    for adversary in state.living_adversaries:
+        condition = state.searchable_condition(adversary)
+        if condition is None:
+            continue
+
+        trait, difficulty = condition.found_by
+
+        def roll():
+            return roll_duality(
+                modifier=pc.traits.get(trait, 0),
+                difficulty=difficulty,
+                advantage_state=(
+                    AdvantageState.DISADVANTAGE
+                    if state.disadvantaged_on(pc, trait)
+                    else AdvantageState.NONE
+                ),
+                hope_die=hope_die_for(pc, state),
+            )
+
+        made = remake_action_roll(pc, roll(), roll, state)
+        if made.is_success:
+            state.clear_condition(adversary, condition.name)
+            state.note(
+                f"{pc.name} finds {adversary.name}, who is no longer "
+                f"{condition.name} ({made})"
+            )
+        else:
+            # Spent either way: the attempt is what the ruling allows one of.
+            state.apply_condition(adversary, replace(condition, found_by=None))
+            state.note(f"{pc.name} searches for {adversary.name} in vain ({made})")
+        return AttackResult(attack_roll=made, damage_roll=None)
+    return None
+
+
 def _make_the_roll(
     pc: PlayerCharacter, target: Adversary, state: FightState
 ) -> AttackResult:
@@ -265,6 +334,14 @@ def _make_the_roll(
     # roll". Announced generically; nothing here knows which conditions those
     # are, or that any exist.
     state.apply_condition_effects(pc, BEFORE_AN_ACTION_ROLL)
+
+    # Something on the field may have gone to ground, and the ruling is that the
+    # party spends one action roll looking for it. Asked before the options are
+    # offered rather than shuffled in among them, because this is a decision
+    # rather than the random-among-viable default. See `_search_for_hidden`.
+    searching = _search_for_hidden(pc, state)
+    if searching is not None:
+        return searching
 
     def swing_the_weapon(attacker, at, fight):
         """The weapon as one option among the rest. It never declines.
@@ -294,6 +371,17 @@ def _make_the_roll(
     options = action_options(pc) + [swing_the_weapon]
     random.shuffle(options)
 
+    # Recorded *before* the attack resolves rather than after it. Nothing that
+    # reads this memory outside an attack can tell the difference - an adversary
+    # choosing who to swing at does so on the GM's turn, long after either write
+    # would have happened - but content firing from *inside* the attack can:
+    # until this moved, a feature triggered by the blow that landed still saw
+    # whoever hit that adversary the time before. The Skeleton Knight's
+    # `Dig Two Graves` swings at "the creature who killed them" and is the first
+    # thing to ask. Written whether or not the attack hits, exactly as before.
+    state.last_attacker_of[id(target)] = pc
+    state.last_pc_to_attack = pc
+
     result = None
     for option in options:
         result = option(pc, target, state)
@@ -302,9 +390,6 @@ def _make_the_roll(
 
     if result.damage_roll is not None:
         apply_on_hit(pc, target, result, state)
-
-    state.last_attacker_of[id(target)] = pc
-    state.last_pc_to_attack = pc
 
     if result.damage_roll is None:
         state.note(f"{pc.name} misses {target.name} ({result.attack_roll})")
@@ -339,6 +424,11 @@ def adversary_attack_advantage(
     )
     return combined(
         AdvantageState.ADVANTAGE if vulnerable else AdvantageState.NONE,
+        # Hidden is Vulnerable's mirror and folds in the same way. Nothing makes
+        # a PC Hidden today, so this never fires - it is here because both sides
+        # should answer the question the same way, and the party side of it (in
+        # items/weapons.py) very much does fire.
+        AdvantageState.DISADVANTAGE if state.is_hidden(target) else AdvantageState.NONE,
         granted_attack_advantage(adversary, target, state),
     )
 

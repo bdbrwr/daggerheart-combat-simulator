@@ -16,7 +16,7 @@ implemented stays `unimplemented` and says so in the coverage report.
 import random
 
 from content.conditions import RESTRAINED, VULNERABLE
-from content.damage_types import DamageType
+from content.damage_types import DamageType, includes
 from content.grimoire import FeatureSet
 from content.registry import (
     Fight,
@@ -158,7 +158,7 @@ def unstoppable_reduces_severity(
     Unlike Get Back Up this costs nothing and isn't a choice, so there's no
     policy here: while the die is on the sheet, it always applies.
     """
-    if damage_type is not DamageType.PHYSICAL:
+    if not includes(damage_type, DamageType.PHYSICAL):
         return hp_to_mark
     if not _unstoppable_value(guardian, fight):
         return hp_to_mark

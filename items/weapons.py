@@ -36,7 +36,11 @@ from content import (
     total_extra_damage,
     total_roll_bonus,
 )
-from content.registry import apply_before_attacked, apply_on_attacked
+from content.registry import (
+    apply_before_attacked,
+    apply_on_attacked,
+    party_attack_is_hobbled,
+)
 from dice.common import AdvantageState, combined
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import roll_duality
@@ -63,6 +67,10 @@ class Target(Protocol):
     # Scanned for content that punishes being hit, which belongs to whoever was
     # attacked rather than to whoever swung.
     named_features: list[str]
+
+    # Read by nothing here, but a target can carry conditions that change the
+    # roll made against it - being Hidden gives it Disadvantage.
+    name: str
 
     def take_damage(
         self, amount: int, fight=None, direct: bool = False, damage_type=None
@@ -103,6 +111,19 @@ def attack_with(
     # in rather than overwriting, so a PC attacking with Advantage and hobbled at
     # once ends up where the SRD puts them: the two cancel.
     if fight is not None and fight.disadvantaged_on(attacker, weapon.trait):
+        advantage_state = combined(advantage_state, AdvantageState.DISADVANTAGE)
+
+    # And a condition on the *target* can hobble the roll too: every roll against
+    # a Hidden combatant has Disadvantage. The mirror of the Vulnerable check the
+    # GM side already makes in `combat/policy.py`, and folded in the same way, so
+    # a PC with Advantage swinging at something Hidden comes out even.
+    if fight is not None and fight.is_hidden(target):
+        advantage_state = combined(advantage_state, AdvantageState.DISADVANTAGE)
+
+    # And content belonging to a *third* adversary can hobble it, keyed on which
+    # target was chosen - the Swarm of Rats' In Your Face. Asked generically;
+    # nothing here knows what any of it is.
+    if party_attack_is_hobbled(attacker, target, weapon, fight):
         advantage_state = combined(advantage_state, AdvantageState.DISADVANTAGE)
 
     # Worked out once, before the roll, and *outside* the closure below: asking

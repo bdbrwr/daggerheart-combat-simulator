@@ -25,8 +25,15 @@ creatures it has Restrained, and a condition nobody recorded is one nothing can
 key on. So a feature that Restrains applies the record, with its own printed way
 out, and the movement half stays declared as a gap where it's registered.
 
-The rest of the SRD's conditions - Hidden, On Fire, Stunned - have no
-representation at all and no content applies one yet.
+**Hidden**, which is Vulnerable's mirror: every roll made *against* a hidden
+combatant has Disadvantage. Ruled by the user rather than read off any one
+feature, since the two features that apply it both say only "become Hidden". A
+condition may also carry `found_by`, the action roll somebody else can spend
+their spotlight on to end it - the Sylvan Soldier's Blend In prints one and the
+Shadow's Cloaked does not.
+
+The rest of the SRD's conditions - On Fire, Stunned - have no representation at
+all and no content applies one yet.
 
 ## Why `end` is a callable
 
@@ -44,6 +51,17 @@ from typing import Callable
 
 VULNERABLE = "Vulnerable"
 RESTRAINED = "Restrained"
+
+# **Hidden**, which is modelled: every roll made *against* a hidden combatant has
+# Disadvantage. The exact mirror of Vulnerable, pointed the other way, and ruled
+# by the user rather than read off any one feature's text - the Sylvan Soldier's
+# Blend In and the Jagged Knife Shadow's Cloaked both say only "become Hidden",
+# and this is what being Hidden is worth.
+#
+# It was previously in the list of conditions with no representation at all,
+# which is why Cloaked used to model only the Advantage its own text spelled out
+# and declared the Hidden itself as a gap. That gap is closed.
+HIDDEN = "Hidden"
 
 # Poison is a *family* rather than one condition: the SRD prints several, and
 # they share a name while differing in both what they do and how they end. The
@@ -93,6 +111,20 @@ class Condition:
     Kneebreaker doubles damage against creatures **it** has Restrained, which is
     a different question from whether the target is held at all. Read through
     `FightState.condition_on` rather than `has_condition`.
+
+    `found_by` is the trait and Difficulty of an action roll **somebody else**
+    spends their spotlight on to end this - `("instinct", 14)` for the Sylvan
+    Soldier's Blend In, which lifts when "a PC succeeds on an Instinct Roll (14)
+    to find them". Data rather than a callable for `disadvantage_on`'s reason:
+    what it describes is not something that happens at an announced moment but a
+    standing fact about a roll somebody may choose to make, read where that
+    choice is made (`combat/policy.py`).
+
+    Distinct from `end`, which the *holder* is offered at each announced moment
+    and which costs nobody a turn. This one costs a whole action roll, so a
+    condition carrying it is one the other side has to spend something on. A
+    condition with no `found_by` simply offers no such roll - the Shadow's
+    Cloaked prints none, and correctly cannot be searched out.
     """
 
     name: str
@@ -100,6 +132,7 @@ class Condition:
     effect: Callable | None = None
     disadvantage_on: tuple[str, ...] = ()
     source: object | None = None
+    found_by: tuple[str, int] | None = None
 
 
 def when_they_act(holder, fight, moment: str) -> bool:

@@ -31,6 +31,7 @@ from content import (
     apply_on_roll,
     converted_party_roll,
     extra_spotlight_cost,
+    spotlights_while_defeated,
 )
 from content.conditions import ON_A_GM_TURN, WHEN_THEY_ACT
 from dice.duality import DualityOutcome
@@ -283,14 +284,27 @@ def _next_adversary(state: FightState, taken: dict[int, int]):
     through `consumed_activations`, so a swept Minion doesn't come round again -
     and, since they also count toward "who has gone least", the rest of the field
     gets its turn before anything acts twice.
+
+    **A defeated adversary can be a candidate**, if something it carries says so.
+    The Skeleton Warrior's `Won't Stay Dead` needs a spotlight to roll the d6 that
+    brings it back, so being down is not by itself a reason the GM can't spend one
+    on it. Asked generically; nothing here knows the feature exists, and for every
+    other stat block the answer is False and the list is `living_adversaries`
+    exactly as before. Such a spotlight is charged and capped like any other -
+    the permission is all the hook grants.
     """
 
     def spent(adversary) -> int:
         return taken.get(id(adversary), 0) + state.consumed_activations(adversary)
 
+    standing = state.living_adversaries + [
+        adversary
+        for adversary in state.adversaries
+        if adversary.is_defeated and spotlights_while_defeated(adversary, state)
+    ]
     available = [
         adversary
-        for adversary in state.living_adversaries
+        for adversary in standing
         if spent(adversary)
         < activations_allowed(adversary, state) + state.granted_activations(adversary)
     ]

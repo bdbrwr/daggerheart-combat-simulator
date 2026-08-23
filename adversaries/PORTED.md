@@ -115,6 +115,16 @@ small to change an outcome), **not implemented** (work still to do).
 | Pirate Captain | Leader | 6 | Swashbuckler, Reinforcements, No Quarter, Momentum *implemented* |
 | Pirate Raiders | Horde (3/HP) | 6 | Horde (1d4+1), Swashbuckler *implemented* — needed no new code of its own |
 | Pirate Tough | Bruiser | 6 | Swashbuckler, Clear the Decks *implemented* |
+| Sellsword | Minion | 7 | Minion (4), Group Attack *implemented* — needed no new code at all, the third stat block after the Jagged Knife Lackey and the Minor Treant |
+| Skeleton Archer | Ranged | 7 | Opportunist, Deadly Shot *implemented* |
+| Skeleton Dredge | Minion | 7 | Minion (4), Group Attack *implemented* — needed no new code either |
+| Skeleton Knight | Bruiser | 7 | Terrifying, Cut to the Bone, Dig Two Graves *implemented* |
+| Skeleton Warrior | Standard | 7 | Only Bones, Won't Stay Dead *implemented* |
+| Spellblade | Leader | 8 | Arcane Steel, Suppressing Blast, Move as a Unit, Momentum *implemented* |
+| Swarm of Rats | Horde (10/HP) | 8 | Horde (1d4+1), In Your Face *implemented* |
+| Sylvan Soldier | Standard | 8 | Pack Tactics (1d8+5), Forest Control, Blend In *implemented* |
+| Tangle Bramble Swarm | Horde (3/HP) | 8 | Horde (1d4+2), Crush, Encumber *implemented* |
+| Tangle Bramble | Minion | 8 | Minion (4), Group Attack, Drain and Multiply *implemented* |
 
 ---
 
@@ -128,34 +138,43 @@ unknown-to-be-blank - and a Social found there is skipped rather than ported.
 
 1. Courtier — **Social, skipped**
 2. Petty Noble — **Social, skipped**
-3. Sellsword — Minion
-4. Skeleton Archer — Ranged
-5. Skeleton Dredge — Minion
-6. Skeleton Knight
-7. Skeleton Warrior
-8. Spellblade
-9. Swarm of Rats
-10. Sylvan Soldier
-11. Tangle Bramble Swarm
-12. Tangle Bramble
-13. Weaponmaster
-14. Young Dryad
-15. Brawny Zombie
-16. Patchwork Zombie Hulk
-17. Rotted Zombie
-18. Shambling Zombie
-19. Zombie Pack
+3. Weaponmaster — Bruiser
+4. Young Dryad — Leader
+5. Brawny Zombie — Bruiser
+6. Patchwork Zombie Hulk — Solo
+7. Rotted Zombie — Minion
+8. Shambling Zombie
+9. Zombie Pack
 
-Types down to Skeleton Dredge were confirmed against the printed page (SRD
-pp. 78–81), which is also where the Socials were spotted. **Batch 7 starts at the
-Sellsword**, and the next five are the Sellsword, Skeleton Archer, Skeleton
-Dredge, Skeleton Knight and Skeleton Warrior.
+Types down to Rotted Zombie were confirmed against the printed page (SRD
+pp. 78–83), which is also where the Socials were spotted. Only the Shambling
+Zombie and the Zombie Pack are still unknown.
 
-Batch 7 opens cheaply again: the **Sellsword** is `Minion (4)` plus `Group
-Attack`, both generic since batch 2, so it should need no code at all — the third
-stat block to come online with its JSON entry. The **Skeleton Dredge** is the
-same shape. Types for the two Skeletons after Dredge are unconfirmed and want
-checking against the page as that batch is read.
+**Batch 9 starts at the Weaponmaster**, and takes the rest of tier 1 — the
+Weaponmaster, Young Dryad, Brawny Zombie, Patchwork Zombie Hulk and Rotted
+Zombie, leaving two stragglers for a short batch 10.
+
+Three things about batch 9 are already visible from the page:
+
+- **Goading Strike (Weaponmaster) is `In Your Face` again.** "The next time the
+  Taunted target attacks, they have disadvantage against targets other than the
+  Weaponmaster" is exactly what `party_attack_disadvantage` was built for in
+  batch 8, so the hook is already there; what it needs is a *Taunted* condition
+  to key on and a "next attack only" ender.
+- **Tormented Screams (Patchwork Zombie Hulk) settles a batch 7 reading in
+  reverse.** It prints "you gain a Fear **for each**", which is the corroboration
+  used to rule the Skeleton Knight's Terrifying at one Fear — so this one really
+  does pay per target and the two will differ in code.
+- **Slow and Momentum** are already modelled, and the Brawny Zombie and the
+  Rotted Zombie between them carry `Slow`, `Minion (3)` and `Group Attack`, all
+  generic. The Rotted Zombie should come online with its JSON alone.
+
+> **The `X/HP` in a Horde's type is flavour**, ruled by the user: it is
+> information for the table and has no bearing on the simulation. So the fact
+> that `.reference/adversaries.json` writes the Swarm of Rats as `"Horde (/HP)"`
+> where the page prints `Horde (10/HP)` is not worth chasing. The number that
+> *does* matter is the one in the `Horde (X)` **feature**, which is a separate
+> thing and is checked against the page like every other stat.
 
 ### Tiers 2-4
 
@@ -551,6 +570,147 @@ rule; dropping it to 2 was offered and declined. And **a melee party pays a
 Stress for nearly every swing at this crew**: focus fire aims at the most wounded
 adversary, and a Raiders Horde on 4 HP with 5/11 thresholds marks 1 HP off most
 tier 1 hits, which is exactly Swashbuckler's window.
+
+### Batch 7
+
+Ten features across five stat blocks, and **the Sellsword and the Skeleton Dredge
+both needed no code at all** — `Minion (4)` and `Group Attack` were written
+generically in batch 2, so two whole stat blocks came online with their JSON
+entries. That is three of the last eight adversaries ported for free.
+
+| Feature | Cost | Ruled by |
+|---|---|---|
+| Opportunist (Archer) | — | Passive. Doubles all damage the Archer deals to a creature two or more adversaries are crowding |
+| Deadly Shot (Archer) | 1 Stress, paid on a success | rule 1 to gate, plus the printed requirement that the target be Vulnerable — the Coup de Grace shape. Rule 1 never actually bites: 3 HP against two Stress puts the Archer inside the line from full health |
+| Terrifying (Knight) | — | Passive. No choice to make; it fires on any landed attack |
+| Cut to the Bone (Knight) | 1 Stress | rule 1, with deliberately no threshold on how many PCs it reaches |
+| Dig Two Graves (Knight) | free | rule 2 — a Reaction, and one that costs nothing at all, so there is nothing to gate |
+| Only Bones (Warrior) | — | Passive |
+| Won't Stay Dead (Warrior) | one activation | **Ruled**: the spotlight the page calls for is an ordinary activation, charged and capped like any other. See below |
+
+**Four rules readings**, all in `SIMULATION-RULES.md` §2:
+
+- **Opportunist counts every living adversary, the Archer included** — "two or
+  more adversaries", not "two or more *other* adversaries", where Pack Tactics is
+  explicit about "another Dire Wolf". The range half goes through the area rule
+  exactly as Pack Tactics and No Quarter do.
+- **Terrifying hands the GM one Fear, not one per PC.** Corroborated two entries
+  down the same page: the Patchwork Zombie Hulk's *Tormented Screams* has to
+  print "a Fear **for each**" to get the other reading.
+- **Dig Two Graves fires however the Knight died, and really does prioritise its
+  killer.** Registered on `on_damaged` so a spell or a splash still triggers it,
+  and the targeting memory moved to make the priority true — see below.
+- **Won't Stay Dead's spotlight is an activation, charged as usual.** It waits
+  for a GM turn with one to spare and costs the usual Fear; the stricter reading,
+  that re-forming *spends* that spotlight, was offered and declined. Only HP is
+  cleared, and the feature is uncapped.
+
+**Machinery batch 7 built.** `spotlight_while_defeated` /
+`spotlights_while_defeated` is the first hook that can put a **defeated**
+combatant back on the GM's list of candidates — until now that list was simply
+`living_adversaries` and nothing could reach something that was down. It grants
+permission only: the activation is charged and capped like any other, and a
+defeated adversary still can't be targeted and still counts for nothing toward
+victory. One hook, one call site, in `_next_adversary`.
+
+The other change is a **one-line move rather than new machinery**: the targeting
+memory in `combat/policy.py` is now written *before* a PC's attack resolves
+instead of after. Nothing outside an attack can tell the difference — an
+adversary picks its target on the GM's turn, long after either write — but
+content firing from inside one can, and it was silently naming whoever hit the
+adversary the time before. Dig Two Graves is the first thing to ask; anything
+built on `on_damaged` from here on inherits the fix.
+
+**Three things to check when reading numbers.** These are what to look *for*, not
+findings — how much a mechanic matters is what a run is for, and asserting it
+here would pre-empt the only thing the project is built to answer.
+
+- **Opportunist cannot fire below six adversaries.** Very Close reaches `n // 3`
+  capped at 2, so it is off entirely in a small skirmish and on above that. This
+  is arithmetic rather than a prediction, and it follows from the printed 2
+  meeting the band — the No Quarter situation arriving a second time. What is
+  worth measuring is whether the Dredge's own feeble stat block earns its place
+  by filling that band.
+- **Only Bones is the first physical resistance in the catalogue.** Per hit, 9
+  physical marks 2 HP where 9 magic marks 3. Whether that changes how a fight
+  goes is open, and the user's early read from actually running things is that it
+  matters **less** than the per-hit arithmetic suggests.
+- **Two features drain Hope on the Skeleton Knight**, where the only other Hope
+  drain so far (All Must Fall) needs the party to roll a failure with Fear.
+  Terrifying fires on any landed attack and Dig Two Graves takes 1d4 more.
+  Whether a party notices is what the HOPE block is for.
+
+### Batch 8
+
+Thirteen features across five stat blocks, and much the heaviest batch so far —
+four of the thirteen were already generic (`Horde (1d4+1)`, `Horde (1d4+2)`,
+`Minion (4)`, `Group Attack`), but for the first time a **Minion still needed
+code**: the Tangle Bramble's *Drain and Multiply* merges Minions into a Horde.
+
+| Feature | Cost | Ruled by |
+|---|---|---|
+| Arcane Steel (Spellblade) | — | Passive. The standard attack is both types at once |
+| Suppressing Blast (Spellblade) | 1 Stress | rule 1, with no threshold on how many it reaches. 6 HP against three Stress is inside the line from full health, so the rule never holds it back |
+| Move as a Unit (Spellblade) | 2 Fear | rule 4, with **no** target-count threshold — the same ruling Rally Guards got |
+| In Your Face (Swarm of Rats) | — | Passive |
+| Pack Tactics (Sylvan Soldier) | — | Passive. Already modelled; parameterised this batch |
+| Forest Control (Sylvan Soldier) | 1 Fear | rule 4 |
+| Blend In (Sylvan Soldier) | 1 Stress | rule 2 — a Reaction, so both Stress ride the first two landed attacks from full health |
+| Crush (Tangle Bramble Swarm) | 1 Stress | rule 1, plus the printed requirement of three bramble tokens — the Coup de Grace shape. Rule 1 never bites (6 HP against three Stress is inside the line), so the tokens are the whole gate |
+| Encumber (Tangle Bramble Swarm) | free | rule 2. A Reaction on the page despite reading like a choice |
+| Drain and Multiply (Tangle Bramble) | free | rule 2, plus the printed requirement of three Minions in range |
+
+**Six rules readings**, all in `SIMULATION-RULES.md` §2, and one of them reopened
+a decision made two batches ago:
+
+- **A hit can be both physical and magic**, and is resisted if the target resists
+  **either**. The reading that would have made Arcane Steel an upgrade rather
+  than a liability was offered and declined.
+- **Hidden is modelled**, and this is the one that reached backwards. Blend In
+  says only "become Hidden", so what that is worth had to be ruled: **every roll
+  against a hidden combatant has Disadvantage**. The consequence is that the
+  Jagged Knife Shadow's *Cloaked* — ported in batch 4 with the Hidden itself
+  declared as a gap — now applies the condition for real and the gap is closed.
+  A Shadow that cloaks is meaningfully harder to hit than it was.
+- **The party spends one action roll hunting something hidden**, taken ahead of
+  the shuffled options. One attempt per hiding, not one per PC.
+- **Pack Tactics carries its printed difference in its parameter.**
+- **Forest Control hits one creature**, not an area.
+- **Drain and Multiply's Horde has the HP of the Minions combined**, not the
+  Swarm's printed 6.
+
+**Machinery batch 8 built.** Three new hooks and one new condition, each with a
+single call site:
+
+- **`party_attack_disadvantage`** hobbles a PC's attack keyed on *who they chose
+  to attack*, which `Condition.disadvantage_on` cannot express — that names a
+  trait, and the trait is the same whichever adversary is being swung at. The
+  Weaponmaster's Goading Strike in batch 9 is the same shape.
+- **`standard_damage_type`** lets content override the type its holder's printed
+  attack deals. One user, Arcane Steel.
+- **`Condition.found_by`** is the action roll somebody *else* can spend a turn on
+  to end a condition, distinct from `end`, which the holder gets free at every
+  announced moment.
+- **`content/damage_types.py` gained the pair**: `BOTH`, `types_in` and
+  `includes`, and the five `damage_type is DamageType.X` checks across
+  `features/` now ask `includes` instead.
+
+**Three things to check when reading numbers**, in the sense batch 7's list
+settled — things to look for, not findings:
+
+- **Blend In makes the Sylvan Soldier the first adversary that costs the party
+  spotlights without attacking them.** A Soldier with two Stress can buy two
+  hidings, and each one is worth up to one PC action roll plus Disadvantage on
+  whatever swings land before it breaks cover. Whether that is worth more than
+  two attacks is what a run is for.
+- **The Tangle Bramble pair can grow.** Tokens shaken off by a Finesse Roll
+  become Minions; three Minions become a Horde; the Horde applies more tokens.
+  Nothing caps the cycle, on the same reasoning that left More Where That Came
+  From uncapped — worth watching `MAX_PC_ACTIONS` and the fight-length
+  distribution on an encounter built around it.
+- **Arcane Steel is a liability against resistance under the ruling taken.** The
+  Spellblade and the Skeleton Warrior in the same encounter is the case to look
+  at, since Only Bones now halves the Spellblade's swing.
 
 ### Damage types, and what closed with them
 

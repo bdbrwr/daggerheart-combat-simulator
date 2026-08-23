@@ -37,7 +37,7 @@ from pathlib import Path
 
 from adversaries.adversary import Adversary
 from content.aoe import band_named
-from content.damage_types import damage_type_named
+from content.damage_types import DamageType, damage_type_named
 from dice.damage import DiceGroup
 
 # Everything a catalogue entry may say, taken from the dataclass rather than
@@ -143,6 +143,9 @@ def parse_damage_type(value, source: str, entry: str) -> str:
     which is the behaviour every fight had before types existed. A type that is
     *stated and unrecognised* raises, because that is the case where a resistance
     would silently never fire - indistinguishable from one nobody implemented.
+
+    A page that prints **both** types - the Spellblade's "1d8+4 phy/mag" - is
+    stored as the pair, spelled "magic/physical", which reads back as `BOTH`.
     """
     try:
         matched = damage_type_named(value)
@@ -152,7 +155,13 @@ def parse_damage_type(value, source: str, entry: str) -> str:
             "what the stat block prints beside the standard attack's dice - "
             "'Warp Blast: Close, 1d12+6 mag'."
         ) from None
-    return matched.value if matched is not None else ""
+
+    if matched is None:
+        return ""
+    if isinstance(matched, DamageType):
+        return matched.value
+    # Sorted so one pair has one spelling, whichever way round the page wrote it.
+    return "/".join(sorted(kind.value for kind in matched))
 
 
 def parse_dice(spec, source: str, entry: str) -> list[DiceGroup]:

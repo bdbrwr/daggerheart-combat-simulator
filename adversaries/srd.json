@@ -107,8 +107,8 @@
       "damage_dice": "1d6",
       "damage_modifier": 2,
       "damage_type": "physical",
-      "features": ["Pack Tactics", "Hobbling Strike"],
-      "notes": "Claws: Melee, 1d6+2 physical. Experience: Keen Senses +3."
+      "features": ["Pack Tactics (1d6+5, Fear)", "Hobbling Strike"],
+      "notes": "Claws: Melee, 1d6+2 physical. Experience: Keen Senses +3. Pack Tactics carries two terms because the SRD prints it differently on the two stat blocks that have it: the Wolf's deals 1d6+5 *and pays the GM a Fear*, where the Sylvan Soldier's deals 1d8+5 and pays nothing. Both halves are authored here rather than in code, so the entry stays checkable against the page."
     },
 
     {
@@ -577,6 +577,186 @@
       "damage_type": "physical",
       "features": ["Swashbuckler", "Clear the Decks"],
       "notes": "Massive Fists: Melee, 2d6 physical - no flat bonus, the second tier 1 attack written that way after the Construct's. Experience: Sailor +2. Clear the Decks is worth barely more than the printed attack once its repositioning is stripped out, which is declared where it is registered."
+    },
+
+    {
+      "name": "Sellsword",
+      "tier": 1,
+      "type": "Minion",
+      "difficulty": 10,
+      "major_threshold": null,
+      "severe_threshold": null,
+      "hp_max": 1,
+      "stress_max": 1,
+      "attack_modifier": 3,
+      "range": "Melee",
+      "damage_dice": "",
+      "damage_modifier": 3,
+      "damage_type": "physical",
+      "features": ["Minion (4)", "Group Attack"],
+      "notes": "Longsword: Melee, a flat 3 physical - no dice, so the whole attack sits in damage_modifier, as the Giant Rat's, the Jagged Knife Lackey's and the Minor Treant's do. Thresholds print as 'None'. No Experience printed. The third stat block to come online with its JSON alone: Minion (X) reads its own 4 here and Group Attack was written for Minions in general. ATK +3 is the highest attack modifier on any tier 1 Minion, which is what makes a Sellsword Group Attack land where a Dredge's misses."
+    },
+
+    {
+      "name": "Skeleton Archer",
+      "tier": 1,
+      "type": "Ranged",
+      "difficulty": 9,
+      "major_threshold": 4,
+      "severe_threshold": 7,
+      "hp_max": 3,
+      "stress_max": 2,
+      "attack_modifier": 2,
+      "range": "Far",
+      "damage_dice": "1d8",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Opportunist", "Deadly Shot"],
+      "notes": "Shortbow: Far, 1d8+1 physical. No Experience printed. Difficulty 9 is the second-lowest in the catalogue after the Green Ooze's 8 - a fragile skeleton that shoots from the back. Both features want the rest of the field: Opportunist needs adversaries crowding the target, and Deadly Shot needs somebody already Vulnerable, which nothing in the Archer's own kit provides."
+    },
+
+    {
+      "name": "Skeleton Dredge",
+      "tier": 1,
+      "type": "Minion",
+      "difficulty": 8,
+      "major_threshold": null,
+      "severe_threshold": null,
+      "hp_max": 1,
+      "stress_max": 1,
+      "attack_modifier": -1,
+      "range": "Melee",
+      "damage_dice": "",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Minion (4)", "Group Attack"],
+      "notes": "Bone Claws: Melee, a flat 1 physical. Thresholds print as 'None'. No Experience printed. The same shape as the Sellsword and needed no code either, but the far weaker half of the pair: Difficulty 8 ties the Green Ooze for the easiest thing in the catalogue to hit, ATK -1 means it mostly misses, and a flat 1 apiece makes a Dredge Group Attack the feeblest swarm in tier 1. What it is really for is Opportunist - a crowd of Dredges is what doubles a Skeleton Archer's damage."
+    },
+
+    {
+      "name": "Skeleton Knight",
+      "tier": 1,
+      "type": "Bruiser",
+      "difficulty": 13,
+      "major_threshold": 7,
+      "severe_threshold": 13,
+      "hp_max": 5,
+      "stress_max": 2,
+      "attack_modifier": 2,
+      "range": "Melee",
+      "damage_dice": "1d10",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Terrifying", "Cut to the Bone", "Dig Two Graves"],
+      "notes": "Rusty Greatsword: Melee, 1d10+2 physical. No Experience printed. The first stat block whose passive drains Hope off every landed attack, and the first that attacks back as it dies. Two Stress against 5 HP means Cut to the Bone waits until the Knight is at 5 unmarked HP - which is full health - so it is available from the opening spotlight and gone after two uses."
+    },
+
+    {
+      "name": "Skeleton Warrior",
+      "tier": 1,
+      "type": "Standard",
+      "difficulty": 10,
+      "major_threshold": 4,
+      "severe_threshold": 8,
+      "hp_max": 3,
+      "stress_max": 2,
+      "attack_modifier": 0,
+      "range": "Melee",
+      "damage_dice": "1d6",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Only Bones", "Won't Stay Dead"],
+      "notes": "Sword: Melee, 1d6+2 physical. No Experience printed. The first physical resistance in the catalogue, where Arcane Form was the first magical one. Halving lands before the Warrior's thresholds of 4 and 8, so 9 physical marks 2 HP where 9 magic marks 3 - what that comes to across a fight is for a run to say rather than for this note. Won't Stay Dead is the only feature in the catalogue that can bring an adversary back after it is defeated."
+    },
+
+    {
+      "name": "Spellblade",
+      "tier": 1,
+      "type": "Leader",
+      "difficulty": 14,
+      "major_threshold": 8,
+      "severe_threshold": 14,
+      "hp_max": 6,
+      "stress_max": 3,
+      "attack_modifier": 3,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 4,
+      "damage_type": "phy/mag",
+      "features": ["Arcane Steel", "Suppressing Blast", "Move as a Unit", "Momentum"],
+      "notes": "Empowered Longsword: Melee, 1d8+4 phy/mag. Experience: Magical Knowledge +2. The first entry whose damage_type is the *pair* - the page prints 'phy/mag' beside the attack and Arcane Steel says the same thing in words, so the feature and the field agree. Ruled: such a hit is resisted if the target resists either type. Momentum is already modelled. Suppressing Blast is typed magic where it is rolled, so Arcane Steel does not reach it."
+    },
+
+    {
+      "name": "Swarm of Rats",
+      "tier": 1,
+      "type": "Horde (10/HP)",
+      "difficulty": 10,
+      "major_threshold": 6,
+      "severe_threshold": 10,
+      "hp_max": 6,
+      "stress_max": 2,
+      "attack_modifier": -3,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Horde (1d4+1)", "In Your Face"],
+      "notes": "Claws: Melee, 1d8+2 physical. No Experience printed. ATK -3 is the worst attack modifier in the catalogue, so what the Swarm is really for is In Your Face rather than its own damage. Horde (X) reads its own 1d4+1 here, as the Giant Mosquitoes' and the Pirate Raiders' do. The type's '10/HP' is the Battle Points shorthand and carries no mechanics."
+    },
+
+    {
+      "name": "Sylvan Soldier",
+      "tier": 1,
+      "type": "Standard",
+      "difficulty": 11,
+      "major_threshold": 6,
+      "severe_threshold": 11,
+      "hp_max": 4,
+      "stress_max": 2,
+      "attack_modifier": 0,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Pack Tactics (1d8+5)", "Forest Control", "Blend In"],
+      "notes": "Scythe: Melee, 1d8+1 physical. Experience: Tracker +2. Pack Tactics is the Dire Wolf's feature with a different argument and no Fear clause - see the Dire Wolf's entry. Forest Control prints its own Reaction Roll Difficulty of 15, four above the Soldier's own 11, which is one of the few in the catalogue not to fall back on the stat block. Blend In is what made Hidden a modelled condition."
+    },
+
+    {
+      "name": "Tangle Bramble Swarm",
+      "tier": 1,
+      "type": "Horde (3/HP)",
+      "difficulty": 12,
+      "major_threshold": 6,
+      "severe_threshold": 11,
+      "hp_max": 6,
+      "stress_max": 3,
+      "attack_modifier": 0,
+      "range": "Melee",
+      "damage_dice": "1d6",
+      "damage_modifier": 3,
+      "damage_type": "physical",
+      "features": ["Horde (1d4+2)", "Crush", "Encumber"],
+      "notes": "Thorns: Melee, 1d6+3 physical. Experience: Camouflage +2. Encumber's bramble tokens are the first tokens the simulator puts on a *PC* rather than on an adversary, and the first escape roll whose Difficulty rises with what is being escaped (12 + the token count). Note the printed hp_max of 6 is only what a Swarm spawned from an encounter starts with: one produced by the Tangle Bramble's Drain and Multiply overrides it with the number of Minions combined."
+    },
+
+    {
+      "name": "Tangle Bramble",
+      "tier": 1,
+      "type": "Minion",
+      "difficulty": 11,
+      "major_threshold": null,
+      "severe_threshold": null,
+      "hp_max": 1,
+      "stress_max": 1,
+      "attack_modifier": -1,
+      "range": "Melee",
+      "damage_dice": "",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Minion (4)", "Group Attack", "Drain and Multiply"],
+      "notes": "Thorns: Melee, a flat 2 physical - no dice, as the Giant Rat's, the Jagged Knife Lackey's, the Minor Treant's and the Sellsword's are. Thresholds print as 'None'. No Experience printed. Unlike every Minion before it this one needed code: Drain and Multiply turns three or more of them into a Tangle Bramble Swarm Horde whose HP is the number combined, which is the first content that merges adversaries rather than splitting or summoning them."
     }
   ]
 }

@@ -19,6 +19,15 @@ resistances don't stack, so several answers are folded by taking the **strongest
 single** one rather than by multiplying: two resistances are still a half, and a
 resistance beside an immunity is nothing at all.
 
+## A hit can be both types at once
+
+The SRD prints the Spellblade's attack as `1d8+4 phy/mag` and its Arcane Steel as
+"considered both physical and magic". So a hit's type is not always one of the
+two: `BOTH` is the pair, and the ruling is that such a hit is **resisted if the
+target resists either**, and satisfies a restriction naming either. Content asks
+`includes(damage_type, DamageType.PHYSICAL)` rather than comparing with `is`,
+which is the one change the pair forced on everything that reads a type.
+
 ## Untyped damage is not an error, and it matches nothing
 
 Damage should always have a type, and after the typing sweep everything in this
@@ -50,6 +59,25 @@ class DamageType(Enum):
     MAGIC = "magic"
 
 
+# A hit that is **both** types at once, which the SRD prints as "1d8+4 phy/mag"
+# on the Spellblade and describes as "considered both physical and magic".
+#
+# RULED: **a hit that is both is resisted if the target resists *either*.** It
+# genuinely counts as both for everything, so the Skeleton Warrior's physical
+# resistance halves a Spellblade's swing exactly as a magic resistance would, and
+# a physical-only restriction like the Construct's Weak Structure fires on it too.
+# The other reading - resisted only by something resistant to both - was offered
+# and declined.
+#
+# Represented as a frozenset rather than a third enum member on purpose. Every
+# restriction in the codebase used to ask `damage_type is DamageType.PHYSICAL`,
+# and a third member would have answered False to all of them - precisely the
+# checks the ruling says should pass. A set makes "does this hit count as
+# physical?" a membership question instead, which is what the ruling actually
+# says, so the five sites that asked it now call `includes` and there is one
+# answer rather than a special case per feature.
+BOTH = frozenset({DamageType.PHYSICAL, DamageType.MAGIC})
+
 # What a stat block prints beside its damage - "Warp Blast: Close, 1d12+6 mag".
 # Accepted so a catalogue entry can be typed the way the page reads, rather than
 # the author translating as they go.
@@ -57,6 +85,9 @@ _ABBREVIATIONS = {
     "phy": DamageType.PHYSICAL,
     "mag": DamageType.MAGIC,
 }
+
+# The dual type, spelled the several ways a page or an author might write it.
+_PAIRED = frozenset({"phy/mag", "mag/phy", "physical/magic", "magic/physical"})
 
 # What each of the three answers does to a damage total. Named rather than left
 # as bare numbers because "0.5" at a call site says nothing about which SRD rule
@@ -66,11 +97,16 @@ RESISTED = 0.5
 IMMUNE = 0.0
 
 
-def damage_type_named(name) -> DamageType | None:
-    """The `DamageType` a printed type names, matched canonically.
+def damage_type_named(name) -> "DamageType | frozenset | None":
+    """The type a printed damage type names, matched canonically.
 
     Returns None for nothing at all - an empty string or None - which is how
     untyped damage travels; see the module docstring for why that isn't an error.
+
+    Returns **`BOTH`** for a page that prints the pair ("phy/mag"), and passes an
+    already-resolved `DamageType` or a set of them straight through, so a feature
+    that hands a type in directly and a catalogue entry that spells one out reach
+    the same place.
 
     Raises on anything else. A type somebody wrote and misspelled is exactly the
     failure the canonical matching everywhere else exists to prevent: it would
@@ -81,10 +117,15 @@ def damage_type_named(name) -> DamageType | None:
         return None
     if isinstance(name, DamageType):
         return name
+    if isinstance(name, (frozenset, set)):
+        return frozenset(name) or None
 
     written = str(name).strip()
     if not written:
         return None
+
+    if canonical(written) in {canonical(pair) for pair in _PAIRED}:
+        return BOTH
 
     for damage_type in DamageType:
         if canonical(damage_type.value) == canonical(written):
@@ -96,8 +137,38 @@ def damage_type_named(name) -> DamageType | None:
     raise ValueError(
         f"{name!r} is not a damage type. Expected "
         + " or ".join(f"{kind.value!r}" for kind in DamageType)
-        + " (the book's 'phy' and 'mag' are accepted too)."
+        + " (the book's 'phy' and 'mag' are accepted too, and 'phy/mag' for a hit "
+        "that is both)."
     )
+
+
+def types_in(damage_type) -> frozenset:
+    """Every `DamageType` a hit counts as, as a set.
+
+    One place to normalise the three shapes a hit's type can arrive in - a single
+    `DamageType`, the `BOTH` pair, or None for untyped - so nothing else has to
+    care which it was handed. Untyped comes back empty, which is what makes it
+    match nothing without any caller special-casing it.
+    """
+    if damage_type is None:
+        return frozenset()
+    if isinstance(damage_type, DamageType):
+        return frozenset({damage_type})
+    return frozenset(damage_type)
+
+
+def includes(damage_type, kind: DamageType) -> bool:
+    """Whether a hit of this type counts as `kind`.
+
+    The replacement for `damage_type is DamageType.PHYSICAL` at every site that
+    used to ask it, and the reason the dual type is a set: the Spellblade's swing
+    is physical *and* magic, so a physical-only restriction must fire on it and a
+    magic resistance must reduce it.
+
+    Untyped damage counts as nothing, which is the standing rule - a hit nobody
+    typed can only ever fail to satisfy a restriction, never wrongly satisfy one.
+    """
+    return kind in types_in(damage_type)
 
 
 def strongest(factors) -> float:

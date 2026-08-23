@@ -13,7 +13,7 @@ from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.common import Side
 from combat.rest import Rest
-from content.conditions import VULNERABLE, Condition
+from content.conditions import HIDDEN, VULNERABLE, Condition
 from content.names import canonical
 
 # Per the SRD the GM can hold up to 12 Fear at once. Fear generated past the
@@ -350,6 +350,32 @@ class FightState:
             and any(canonical(hobbled) == wanted for hobbled in condition.disadvantage_on)
             for (holder_id, _), condition in self.conditions.items()
         )
+
+    def is_hidden(self, combatant) -> bool:
+        """Whether rolls against `combatant` have Disadvantage right now.
+
+        The exact mirror of `is_vulnerable`, and the reason both live here rather
+        than on the combatants: a PC doesn't know which fight it is in, and an
+        adversary knows nothing about conditions at all.
+
+        One source, unlike Vulnerable's two - nothing is Hidden by the rules the
+        way a PC with every Stress marked is Vulnerable, so this is only ever
+        content having applied it.
+        """
+        return self.has_condition(combatant, HIDDEN)
+
+    def searchable_condition(self, combatant):
+        """The condition on `combatant` that somebody could spend a roll to end.
+
+        Returns the `Condition` carrying a `found_by`, or None. Asked by the turn
+        policy when it decides whether a PC spends their action roll hunting for
+        something rather than swinging at it; nothing here knows that Hidden is
+        the only such condition today.
+        """
+        for (holder_id, _), condition in self.conditions.items():
+            if holder_id == id(combatant) and condition.found_by is not None:
+                return condition
+        return None
 
     def is_vulnerable(self, combatant) -> bool:
         """Whether rolls against `combatant` have Advantage right now.

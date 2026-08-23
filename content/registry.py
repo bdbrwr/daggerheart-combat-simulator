@@ -68,7 +68,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Iterable, NamedTuple, Protocol
 
-from content.damage_types import UNREDUCED, strongest
+from content.damage_types import UNREDUCED, strongest, types_in
 from content.names import base_name, canonical, parameter
 from dice.common import AdvantageState, combined
 
@@ -257,11 +257,14 @@ _attack_areas: dict[str, Callable] = {}
 _on_damaged: dict[str, Callable] = {}
 _difficulty_bonuses: dict[str, Callable] = {}
 _standard_damage: dict[str, Callable] = {}
+_standard_damage_types: dict[str, Callable] = {}
 _on_attacked: dict[str, Callable] = {}
 _before_attacked: dict[str, Callable] = {}
 _on_spotlight: dict[str, Callable] = {}
 _skip_spotlight: dict[str, Callable] = {}
+_spotlight_while_defeated: dict[str, Callable] = {}
 _on_party_attack_rolls: dict[str, Callable] = {}
+_party_attack_disadvantages: dict[str, Callable] = {}
 _party_roll_conversions: dict[str, Callable] = {}
 _attack_advantages: dict[str, Callable] = {}
 _damage_multipliers: dict[str, Callable] = {}
@@ -678,6 +681,37 @@ def damage_resistance(name: str, unmodelled: Iterable[str] = ()):
     return register
 
 
+def party_attack_disadvantage(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that hobbles a PC's attack on *somebody else*.
+
+    Signature: `(holder, attacker, target, weapon, fight) -> bool` - whether this
+    attack is made at Disadvantage. Scanned across the living adversaries, since
+    the content belongs to a third party: the Swarm of Rats' `In Your Face` says
+    everyone in Melee of the Swarm has disadvantage attacking anything *other
+    than* the Swarm, so the feature belongs to neither the PC swinging nor the
+    adversary being swung at.
+
+    **Distinct from `Condition.disadvantage_on`, which cannot express it.** That
+    one hobbles a named *trait*, and the trait is the same whichever adversary is
+    being attacked - so it can say "disadvantage on Agility Rolls" and cannot say
+    "disadvantage on attacks against anyone but me". This hook takes both the
+    attacker and the target for exactly that reason.
+
+    The `weapon` is passed for the reason `on_attacked` takes it: it is the only
+    handle the simulator has on how far away the attacker was standing.
+
+    Folded into the roll with `combined`, so a PC who would otherwise have
+    Advantage comes out even rather than being hobbled outright.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_party_attack_disadvantages, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
 def on_party_attack_roll(name: str, unmodelled: Iterable[str] = ()):
     """Register GM-side content that watches a PC make an attack roll.
 
@@ -759,6 +793,39 @@ def skip_spotlight(name: str, unmodelled: Iterable[str] = ()):
     return register
 
 
+def spotlight_while_defeated(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that lets its holder be spotlighted after being defeated.
+
+    Signature: `(holder, fight) -> bool` - whether the GM may still spend a
+    spotlight on this combatant now that it is down. False, and nothing else in
+    the loop changes: a defeated adversary is not in `living_adversaries`, so it
+    cannot be targeted, does not count toward victory, and is never picked.
+
+    The Skeleton Warrior's `Won't Stay Dead` is the reason it exists: "when the
+    Warrior is defeated, you can spotlight them and roll a d6. On a result of 6,
+    if there are other adversaries on the battlefield, the Warrior re-forms with
+    no marked HP." The spotlight is what buys the roll, so the feature is
+    unreachable unless something can offer a defeated combatant one.
+
+    **Permission only.** It says the GM *may* spotlight them; the turn still
+    charges its usual Fear for every activation past the first and the spotlight
+    still counts against the party size + 1 cap, exactly as `Relentless (X)`'s
+    extra activations do. Nothing here reaches around the budget.
+
+    What happens once the spotlight arrives is the content's own business, and it
+    is expected to answer `on_spotlight` (to do the thing) and `skip_spotlight`
+    (to spend the activation on nothing when it didn't work). This hook only
+    decides who is on the GM's list.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_spotlight_while_defeated, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
 def on_spotlight(name: str, unmodelled: Iterable[str] = ()):
     """Register content that fires whenever its holder takes the spotlight.
 
@@ -809,6 +876,33 @@ def standard_damage(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_standard_damage, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def standard_damage_type(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that changes what type its holder's *standard* attack deals.
+
+    Signature: `(holder) -> DamageType | frozenset | None` - the type the printed
+    attack now deals, or None to decline. The Spellblade's `Arcane Steel` is the
+    reason: "damage dealt by the Spellblade's standard attack is considered both
+    physical and magic", which nothing else could say.
+
+    **Only the printed attack**, exactly like `standard_damage` next door: a
+    feature that rolls damage of its own states its own type on the page and is
+    never asked, so the Construct's Death Quake stays magic out of a physical
+    stat block whatever else that stat block carries.
+
+    No `fight` in the signature, for `difficulty_bonus`'s reason turned around:
+    this one *does* run during a fight, but the answer is a standing fact about
+    the stat block rather than about the moment, and `Adversary.type_of_damage`
+    is called from several places that have no fight to pass.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_standard_damage_types, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -1491,19 +1585,44 @@ def resistance_to(target, damage_type=None, fight: Fight = None) -> float:
     Asked of the target rather than of the field, unlike
     `incoming_damage_multiplier`: a resistance is something the creature being
     hit has, not something a third party imposes.
+
+    **A hit that is both physical and magic is offered as each in turn**, and the
+    strongest answer applies - so resisting either halves a Spellblade's swing,
+    which is the ruling `content/damage_types.py` records. Registrants therefore
+    never see the pair and can keep asking about one type at a time.
     """
-    if damage_type is None:
+    kinds = types_in(damage_type)
+    if not kinds:
         return UNREDUCED
 
     _discover()
     factors = []
     for name in target.named_features:
         resist = _registered(_damage_resistances, name)
-        if resist is not None:
-            answer = resist(target, damage_type, fight)
+        if resist is None:
+            continue
+        for kind in kinds:
+            answer = resist(target, kind, fight)
             if answer is not None:
                 factors.append(answer)
     return strongest(factors)
+
+
+def party_attack_is_hobbled(attacker, target, weapon, fight: Fight = None) -> bool:
+    """Whether anything on the GM's side makes this particular attack Disadvantaged.
+
+    False unless something says otherwise. Asked once, immediately before a PC's
+    weapon roll, and everything registered gets asked - there is no short-circuit,
+    because Disadvantage doesn't stack and a second answer costs nothing.
+
+    One call site, in `items/weapons.py`. Content that rolls an attack of its own
+    doesn't consult it, which is declared as a gap where such content registers.
+    """
+    _discover()
+    for adversary, hobbles in _gm_offers(fight, _party_attack_disadvantages):
+        if hobbles(adversary, attacker, target, weapon, fight):
+            return True
+    return False
 
 
 def apply_on_party_attack_roll(roller: Holder, roll, fight: Fight = None) -> None:
@@ -1761,6 +1880,21 @@ def skips_spotlight(holder, fight=None) -> bool:
     return skipped
 
 
+def spotlights_while_defeated(holder, fight=None) -> bool:
+    """Whether the GM may still spotlight this combatant now that it is down.
+
+    False unless something it carries says otherwise. Asked by the GM turn when
+    it builds its list of candidates, and only ever of a defeated combatant - so
+    for every adversary in the catalogue but one this is never reached at all.
+    """
+    _discover()
+    for name in holder.named_features:
+        allows = _registered(_spotlight_while_defeated, name)
+        if allows is not None and allows(holder, fight):
+            return True
+    return False
+
+
 def standard_attack_damage(holder, target, roll=None, fight=None):
     """The dice this combatant's standard attack should roll instead, if any.
 
@@ -1777,6 +1911,23 @@ def standard_attack_damage(holder, target, roll=None, fight=None):
             replacement = swap(holder, target, roll, fight)
             if replacement is not None:
                 return replacement
+    return None
+
+
+def standard_attack_damage_type(holder):
+    """The type this combatant's standard attack deals instead, if anything says.
+
+    None unless content answers; first answer wins, since nothing in the SRD
+    gives one stat block two of these and combining two would be inventing a
+    rule. One call site, in `Adversary.type_of_damage`.
+    """
+    _discover()
+    for name in holder.named_features:
+        override = _registered(_standard_damage_types, name)
+        if override is not None:
+            stated = override(holder)
+            if stated is not None:
+                return stated
     return None
 
 

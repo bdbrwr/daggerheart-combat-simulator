@@ -917,9 +917,15 @@ def _scattered():
 
 
 def _wolf(**overrides) -> Adversary:
-    """The printed Dire Wolf: 4 HP, 3 Stress, a 1d6+2 standard attack."""
+    """The printed Dire Wolf: 4 HP, 3 Stress, a 1d6+2 standard attack.
+
+    Pack Tactics carries its parameter here exactly as `srd.json` does. It became
+    parameterised in batch 8, when the Sylvan Soldier turned up with the same
+    feature name, different dice and no Fear clause - so the two terms are the
+    Wolf's printed text, and a bare `Pack Tactics` now correctly does nothing.
+    """
     defaults = dict(
-        features=["Pack Tactics", "Hobbling Strike"],
+        features=["Pack Tactics (1d6+5, Fear)", "Hobbling Strike"],
         hp_max=4,
         stress_max=3,
         difficulty=12,
@@ -4143,3 +4149,1323 @@ def test_a_mixed_threshold_reads_major_and_leaves_severe_out_of_reach():
     assert tiny.severe_threshold == NO_THRESHOLD
     assert tiny.take_damage(4) == 2, "Major, and that is the most anything can mark"
     assert tiny.is_defeated
+
+
+# --- Batch 7: the skeletons ---------------------------------------------------
+#
+# Two of the five stat blocks needed no code at all, so the tests for those
+# assert coverage status rather than behaviour - the same shape the Minor Treant
+# and the Jagged Knife Lackey already use.
+#
+# Opportunist goes through the area rule, so it pins the spread roll with
+# `_bunched()` above. The pinning is documentation rather than necessity here:
+# Very Close is proportional (`n // 3`, capped at 2), so at the field sizes used
+# below both draws give the same reach, and the same is true of Close over a
+# party of four (Terrifying's band, which reaches 3 either way). That is
+# deliberate - a test whose result depended on which way the band rolled would
+# belong in validation/, not here.
+
+
+def _skeleton_archer(**overrides) -> Adversary:
+    """The printed Skeleton Archer: 3 HP, 2 Stress, a Far 1d8+1 shortbow.
+
+    Named in full because `_archer` is already the **Archer Guard** further up
+    this file, and a second definition of that name would silently replace it
+    for every test in the module - which is exactly what happened when this was
+    first written, and took out the On My Signal countdown tests.
+    """
+    defaults = dict(
+        features=["Opportunist", "Deadly Shot"],
+        hp_max=3,
+        stress_max=2,
+        difficulty=9,
+        major_threshold=4,
+        severe_threshold=7,
+        attack_modifier=2,
+        range="Far",
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=1,
+    )
+    defaults.update(overrides)
+    return _adversary("Skeleton Archer", **defaults)
+
+
+def _skeleton_knight(**overrides) -> Adversary:
+    """The printed Skeleton Knight: 5 HP, 2 Stress, a 1d10+2 rusty greatsword.
+
+    Named in full for the reason `_skeleton_archer` is - helpers here share one
+    module namespace, and a bare `_knight` would collide with the first other
+    knight the catalogue gains.
+    """
+    defaults = dict(
+        features=["Terrifying", "Cut to the Bone", "Dig Two Graves"],
+        hp_max=5,
+        stress_max=2,
+        difficulty=13,
+        major_threshold=7,
+        severe_threshold=13,
+        attack_modifier=2,
+        damage_dice=[DiceGroup(count=1, sides=10)],
+        damage_modifier=2,
+    )
+    defaults.update(overrides)
+    return _adversary("Skeleton Knight", **defaults)
+
+
+def _skeleton_warrior(**overrides) -> Adversary:
+    """The printed Skeleton Warrior: 3 HP, 2 Stress, a 1d6+2 sword.
+
+    Named in full, as the other two in this batch are.
+    """
+    defaults = dict(
+        features=["Only Bones", "Won't Stay Dead"],
+        hp_max=3,
+        stress_max=2,
+        difficulty=10,
+        major_threshold=4,
+        severe_threshold=8,
+        attack_modifier=0,
+        damage_dice=[DiceGroup(count=1, sides=6)],
+        damage_modifier=2,
+    )
+    defaults.update(overrides)
+    return _adversary("Skeleton Warrior", **defaults)
+
+
+def test_the_sellsword_and_the_dredge_needed_no_new_code():
+    """Minion (X) and Group Attack were both generic from batch 2."""
+    assert assess("adversary:Minion (4)").status is Status.MODELLED
+    assert assess("adversary:Group Attack").status is Status.MODELLED
+
+
+def test_the_sellswords_flat_damage_and_absent_thresholds_load():
+    """A Minion with no dice at all, like the Giant Rat and the Minor Treant."""
+    from adversaries.registry import find_adversary
+
+    sellsword = find_adversary("Sellsword").spawn()
+
+    assert sellsword.damage_dice == []
+    assert sellsword.damage_modifier == 3
+    assert sellsword.major_threshold == NO_THRESHOLD
+    assert sellsword.take_damage(1) == 1 and sellsword.is_defeated
+
+
+# --- Opportunist --------------------------------------------------------------
+
+
+def test_opportunist_doubles_the_archers_damage_on_a_crowded_field():
+    from features.adversaries import opportunist
+
+    archer = _skeleton_archer()
+    crowd = [archer] + [_adversary(f"Skeleton Dredge {n}", hp_max=1) for n in range(5)]
+    fight = _fight(adversaries=crowd)
+
+    with _bunched():
+        assert opportunist(archer, fight.party[0], archer, fight) == 2
+
+
+def test_opportunist_gets_nothing_from_a_small_field():
+    """Very Close reaches n // 3, so two adversaries are not a crowd."""
+    from features.adversaries import opportunist
+
+    archer = _skeleton_archer()
+    fight = _fight(adversaries=[archer, _adversary("Skeleton Dredge", hp_max=1)])
+
+    with _bunched():
+        assert opportunist(archer, fight.party[0], archer, fight) is None
+
+
+def test_opportunist_does_not_double_what_anybody_else_deals():
+    """The mirror of I've Got 'Em: this one belongs to the attacker."""
+    from features.adversaries import opportunist
+
+    archer = _skeleton_archer()
+    crowd = [archer] + [_adversary(f"Skeleton Dredge {n}", hp_max=1) for n in range(5)]
+    fight = _fight(adversaries=crowd)
+
+    with _bunched():
+        assert opportunist(archer, fight.party[0], crowd[1], fight) is None
+
+
+def test_opportunist_reaches_the_archer_through_dispatch():
+    from content.registry import incoming_damage_multiplier
+
+    archer = _skeleton_archer()
+    crowd = [archer] + [_adversary(f"Skeleton Dredge {n}", hp_max=1) for n in range(5)]
+    fight = _fight(adversaries=crowd)
+
+    with _bunched():
+        assert incoming_damage_multiplier(fight.party[0], archer, fight) == 2
+
+
+def test_opportunist_doubles_before_the_targets_thresholds():
+    """Where the effect really lives - the same place I've Got 'Em's does.
+
+    Flat damage and no dice, so the total is fixed and the only thing the
+    assertion can be reading is the doubling.
+    """
+    archer = _skeleton_archer(damage_dice=[], damage_modifier=5)
+    crowd = [archer] + [_adversary(f"Skeleton Dredge {n}", hp_max=1) for n in range(5)]
+    # Thresholds set so 5 marks 1 HP and the doubled 10 marks 2.
+    fight = _fight(
+        party=_party(armor_max=0, major_threshold=6, severe_threshold=20),
+        adversaries=crowd,
+    )
+
+    with _bunched(), patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        archer.attack(fight.party[0], fight=fight)
+
+    assert fight.party[0].hp_marked == 2, "5 doubled to 10, which is Major"
+
+
+def test_a_lone_archer_deals_what_it_rolled():
+    archer = _skeleton_archer(damage_dice=[], damage_modifier=5)
+    fight = _fight(
+        party=_party(armor_max=0, major_threshold=6, severe_threshold=20),
+        adversaries=[archer],
+    )
+
+    with _bunched(), patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        archer.attack(fight.party[0], fight=fight)
+
+    assert fight.party[0].hp_marked == 1
+
+
+# --- Deadly Shot --------------------------------------------------------------
+
+
+def test_deadly_shot_declines_against_a_target_who_is_not_vulnerable():
+    """A printed requirement rather than a policy of ours, like Coup de Grace."""
+    from features.adversaries import deadly_shot
+
+    archer = _skeleton_archer()
+    fight = _fight(adversaries=[archer])
+
+    assert deadly_shot(archer, fight.party[0], fight) is None
+    assert archer.stress_marked == 0
+
+
+def test_deadly_shot_lands_on_a_vulnerable_target_for_a_stress():
+    from features.adversaries import deadly_shot
+
+    archer = _skeleton_archer()
+    fight = _fight(party=_party(armor_max=0), adversaries=[archer])
+    target = fight.party[0]
+    fight.apply_condition(target, Condition(name=VULNERABLE))
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = deadly_shot(archer, target, fight)
+
+    assert archer.stress_marked == 1
+    assert result.damage_roll.total >= 11, "3d4+8, never the 1d8+1 it prints"
+
+
+def test_deadly_shot_keeps_its_stress_on_a_miss():
+    from features.adversaries import deadly_shot
+
+    archer = _skeleton_archer()
+    fight = _fight(adversaries=[archer])
+    target = fight.party[0]
+    fight.apply_condition(target, Condition(name=VULNERABLE))
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(1)):
+        deadly_shot(archer, target, fight)
+
+    assert archer.stress_marked == 0
+
+
+# --- Terrifying ---------------------------------------------------------------
+
+
+def test_terrifying_takes_a_hope_from_the_front_line():
+    from features.adversaries import terrifying
+
+    knight = _skeleton_knight()
+    party = _party()
+    for pc in party:
+        pc.gain_hope(2)
+    fight = _fight(party=party, adversaries=[knight], fear=0)
+
+    terrifying(knight, party[0], None, fight)
+
+    # Close reaches 3 of 4, so one PC keeps both of theirs.
+    assert sum(pc.hope_marked for pc in party) == 5
+
+
+def test_terrifying_hands_the_gm_one_fear_not_one_per_pc():
+    """The Patchwork Zombie Hulk has to print 'for each' to get the other reading."""
+    from features.adversaries import terrifying
+
+    knight = _skeleton_knight()
+    party = _party()
+    for pc in party:
+        pc.gain_hope(2)
+    fight = _fight(party=party, adversaries=[knight], fear=0)
+
+    terrifying(knight, party[0], None, fight)
+
+    assert fight.fear == 1
+
+
+def test_terrifying_takes_nothing_from_a_pc_with_no_hope_banked():
+    from features.adversaries import terrifying
+
+    knight = _skeleton_knight()
+    party = _party()
+    fight = _fight(party=party, adversaries=[knight], fear=0)
+
+    terrifying(knight, party[0], None, fight)
+
+    assert all(pc.hope_marked == 0 for pc in party)
+    assert fight.fear == 1, "the Fear rides on the attack, not on the Hope"
+
+
+# --- Cut to the Bone ----------------------------------------------------------
+
+
+def test_cut_to_the_bone_costs_a_stress_and_forces_one():
+    from features.adversaries import cut_to_the_bone
+
+    knight = _skeleton_knight()
+    fight = _fight(party=_party(armor_max=0), adversaries=[knight])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = cut_to_the_bone(knight, fight.party[0], fight)
+
+    assert knight.stress_marked == 1
+    assert result.damage_roll.total >= 3, "1d8+2, not the 1d10+2 it prints"
+    assert sum(pc.stress_marked for pc in fight.party) >= 1
+
+
+def test_cut_to_the_bone_holds_its_last_stress_until_the_knight_is_nearly_down():
+    """Two Stress against 5 HP: the second slot opens at 2 unmarked HP."""
+    from features.adversaries import cut_to_the_bone
+
+    knight = _skeleton_knight(stress_marked=1)
+    fight = _fight(adversaries=[knight])
+
+    assert cut_to_the_bone(knight, fight.party[0], fight) is None
+
+    knight.mark_hp(3)  # 2 unmarked HP, so the last slot is on the table
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(1)):
+        assert cut_to_the_bone(knight, fight.party[0], fight) is not None
+
+
+# --- Dig Two Graves -----------------------------------------------------------
+
+
+def test_dig_two_graves_says_nothing_while_the_knight_stands():
+    from features.adversaries import dig_two_graves
+
+    knight = _skeleton_knight()
+    fight = _fight(adversaries=[knight])
+    knight.mark_hp(4)
+
+    dig_two_graves(knight, amount=9, hp_marked=2, fight=fight)
+
+    assert all(pc.hp_marked == 0 for pc in fight.party)
+
+
+def test_dig_two_graves_swings_at_whoever_killed_the_skeleton_knight():
+    """The ruling this batch: the priority is modelled, not declared a gap."""
+    from features.adversaries import dig_two_graves
+
+    knight = _skeleton_knight(features=["Dig Two Graves"])
+    party = _party(armor_max=0)
+    for pc in party:
+        pc.gain_hope(4)
+    fight = _fight(party=party, adversaries=[knight])
+    knight.mark_hp(knight.hp_max)
+
+    fight.last_attacker_of[id(knight)] = party[2]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        dig_two_graves(knight, amount=9, hp_marked=1, fight=fight)
+
+    assert party[2].hope_marked < 4, "1d4 Hope off the creature that killed it"
+    assert party[2].hp_marked > 0
+    assert all(pc.hope_marked == 4 for pc in party if pc is not party[2])
+
+
+def test_dig_two_graves_takes_no_hope_on_a_miss():
+    from features.adversaries import dig_two_graves
+
+    knight = _skeleton_knight(features=["Dig Two Graves"])
+    party = _party()
+    for pc in party:
+        pc.gain_hope(4)
+    fight = _fight(party=party, adversaries=[knight])
+    knight.mark_hp(knight.hp_max)
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(1)):
+        dig_two_graves(knight, amount=9, hp_marked=1, fight=fight)
+
+    assert all(pc.hope_marked == 4 for pc in party)
+
+
+def test_the_dying_blow_carries_the_knights_own_terrifying():
+    """A Reaction's attack is outside the loop, so the riders are asked here."""
+    from features.adversaries import dig_two_graves
+
+    knight = _skeleton_knight()
+    party = _party(armor_max=0)
+    fight = _fight(party=party, adversaries=[knight], fear=0)
+    knight.mark_hp(knight.hp_max)
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        dig_two_graves(knight, amount=9, hp_marked=1, fight=fight)
+
+    assert fight.fear == 1
+
+
+def test_a_pc_who_kills_a_knight_takes_the_parting_swing():
+    """End to end, and the reason the targeting memory had to move earlier."""
+    from combat.policy import take_pc_turn
+
+    knight = _skeleton_knight(features=["Dig Two Graves"])
+    party = _party(armor_max=0)
+    for pc in party:
+        pc.gain_hope(4)
+    fight = _fight(party=party, adversaries=[knight])
+    knight.mark_hp(knight.hp_max - 1)
+
+    # Somebody else hit it last time round; the memory must not still say so.
+    fight.last_attacker_of[id(knight)] = party[3]
+
+    with patch(
+        "items.weapons.roll_duality", return_value=_duality(succeeds=True)
+    ), patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        take_pc_turn(party[0], fight)
+
+    assert knight.is_defeated
+    assert party[0].hope_marked < 4, "the killer, not whoever swung last time"
+    assert party[3].hope_marked == 4
+
+
+# --- Only Bones ---------------------------------------------------------------
+
+
+def test_only_bones_halves_physical_damage():
+    from features.adversaries import only_bones
+
+    assert only_bones(_skeleton_warrior(), DamageType.PHYSICAL) == 0.5
+
+
+def test_only_bones_leaves_magic_alone():
+    from features.adversaries import only_bones
+
+    assert only_bones(_skeleton_warrior(), DamageType.MAGIC) is None
+
+
+def test_only_bones_leaves_untyped_damage_alone():
+    """A resistance applies to a type that was stated."""
+    from features.adversaries import only_bones
+
+    assert only_bones(_skeleton_warrior(), None) is None
+
+
+def test_only_bones_reaches_the_warrior_through_dispatch():
+    from content.registry import resistance_to
+
+    assert resistance_to(_skeleton_warrior(), DamageType.PHYSICAL) == 0.5
+    assert resistance_to(_skeleton_warrior(), DamageType.MAGIC) == 1.0
+
+
+def test_only_bones_halves_before_the_warriors_thresholds():
+    """Where the whole effect lives: 9 physical marks 1 HP fewer than 9 magic."""
+    from adversaries.registry import find_adversary
+
+    physical = find_adversary("Skeleton Warrior").spawn()
+    magical = find_adversary("Skeleton Warrior").spawn()
+
+    assert physical.take_damage(9, damage_type=DamageType.PHYSICAL) == 2
+    assert magical.take_damage(9, damage_type=DamageType.MAGIC) == 3
+
+
+# --- Won't Stay Dead ----------------------------------------------------------
+
+
+def test_a_defeated_warrior_with_company_is_still_a_spotlight_candidate():
+    from content.registry import spotlights_while_defeated
+
+    warrior = _skeleton_warrior()
+    fight = _fight(adversaries=[warrior, _adversary("Skeleton Dredge", hp_max=1)])
+    warrior.mark_hp(warrior.hp_max)
+
+    assert spotlights_while_defeated(warrior, fight) is True
+
+
+def test_a_defeated_warrior_standing_alone_asks_for_nothing():
+    """"If there are other adversaries on the battlefield" - there are none."""
+    from content.registry import spotlights_while_defeated
+
+    warrior = _skeleton_warrior()
+    fight = _fight(adversaries=[warrior])
+    warrior.mark_hp(warrior.hp_max)
+
+    assert spotlights_while_defeated(warrior, fight) is False
+
+
+def test_an_ordinary_adversary_stays_off_the_list_once_it_is_down():
+    from content.registry import spotlights_while_defeated
+
+    thing = _adversary()
+    fight = _fight(adversaries=[thing, _adversary("Other")])
+    thing.mark_hp(thing.hp_max)
+
+    assert spotlights_while_defeated(thing, fight) is False
+
+
+def test_the_gm_turn_offers_a_defeated_warrior_a_spotlight():
+    """The one new call site, in `_next_adversary`."""
+    from combat.fight import _next_adversary
+
+    warrior = _skeleton_warrior()
+    fight = _fight(adversaries=[warrior, _adversary("Skeleton Dredge", hp_max=1)])
+    warrior.mark_hp(warrior.hp_max)
+
+    # Everything else has already gone, so the Warrior is the only candidate.
+    picked = _next_adversary(fight, {id(fight.adversaries[1]): 1})
+
+    assert picked is warrior
+
+
+def test_a_six_re_forms_the_warrior_with_no_marked_hp():
+    from features.adversaries import wont_stay_dead
+
+    warrior = _skeleton_warrior()
+    fight = _fight(adversaries=[warrior, _adversary("Skeleton Dredge", hp_max=1)])
+    warrior.mark_hp(warrior.hp_max)
+    warrior.mark_stress(2)
+
+    with patch("features.adversaries.random.randint", return_value=6):
+        wont_stay_dead(warrior, fight)
+
+    assert warrior.hp_marked == 0
+    assert warrior.is_defeated is False
+    assert warrior.stress_marked == 2, "the page clears HP and only HP"
+
+
+def test_anything_below_a_six_leaves_the_warrior_down():
+    from features.adversaries import wont_stay_dead
+
+    warrior = _skeleton_warrior()
+    fight = _fight(adversaries=[warrior, _adversary("Skeleton Dredge", hp_max=1)])
+    warrior.mark_hp(warrior.hp_max)
+
+    with patch("features.adversaries.random.randint", return_value=5):
+        wont_stay_dead(warrior, fight)
+
+    assert warrior.is_defeated
+
+
+def test_a_warrior_alone_does_not_re_form_however_the_die_falls():
+    from features.adversaries import wont_stay_dead
+
+    warrior = _skeleton_warrior()
+    fight = _fight(adversaries=[warrior])
+    warrior.mark_hp(warrior.hp_max)
+
+    with patch("features.adversaries.random.randint", return_value=6):
+        wont_stay_dead(warrior, fight)
+
+    assert warrior.is_defeated
+
+
+def test_a_warrior_that_failed_to_re_form_spends_the_spotlight_on_nothing():
+    from features.adversaries import wont_stay_dead_skips
+
+    warrior = _skeleton_warrior()
+    warrior.mark_hp(warrior.hp_max)
+
+    assert wont_stay_dead_skips(warrior, _fight(adversaries=[warrior])) is True
+
+
+def test_a_warrior_that_came_back_acts_on_the_same_activation():
+    """The stricter reading - that re-forming spends the spotlight - was declined."""
+    from features.adversaries import wont_stay_dead_skips
+
+    warrior = _skeleton_warrior()
+
+    assert wont_stay_dead_skips(warrior, _fight(adversaries=[warrior])) is False
+
+
+def test_a_living_warrior_is_never_skipped():
+    from content.registry import skips_spotlight
+
+    warrior = _skeleton_warrior()
+
+    assert skips_spotlight(warrior, _fight(adversaries=[warrior])) is False
+
+
+# --- Batch 8: the Spellblade, the swarms and the brambles ---------------------
+#
+# Helpers are named in full, per the batch 7 lesson: one module namespace holds
+# every helper in this file, and `_swarm` would be ambiguous between two of the
+# three stat blocks in this batch alone.
+
+
+def _spellblade(**overrides) -> Adversary:
+    """The printed Spellblade: 6 HP, 3 Stress, a 1d8+4 longsword that is both types."""
+    defaults = dict(
+        features=["Arcane Steel", "Suppressing Blast", "Move as a Unit", "Momentum"],
+        hp_max=6,
+        stress_max=3,
+        difficulty=14,
+        major_threshold=8,
+        severe_threshold=14,
+        attack_modifier=3,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=4,
+        damage_type="magic/physical",
+    )
+    defaults.update(overrides)
+    return _adversary("Spellblade", **defaults)
+
+
+def _rat_swarm(**overrides) -> Adversary:
+    """The printed Swarm of Rats: 6 HP, 2 Stress, ATK -3."""
+    defaults = dict(
+        features=["Horde (1d4+1)", "In Your Face"],
+        hp_max=6,
+        stress_max=2,
+        difficulty=10,
+        major_threshold=6,
+        severe_threshold=10,
+        attack_modifier=-3,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=2,
+    )
+    defaults.update(overrides)
+    return _adversary("Swarm of Rats", **defaults)
+
+
+def _sylvan_soldier(**overrides) -> Adversary:
+    """The printed Sylvan Soldier: 4 HP, 2 Stress, a 1d8+1 scythe."""
+    defaults = dict(
+        features=["Pack Tactics (1d8+5)", "Forest Control", "Blend In"],
+        hp_max=4,
+        stress_max=2,
+        difficulty=11,
+        major_threshold=6,
+        severe_threshold=11,
+        attack_modifier=0,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=1,
+    )
+    defaults.update(overrides)
+    return _adversary("Sylvan Soldier", **defaults)
+
+
+def _bramble_swarm(**overrides) -> Adversary:
+    """The printed Tangle Bramble Swarm: 6 HP, 3 Stress, 1d6+3 thorns."""
+    defaults = dict(
+        features=["Horde (1d4+2)", "Crush", "Encumber"],
+        hp_max=6,
+        stress_max=3,
+        difficulty=12,
+        major_threshold=6,
+        severe_threshold=11,
+        attack_modifier=0,
+        damage_dice=[DiceGroup(count=1, sides=6)],
+        damage_modifier=3,
+    )
+    defaults.update(overrides)
+    return _adversary("Tangle Bramble Swarm", **defaults)
+
+
+def _tangle_bramble(**overrides) -> Adversary:
+    """The printed Tangle Bramble: a 1 HP Minion dealing a flat 2."""
+    defaults = dict(
+        features=["Minion (4)", "Group Attack", "Drain and Multiply"],
+        hp_max=1,
+        stress_max=1,
+        difficulty=11,
+        major_threshold=NO_THRESHOLD,
+        severe_threshold=NO_THRESHOLD,
+        attack_modifier=-1,
+        damage_dice=[],
+        damage_modifier=2,
+    )
+    defaults.update(overrides)
+    return _adversary("Tangle Bramble", **defaults)
+
+
+# --- Damage that is both types, and Arcane Steel ------------------------------
+
+
+def test_a_page_printing_both_types_reads_as_the_pair():
+    from content.damage_types import BOTH, damage_type_named
+
+    assert damage_type_named("phy/mag") is BOTH
+    assert damage_type_named("magic/physical") is BOTH
+
+
+def test_a_hit_that_is_both_counts_as_each_of_them():
+    from content.damage_types import BOTH, includes
+
+    assert includes(BOTH, DamageType.PHYSICAL) is True
+    assert includes(BOTH, DamageType.MAGIC) is True
+
+
+def test_a_single_type_still_counts_as_only_itself():
+    from content.damage_types import includes
+
+    assert includes(DamageType.PHYSICAL, DamageType.PHYSICAL) is True
+    assert includes(DamageType.PHYSICAL, DamageType.MAGIC) is False
+
+
+def test_untyped_damage_counts_as_nothing():
+    from content.damage_types import includes
+
+    assert includes(None, DamageType.PHYSICAL) is False
+    assert includes(None, DamageType.MAGIC) is False
+
+
+def test_arcane_steel_makes_the_standard_attack_both_types():
+    from content.damage_types import BOTH
+    from features.adversaries import arcane_steel
+
+    assert arcane_steel(_spellblade()) is BOTH
+
+
+def test_arcane_steel_reaches_the_standard_attack_but_not_a_feature_that_types_itself():
+    from content.damage_types import BOTH
+
+    spellblade = _spellblade()
+
+    assert spellblade.type_of_damage() is BOTH
+    assert spellblade.type_of_damage(DamageType.MAGIC) is DamageType.MAGIC
+
+
+def test_either_resistance_halves_a_hit_that_is_both():
+    """The ruling: resisted if either is, not only if both are."""
+    from content.damage_types import BOTH
+    from content.registry import resistance_to
+
+    physical = _skeleton_warrior()  # Only Bones - resistant to physical
+    magical = _adversary("Minor Chaos Elemental", features=["Arcane Form"])
+
+    assert resistance_to(physical, BOTH) == 0.5
+    assert resistance_to(magical, BOTH) == 0.5
+
+
+def test_a_physical_only_restriction_fires_on_a_hit_that_is_both():
+    from content.damage_types import BOTH
+    from features.adversaries import weak_structure
+
+    construct = _adversary("Construct", features=["Weak Structure"])
+
+    assert weak_structure(construct, amount=9, hp_to_mark=2, damage_type=BOTH) == 3
+
+
+def test_the_spellblades_catalogue_entry_carries_the_pair():
+    from adversaries.registry import find_adversary
+    from content.damage_types import BOTH
+
+    spellblade = find_adversary("Spellblade").spawn()
+
+    assert spellblade.type_of_damage() is BOTH
+
+
+# --- Suppressing Blast --------------------------------------------------------
+
+
+def test_suppressing_blast_costs_a_stress_and_pays_a_fear_per_wound():
+    from features.adversaries import suppressing_blast
+
+    spellblade = _spellblade()
+    fight = _fight(party=_party(armor_max=0), adversaries=[spellblade], fear=0)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        result = suppressing_blast(spellblade, fight.party[0], fight)
+
+    assert spellblade.stress_marked == 1
+    assert result.made_an_attack is False
+    # Far reaches 3 or 4 of a party of four, and 1d8+2 marks HP on every one of
+    # them against a Major threshold of 6 with no armor.
+    wounded = sum(1 for pc in fight.party if pc.hp_marked)
+    assert wounded >= 3
+    assert fight.fear == wounded
+
+
+def test_a_successful_save_against_suppressing_blast_takes_nothing():
+    """No "half damage" clause on this one, unlike Scorched Earth and Hellfire."""
+    from features.adversaries import suppressing_blast
+
+    spellblade = _spellblade()
+    fight = _fight(party=_party(armor_max=0), adversaries=[spellblade], fear=0)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        suppressing_blast(spellblade, fight.party[0], fight)
+
+    assert all(pc.hp_marked == 0 for pc in fight.party)
+    assert fight.fear == 0, "the Fear is per target who marked HP"
+
+
+def test_suppressing_blast_is_on_the_table_from_full_health():
+    """Three Stress slots free open at 10 or fewer unmarked HP, and it has 6."""
+    from features.adversaries import suppressing_blast
+
+    spellblade = _spellblade()
+    fight = _fight(adversaries=[spellblade])
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        assert suppressing_blast(spellblade, fight.party[0], fight) is not None
+    assert spellblade.stress_marked == 1
+
+
+def test_suppressing_blast_stops_once_the_stress_runs_out():
+    from features.adversaries import suppressing_blast
+
+    spellblade = _spellblade(stress_marked=3)
+    fight = _fight(adversaries=[spellblade])
+
+    assert suppressing_blast(spellblade, fight.party[0], fight) is None
+
+
+# --- Move as a Unit -----------------------------------------------------------
+
+
+def test_move_as_a_unit_spends_two_fear_and_rallies_allies():
+    from features.adversaries import move_as_a_unit
+
+    spellblade = _spellblade()
+    allies = [_adversary(f"Guard {index}") for index in range(4)]
+    fight = _fight(adversaries=[spellblade, *allies], fear=3)
+
+    result = move_as_a_unit(spellblade, fight.party[0], fight)
+
+    assert fight.fear == 1
+    assert result.made_an_attack is False
+    assert sum(fight.granted_activations(ally) for ally in allies) >= 1
+
+
+def test_move_as_a_unit_does_not_spotlight_the_spellblade_itself():
+    """Rally Guards names the Head Guard as well; this one names allies only."""
+    from features.adversaries import move_as_a_unit
+
+    spellblade = _spellblade()
+    fight = _fight(adversaries=[spellblade, _adversary("Guard")], fear=3)
+
+    move_as_a_unit(spellblade, fight.party[0], fight)
+
+    assert fight.granted_activations(spellblade) == 0
+
+
+def test_move_as_a_unit_declines_without_the_fear():
+    from features.adversaries import move_as_a_unit
+
+    spellblade = _spellblade()
+    fight = _fight(adversaries=[spellblade], fear=1)
+
+    assert move_as_a_unit(spellblade, fight.party[0], fight) is None
+
+
+# --- In Your Face -------------------------------------------------------------
+
+
+def test_in_your_face_hobbles_a_melee_swing_at_anybody_else():
+    from features.adversaries import in_your_face
+
+    swarm, other = _rat_swarm(), _adversary("Bandit")
+    fight = _fight(adversaries=[swarm, other])
+
+    hobbled = in_your_face(
+        swarm, fight.party[0], other, find_weapon("Broadsword"), fight
+    )
+
+    assert hobbled is True
+
+
+def test_in_your_face_does_not_stop_anybody_hitting_the_swarm():
+    from features.adversaries import in_your_face
+
+    swarm = _rat_swarm()
+    fight = _fight(adversaries=[swarm])
+
+    hobbled = in_your_face(
+        swarm, fight.party[0], swarm, find_weapon("Broadsword"), fight
+    )
+
+    assert hobbled is False
+
+
+def test_in_your_face_leaves_an_archer_alone():
+    from features.adversaries import in_your_face
+
+    swarm, other = _rat_swarm(), _adversary("Bandit")
+    fight = _fight(adversaries=[swarm, other])
+
+    hobbled = in_your_face(swarm, fight.party[0], other, find_weapon("Shortbow"), fight)
+
+    assert hobbled is False
+
+
+def test_in_your_face_reaches_a_weapon_swing_through_dispatch():
+    """The hook is only worth anything if the attack actually consults it."""
+    from items.weapons import attack_with
+
+    swarm, other = _rat_swarm(), _adversary("Bandit")
+    fight = _fight(adversaries=[swarm, other])
+
+    with patch(
+        "items.weapons.roll_duality", return_value=_duality(succeeds=True)
+    ) as rolled:
+        attack_with(fight.party[0], find_weapon("Broadsword"), other, fight=fight)
+
+    assert rolled.call_args.kwargs["advantage_state"] is AdvantageState.DISADVANTAGE
+
+
+# --- Pack Tactics, now parameterised ------------------------------------------
+
+
+def test_the_sylvan_soldiers_pack_tactics_deals_its_own_dice_and_no_fear():
+    from features.adversaries import pack_tactics
+
+    soldiers = [_sylvan_soldier(), _sylvan_soldier()]
+    fight = _fight(adversaries=soldiers, fear=0)
+
+    with _bunched():
+        dice, modifier = pack_tactics(soldiers[0], fight.party[0], None, fight)
+
+    assert dice == [DiceGroup(count=1, sides=8)]
+    assert modifier == 5
+    assert fight.fear == 0, "only the Dire Wolf's printed text pays a Fear"
+
+
+def test_the_dire_wolfs_pack_tactics_still_pays_its_fear():
+    from features.adversaries import pack_tactics
+
+    wolves = [_wolf(), _wolf()]
+    fight = _fight(adversaries=wolves, fear=0)
+
+    with _bunched():
+        dice, modifier = pack_tactics(wolves[0], fight.party[0], None, fight)
+
+    assert dice == [DiceGroup(count=1, sides=6)]
+    assert modifier == 5
+    assert fight.fear == 1
+
+
+def test_pack_tactics_without_a_parameter_declines_rather_than_guessing():
+    from features.adversaries import pack_tactics
+
+    pack = [_wolf(features=["Pack Tactics"]), _wolf(features=["Pack Tactics"])]
+    fight = _fight(adversaries=pack)
+
+    with _bunched():
+        assert pack_tactics(pack[0], fight.party[0], None, fight) is None
+
+
+def test_the_catalogues_dire_wolf_carries_both_terms():
+    from adversaries.registry import find_adversary
+    from content.registry import feature_parameter
+
+    wolf = find_adversary("Dire Wolf").spawn()
+
+    assert feature_parameter(wolf, "adversary:Pack Tactics") == "1d6+5, Fear"
+
+
+# --- Forest Control -----------------------------------------------------------
+
+
+def test_forest_control_drops_a_tree_on_one_creature():
+    from features.adversaries import forest_control
+
+    soldier = _sylvan_soldier()
+    fight = _fight(party=_party(armor_max=0), adversaries=[soldier], fear=2)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        result = forest_control(soldier, fight.party[0], fight)
+
+    assert fight.fear == 1
+    assert result.made_an_attack is False
+    assert fight.party[0].hp_marked > 0
+    assert all(pc.hp_marked == 0 for pc in fight.party[1:]), "a creature, singular"
+
+
+def test_a_successful_agility_roll_dodges_the_tree():
+    from features.adversaries import forest_control
+
+    soldier = _sylvan_soldier()
+    fight = _fight(party=_party(armor_max=0), adversaries=[soldier], fear=2)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        forest_control(soldier, fight.party[0], fight)
+
+    assert fight.party[0].hp_marked == 0
+
+
+def test_forest_control_declines_without_the_fear():
+    from features.adversaries import forest_control
+
+    soldier = _sylvan_soldier()
+    fight = _fight(adversaries=[soldier], fear=0)
+
+    assert forest_control(soldier, fight.party[0], fight) is None
+
+
+# --- Blend In, and Hidden -----------------------------------------------------
+
+
+def test_blend_in_marks_a_stress_and_hides_the_soldier():
+    from content.conditions import HIDDEN
+    from features.adversaries import blend_in
+
+    soldier = _sylvan_soldier()
+    fight = _fight(adversaries=[soldier])
+    landed = AttackResult(
+        attack_roll=_d20(19),
+        damage_roll=DamageRollResult(
+            dice_groups=[DiceGroup(count=1, sides=8)],
+            die_results=[[4]],
+            modifier=1,
+        ),
+    )
+
+    blend_in(soldier, fight.party[0], landed, fight)
+
+    assert soldier.stress_marked == 1
+    assert fight.is_hidden(soldier) is True
+    assert fight.condition_on(soldier, HIDDEN).found_by == ("instinct", 14)
+
+
+def test_blend_in_does_nothing_on_a_miss():
+    from features.adversaries import blend_in
+
+    soldier = _sylvan_soldier()
+    fight = _fight(adversaries=[soldier])
+    missed = AttackResult(attack_roll=_d20(1), damage_roll=None)
+
+    blend_in(soldier, fight.party[0], missed, fight)
+
+    assert soldier.stress_marked == 0
+    assert fight.is_hidden(soldier) is False
+
+
+def test_the_soldier_breaks_cover_when_it_next_acts():
+    from content.conditions import HIDDEN, Condition
+    from features.adversaries import blend_in_reveals
+
+    soldier = _sylvan_soldier()
+    fight = _fight(adversaries=[soldier])
+    fight.apply_condition(soldier, Condition(name=HIDDEN, source=soldier))
+
+    blend_in_reveals(soldier, fight)
+
+    assert fight.is_hidden(soldier) is False
+
+
+def test_a_swing_at_something_hidden_is_made_at_disadvantage():
+    from content.conditions import HIDDEN, Condition
+    from items.weapons import attack_with
+
+    soldier = _sylvan_soldier()
+    fight = _fight(adversaries=[soldier])
+    fight.apply_condition(soldier, Condition(name=HIDDEN, source=soldier))
+
+    with patch(
+        "items.weapons.roll_duality", return_value=_duality(succeeds=True)
+    ) as rolled:
+        attack_with(fight.party[0], find_weapon("Broadsword"), soldier, fight=fight)
+
+    assert rolled.call_args.kwargs["advantage_state"] is AdvantageState.DISADVANTAGE
+
+
+def test_cloaked_now_hides_the_shadow_for_real():
+    """Batch 4 declared the Hidden itself a gap; the ruling on Hidden closed it."""
+    from features.adversaries import cloaked
+
+    shadow = _adversary("Jagged Knife Shadow", features=["Cloaked"])
+    fight = _fight(adversaries=[shadow])
+
+    cloaked(shadow, fight.party[0], fight)
+
+    assert fight.is_hidden(shadow) is True
+
+
+def test_striking_from_hiding_ends_the_cloak_and_the_hiding_together():
+    from features.adversaries import cloaked, cloaked_grants_advantage
+
+    shadow = _adversary("Jagged Knife Shadow", features=["Cloaked"])
+    fight = _fight(adversaries=[shadow])
+    cloaked(shadow, fight.party[0], fight)
+
+    assert cloaked_grants_advantage(shadow, fight.party[0], fight) is (
+        AdvantageState.ADVANTAGE
+    )
+    assert fight.is_hidden(shadow) is False
+
+
+def test_a_cloaked_shadow_cannot_be_hunted():
+    """The page prints no roll to find one, so the condition offers none."""
+    from features.adversaries import cloaked
+
+    shadow = _adversary("Jagged Knife Shadow", features=["Cloaked"])
+    fight = _fight(adversaries=[shadow])
+    cloaked(shadow, fight.party[0], fight)
+
+    assert fight.searchable_condition(shadow) is None
+
+
+# --- Spending an action roll to find something hidden -------------------------
+
+
+def test_a_pc_spends_their_action_roll_looking_and_finds_the_soldier():
+    from combat.policy import _search_for_hidden
+    from content.conditions import HIDDEN, Condition
+
+    soldier = _sylvan_soldier()
+    fight = _fight(adversaries=[soldier])
+    fight.apply_condition(
+        soldier, Condition(name=HIDDEN, source=soldier, found_by=("instinct", 14))
+    )
+
+    with patch("combat.policy.roll_duality", return_value=_duality(succeeds=True)):
+        result = _search_for_hidden(fight.party[0], fight)
+
+    assert result is not None and result.made_an_attack is True
+    assert result.damage_roll is None
+    assert fight.is_hidden(soldier) is False
+
+
+def test_a_failed_search_spends_the_one_attempt_and_leaves_them_hidden():
+    from combat.policy import _search_for_hidden
+    from content.conditions import HIDDEN, Condition
+
+    soldier = _sylvan_soldier()
+    fight = _fight(adversaries=[soldier])
+    fight.apply_condition(
+        soldier, Condition(name=HIDDEN, source=soldier, found_by=("instinct", 14))
+    )
+
+    with patch("combat.policy.roll_duality", return_value=_duality(succeeds=False)):
+        assert _search_for_hidden(fight.party[0], fight) is not None
+        # One attempt per hiding: nobody else gets to try.
+        assert _search_for_hidden(fight.party[1], fight) is None
+
+    assert fight.is_hidden(soldier) is True
+
+
+def test_nobody_searches_when_nothing_is_hidden():
+    from combat.policy import _search_for_hidden
+
+    fight = _fight(adversaries=[_sylvan_soldier()])
+
+    assert _search_for_hidden(fight.party[0], fight) is None
+
+
+def test_hiding_again_earns_a_fresh_search():
+    from combat.policy import _search_for_hidden
+    from content.conditions import HIDDEN, Condition
+
+    soldier = _sylvan_soldier()
+    fight = _fight(adversaries=[soldier])
+    hidden = Condition(name=HIDDEN, source=soldier, found_by=("instinct", 14))
+
+    fight.apply_condition(soldier, hidden)
+    with patch("combat.policy.roll_duality", return_value=_duality(succeeds=False)):
+        _search_for_hidden(fight.party[0], fight)
+        assert _search_for_hidden(fight.party[0], fight) is None
+
+        # The Soldier strikes and vanishes again - a fresh condition, a fresh try.
+        fight.apply_condition(soldier, hidden)
+        assert _search_for_hidden(fight.party[0], fight) is not None
+
+
+# --- Encumber, and the bramble tokens -----------------------------------------
+
+
+def _landed_hit(hp_marked: int = 1) -> AttackResult:
+    """A hit that definitely landed, for a rider that only reads the result."""
+    return AttackResult(
+        attack_roll=_d20(19),
+        damage_roll=DamageRollResult(
+            dice_groups=[DiceGroup(count=1, sides=6)],
+            die_results=[[4]],
+            modifier=3,
+        ),
+        hp_marked=hp_marked,
+    )
+
+
+def test_encumber_leaves_a_bramble_token_and_restrains():
+    from content.conditions import RESTRAINED
+    from features.adversaries import BRAMBLE_TOKEN, encumber
+
+    swarm = _bramble_swarm()
+    fight = _fight(adversaries=[swarm])
+    target = fight.party[0]
+
+    encumber(swarm, target, _landed_hit(), fight)
+
+    assert fight.token_count(target, BRAMBLE_TOKEN) == 1
+    assert fight.has_condition(target, RESTRAINED)
+    assert fight.is_vulnerable(target) is False
+
+
+def test_a_third_bramble_token_makes_the_target_vulnerable():
+    from features.adversaries import BRAMBLE_TOKEN, encumber
+
+    swarm = _bramble_swarm()
+    fight = _fight(adversaries=[swarm])
+    target = fight.party[0]
+
+    for _ in range(3):
+        encumber(swarm, target, _landed_hit(), fight)
+
+    assert fight.token_count(target, BRAMBLE_TOKEN) == 3
+    assert fight.is_vulnerable(target) is True
+
+
+def test_tearing_free_of_the_brambles_spawns_a_minion_for_each_token():
+    from features.adversaries import BRAMBLE_TOKEN, TANGLE_BRAMBLE, encumber
+
+    swarm = _bramble_swarm()
+    fight = _fight(adversaries=[swarm])
+    target = fight.party[0]
+    for _ in range(2):
+        encumber(swarm, target, _landed_hit(), fight)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        fight.expire_conditions(target, WHEN_THEY_ACT)
+
+    assert fight.token_count(target, BRAMBLE_TOKEN) == 0
+    spawned = [a for a in fight.living_adversaries if a.name == TANGLE_BRAMBLE]
+    assert len(spawned) == 2
+
+
+def test_major_damage_to_the_swarm_clears_the_brambles_without_spawning_anything():
+    """The asymmetry is printed: only the Finesse Roll lets the Minions loose."""
+    from features.adversaries import (
+        BRAMBLE_TOKEN,
+        TANGLE_BRAMBLE,
+        encumber,
+        encumber_releases,
+    )
+
+    swarm = _bramble_swarm()
+    fight = _fight(adversaries=[swarm])
+    target = fight.party[0]
+    for _ in range(2):
+        encumber(swarm, target, _landed_hit(), fight)
+
+    encumber_releases(swarm, amount=swarm.major_threshold, hp_marked=2, fight=fight)
+
+    assert fight.token_count(target, BRAMBLE_TOKEN) == 0
+    assert not [a for a in fight.living_adversaries if a.name == TANGLE_BRAMBLE]
+
+
+# --- Crush --------------------------------------------------------------------
+
+
+def test_crush_needs_three_bramble_tokens():
+    from features.adversaries import crush, encumber
+
+    swarm = _bramble_swarm()
+    fight = _fight(adversaries=[swarm])
+    encumber(swarm, fight.party[0], _landed_hit(), fight)
+
+    assert crush(swarm, fight.party[0], fight) is None
+    assert swarm.stress_marked == 0
+
+
+def test_crush_deals_direct_damage_to_whoever_is_most_wrapped_up():
+    from features.adversaries import crush, encumber
+
+    swarm = _bramble_swarm()
+    fight = _fight(party=_party(armor_max=2), adversaries=[swarm])
+    wrapped = fight.party[1]
+    for _ in range(3):
+        encumber(swarm, wrapped, _landed_hit(), fight)
+
+    result = crush(swarm, fight.party[0], fight)
+
+    assert result is not None and result.made_an_attack is False
+    assert swarm.stress_marked == 1
+    assert wrapped.hp_marked > 0
+    assert wrapped.armor_marked == 0, "direct damage marks no Armor Slot"
+
+
+# --- Drain and Multiply -------------------------------------------------------
+
+
+def test_brambles_knot_into_a_horde_with_the_hp_of_however_many_merged():
+    """Four on the field, and the Close band gathers three of them."""
+    from features.adversaries import TANGLE_BRAMBLE_SWARM, drain_and_multiply
+
+    brambles = [_tangle_bramble() for _ in range(4)]
+    fight = _fight(adversaries=brambles)
+
+    with _bunched():
+        drain_and_multiply(brambles[0], fight.party[0], _landed_hit(), fight)
+
+    swarms = [a for a in fight.living_adversaries if a.name == TANGLE_BRAMBLE_SWARM]
+    assert len(swarms) == 1
+    assert swarms[0].hp_max == 3, "the count of Minions merged, not the printed 6"
+    left = [a for a in fight.living_adversaries if a.name == "Tangle Bramble"]
+    assert len(left) == 1, "the one the band didn't reach is still standing"
+
+
+def test_two_brambles_are_not_enough_to_merge():
+    from features.adversaries import TANGLE_BRAMBLE_SWARM, drain_and_multiply
+
+    brambles = [_tangle_bramble() for _ in range(2)]
+    fight = _fight(adversaries=brambles)
+
+    with _bunched():
+        drain_and_multiply(brambles[0], fight.party[0], _landed_hit(), fight)
+
+    assert not [a for a in fight.living_adversaries if a.name == TANGLE_BRAMBLE_SWARM]
+
+
+def test_three_on_the_field_is_still_not_enough_once_the_band_has_its_say():
+    """Close reaches min(n*3//4, n-1), which is 2 at three Minions - so four is
+    the floor for this feature, the same shape No Quarter has at six pirates."""
+    from features.adversaries import TANGLE_BRAMBLE_SWARM, drain_and_multiply
+
+    brambles = [_tangle_bramble() for _ in range(3)]
+    fight = _fight(adversaries=brambles)
+
+    with _bunched():
+        drain_and_multiply(brambles[0], fight.party[0], _landed_hit(), fight)
+
+    assert not [a for a in fight.living_adversaries if a.name == TANGLE_BRAMBLE_SWARM]
+
+
+def test_a_hit_that_marked_no_hp_multiplies_nothing():
+    """"Causes a target to mark HP" - armor can swallow it whole."""
+    from features.adversaries import TANGLE_BRAMBLE_SWARM, drain_and_multiply
+
+    brambles = [_tangle_bramble() for _ in range(4)]
+    fight = _fight(adversaries=brambles)
+
+    with _bunched():
+        drain_and_multiply(
+            brambles[0], fight.party[0], _landed_hit(hp_marked=0), fight
+        )
+
+    assert not [a for a in fight.living_adversaries if a.name == TANGLE_BRAMBLE_SWARM]
+
+
+def test_the_tangle_brambles_flat_damage_loads():
+    from adversaries.registry import find_adversary
+
+    bramble = find_adversary("Tangle Bramble").spawn()
+
+    assert bramble.damage_dice == []
+    assert bramble.damage_modifier == 2
+    assert bramble.major_threshold == NO_THRESHOLD
