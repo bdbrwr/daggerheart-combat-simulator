@@ -5469,3 +5469,914 @@ def test_the_tangle_brambles_flat_damage_loads():
     assert bramble.damage_dice == []
     assert bramble.damage_modifier == 2
     assert bramble.major_threshold == NO_THRESHOLD
+
+
+# --- Batch 9: the Weaponmaster ------------------------------------------------
+
+
+def _weaponmaster(**overrides) -> Adversary:
+    """The printed Weaponmaster: 6 HP, 3 Stress, a 1d12+2 Claymore at Very Close."""
+    defaults = dict(
+        features=["Goading Strike", "Adrenaline Burst", "Momentum"],
+        hp_max=6,
+        stress_max=3,
+        difficulty=14,
+        major_threshold=8,
+        severe_threshold=15,
+        attack_modifier=2,
+        range="Very Close",
+        damage_dice=[DiceGroup(count=1, sides=12)],
+        damage_modifier=2,
+    )
+    defaults.update(overrides)
+    return _adversary("Weaponmaster", **defaults)
+
+
+def test_goading_strike_taunts_the_target_it_hits():
+    from content.conditions import TAUNTED
+    from features.adversaries import goading_strike
+
+    master = _weaponmaster()
+    fight = _fight(party=_party(armor_max=0), adversaries=[master])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = goading_strike(master, target, fight)
+
+    assert result.damage_roll is not None
+    assert master.stress_marked == 1
+    assert fight.condition_on(target, TAUNTED).source is master
+
+
+def test_goading_strike_leaves_nothing_on_a_miss():
+    from content.conditions import TAUNTED
+    from features.adversaries import goading_strike
+
+    master = _weaponmaster()
+    fight = _fight(adversaries=[master])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(1)):
+        goading_strike(master, fight.party[0], fight)
+
+    assert master.stress_marked == 0
+    assert fight.has_condition(fight.party[0], TAUNTED) is False
+
+
+def test_a_taunted_pc_swings_at_the_weaponmaster_and_nothing_else():
+    """The whole of the ruling: the Taunt fixes the target's target."""
+    from combat.policy import choose_pc_target
+    from content.conditions import TAUNTED, Condition
+
+    master = _weaponmaster()
+    wounded = _adversary("Bandit", hp_marked=5)
+    fight = _fight(adversaries=[master, wounded])
+    target = fight.party[0]
+
+    assert choose_pc_target(fight, target) is wounded, "focus fire, untaunted"
+
+    fight.apply_condition(target, Condition(name=TAUNTED, source=master))
+    assert choose_pc_target(fight, target) is master
+
+
+def test_only_the_taunted_pc_is_compelled():
+    from combat.policy import choose_pc_target
+    from content.conditions import TAUNTED, Condition
+
+    master = _weaponmaster()
+    wounded = _adversary("Bandit", hp_marked=5)
+    fight = _fight(adversaries=[master, wounded])
+    fight.apply_condition(fight.party[0], Condition(name=TAUNTED, source=master))
+
+    assert choose_pc_target(fight, fight.party[1]) is wounded
+
+
+def test_the_taunt_lifts_on_the_targets_next_successful_attack():
+    from content.conditions import TAUNTED, Condition
+    from features.adversaries import goading_strike_releases
+
+    master = _weaponmaster()
+    fight = _fight(adversaries=[master])
+    target = fight.party[0]
+    fight.apply_condition(target, Condition(name=TAUNTED, source=master))
+
+    goading_strike_releases(master, target, _duality(succeeds=False), fight)
+    assert fight.has_condition(target, TAUNTED), "a miss keeps them stuck"
+
+    goading_strike_releases(master, target, _duality(succeeds=True), fight)
+    assert fight.has_condition(target, TAUNTED) is False
+
+
+def test_goading_strike_declines_against_somebody_already_taunted():
+    """Rule 3: the Taunt is all this buys over the standard attack."""
+    from content.conditions import TAUNTED, Condition
+    from features.adversaries import goading_strike
+
+    master = _weaponmaster()
+    fight = _fight(adversaries=[master])
+    fight.apply_condition(fight.party[0], Condition(name=TAUNTED, source=master))
+
+    assert goading_strike(master, fight.party[0], fight) is None
+    assert master.stress_marked == 0
+
+
+def test_a_dead_weaponmaster_compels_nobody():
+    from combat.policy import choose_pc_target
+    from content.conditions import TAUNTED, Condition
+
+    master = _weaponmaster(hp_marked=6)
+    wounded = _adversary("Bandit", hp_marked=5)
+    fight = _fight(adversaries=[master, wounded])
+    fight.apply_condition(fight.party[0], Condition(name=TAUNTED, source=master))
+
+    assert master.is_defeated
+    assert choose_pc_target(fight, fight.party[0]) is wounded
+
+
+# --- Adrenaline Burst ---------------------------------------------------------
+
+
+def test_adrenaline_burst_waits_until_it_can_clear_the_whole_amount():
+    """Ruled generally: a feature clearing fixed quantities clears all of them."""
+    from features.adversaries import adrenaline_burst
+
+    master = _weaponmaster(hp_marked=1, stress_marked=3)
+    fight = _fight(adversaries=[master], fear=3)
+
+    assert adrenaline_burst(master, fight.party[0], fight) is None
+    assert fight.fear == 3
+
+
+def test_adrenaline_burst_clears_two_of_each_for_a_fear():
+    from features.adversaries import adrenaline_burst
+
+    master = _weaponmaster(hp_marked=3, stress_marked=2)
+    fight = _fight(adversaries=[master], fear=3)
+
+    result = adrenaline_burst(master, fight.party[0], fight)
+
+    assert result is not None and result.made_an_attack is False
+    assert master.hp_marked == 1
+    assert master.stress_marked == 0
+    assert fight.fear == 2
+
+
+def test_adrenaline_burst_is_once_a_scene():
+    from features.adversaries import adrenaline_burst
+
+    master = _weaponmaster(hp_marked=4, stress_marked=3)
+    fight = _fight(adversaries=[master], fear=4)
+
+    assert adrenaline_burst(master, fight.party[0], fight) is not None
+
+    master.hp_marked, master.stress_marked = 4, 3
+    assert adrenaline_burst(master, fight.party[0], fight) is None
+
+
+def test_adrenaline_burst_declines_without_the_fear():
+    from features.adversaries import adrenaline_burst
+
+    master = _weaponmaster(hp_marked=3, stress_marked=2)
+    fight = _fight(adversaries=[master], fear=0)
+
+    assert adrenaline_burst(master, fight.party[0], fight) is None
+
+
+# --- Batch 9: the Young Dryad -------------------------------------------------
+
+
+def _dryad(**overrides) -> Adversary:
+    """The printed Young Dryad: 6 HP, 2 Stress, a 1d8+5 Scythe."""
+    defaults = dict(
+        features=["Voice of the Forest", "Thorny Cage", "Momentum"],
+        hp_max=6,
+        stress_max=2,
+        difficulty=11,
+        major_threshold=6,
+        severe_threshold=11,
+        attack_modifier=0,
+        range="Melee",
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=5,
+    )
+    defaults.update(overrides)
+    return _adversary("Young Dryad", **defaults)
+
+
+def test_the_dryad_only_calls_the_forest_once_it_is_hurt():
+    """2 Stress against 6 HP, so the desperation line opens at 5 unmarked HP -
+    the Bear's shape rather than the usual one."""
+    from features.adversaries import voice_of_the_forest
+
+    dryad = _dryad()
+    fight = _fight(adversaries=[dryad, _adversary("Soldier")])
+
+    assert voice_of_the_forest(dryad, fight.party[0], fight) is None
+
+    dryad.mark_hp(1)
+    with patch("features.adversaries.random.randint", return_value=1):
+        assert voice_of_the_forest(dryad, fight.party[0], fight) is not None
+
+
+def test_voice_of_the_forest_hands_out_free_spotlights():
+    from features.adversaries import voice_of_the_forest
+
+    dryad = _dryad(hp_marked=1)
+    allies = [_adversary(f"Soldier {index}") for index in range(4)]
+    fight = _fight(adversaries=[dryad, *allies], fear=0)
+
+    with patch("features.adversaries.random.randint", return_value=4):
+        result = voice_of_the_forest(dryad, fight.party[0], fight)
+
+    assert result is not None and result.made_an_attack is False
+    assert dryad.stress_marked == 1
+    assert all(fight.free_activations(ally) == 1 for ally in allies)
+    assert all(fight.granted_activations(ally) == 0 for ally in allies), (
+        "free means outside the paid budget, not on top of it"
+    )
+    assert fight.fear == 0, "the rally costs the GM no Fear at all"
+
+
+def test_voice_of_the_forest_does_not_spotlight_the_dryad_itself():
+    from features.adversaries import voice_of_the_forest
+
+    dryad = _dryad(hp_marked=1)
+    fight = _fight(adversaries=[dryad, _adversary("Soldier")])
+
+    with patch("features.adversaries.random.randint", return_value=1):
+        voice_of_the_forest(dryad, fight.party[0], fight)
+
+    assert fight.free_activations(dryad) == 0
+
+
+def test_an_ally_on_the_dryads_free_spotlight_deals_half_damage():
+    from content.registry import incoming_damage_multiplier
+    from features.adversaries import voice_of_the_forest
+
+    dryad = _dryad(hp_marked=1)
+    ally = _adversary("Soldier")
+    fight = _fight(adversaries=[dryad, ally])
+
+    with patch("features.adversaries.random.randint", return_value=1):
+        voice_of_the_forest(dryad, fight.party[0], fight)
+
+    fight.acting_free = ally
+    assert incoming_damage_multiplier(fight.party[0], ally, fight) == 0.5
+
+
+def test_the_halving_does_not_reach_the_allys_own_spotlight():
+    """"While spotlighted this way" - not for the rest of the fight."""
+    from content.registry import incoming_damage_multiplier
+    from features.adversaries import voice_of_the_forest
+
+    dryad = _dryad(hp_marked=1)
+    ally = _adversary("Soldier")
+    fight = _fight(adversaries=[dryad, ally])
+
+    with patch("features.adversaries.random.randint", return_value=1):
+        voice_of_the_forest(dryad, fight.party[0], fight)
+
+    fight.acting_free = None
+    assert incoming_damage_multiplier(fight.party[0], ally, fight) == 1
+
+
+def test_the_halving_lands_before_the_targets_thresholds():
+    """Where the effect really lives: 10 marks 2 HP and 5 marks 1."""
+    from features.adversaries import voice_of_the_forest
+
+    dryad = _dryad(hp_marked=1)
+    # A flat 10, so the damage roll is not a variable in this test.
+    ally = _adversary("Soldier", damage_dice=[], damage_modifier=10)
+    fight = _fight(party=_party(armor_max=0), adversaries=[dryad, ally])
+    target = fight.party[0]
+
+    with patch("features.adversaries.random.randint", return_value=1):
+        voice_of_the_forest(dryad, target, fight)
+
+    fight.acting_free = ally
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        ally.attack(target, fight=fight)
+
+    # 10 would be Major against a threshold of 6; 5 is not.
+    assert target.hp_marked == 1
+
+
+def test_voice_of_the_forest_stops_once_the_stress_runs_out():
+    from features.adversaries import voice_of_the_forest
+
+    dryad = _dryad(stress_marked=2)
+    fight = _fight(adversaries=[dryad, _adversary("Soldier")])
+
+    assert voice_of_the_forest(dryad, fight.party[0], fight) is None
+
+
+# --- Thorny Cage --------------------------------------------------------------
+
+
+def test_thorny_cage_restrains_a_target_for_a_fear():
+    from content.conditions import RESTRAINED
+    from features.adversaries import thorny_cage
+
+    dryad = _dryad()
+    fight = _fight(adversaries=[dryad], fear=2)
+    target = fight.party[0]
+
+    result = thorny_cage(dryad, target, fight)
+
+    assert result is not None and result.made_an_attack is False
+    assert fight.fear == 1
+    assert fight.condition_on(target, RESTRAINED).source is dryad
+
+
+def test_a_caged_pc_can_force_the_bars_apart_themselves():
+    from content.conditions import RESTRAINED
+    from features.adversaries import thorny_cage
+
+    dryad = _dryad()
+    fight = _fight(adversaries=[dryad], fear=2)
+    target = fight.party[0]
+    thorny_cage(dryad, target, fight)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        assert fight.expire_conditions(target, WHEN_THEY_ACT) == [RESTRAINED]
+    assert all(pc.stress_marked == 0 for pc in fight.party), "nobody had to help"
+
+
+def test_a_failed_roll_costs_an_ally_a_stress_to_open_the_cage():
+    """The page's 'a creature makes an action roll against the cage' clause."""
+    from content.conditions import RESTRAINED
+    from features.adversaries import thorny_cage
+
+    dryad = _dryad()
+    fight = _fight(adversaries=[dryad], fear=2)
+    target = fight.party[0]
+    thorny_cage(dryad, target, fight)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        assert fight.expire_conditions(target, WHEN_THEY_ACT) == [RESTRAINED]
+
+    assert target.stress_marked == 0, "the helper pays, not the prisoner"
+    assert sum(pc.stress_marked for pc in fight.party) == 1
+
+
+def test_the_cage_holds_when_nobody_is_free_to_help():
+    from content.conditions import RESTRAINED
+    from features.adversaries import thorny_cage
+
+    dryad = _dryad()
+    fight = _fight(party=_party(size=1), adversaries=[dryad], fear=2)
+    target = fight.party[0]
+    thorny_cage(dryad, target, fight)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        fight.expire_conditions(target, WHEN_THEY_ACT)
+
+    assert fight.has_condition(target, RESTRAINED)
+
+
+def test_thorny_cage_declines_against_somebody_it_has_already_caged():
+    from features.adversaries import thorny_cage
+
+    dryad = _dryad()
+    fight = _fight(adversaries=[dryad], fear=2)
+    thorny_cage(dryad, fight.party[0], fight)
+
+    assert thorny_cage(dryad, fight.party[0], fight) is None
+    assert fight.fear == 1, "no second Fear was spent"
+
+
+# --- Batch 9: the Brawny Zombie -----------------------------------------------
+
+
+def _brawny_zombie(**overrides) -> Adversary:
+    """The printed Brawny Zombie: 7 HP, 4 Stress, a 1d12+3 Slam at Very Close."""
+    defaults = dict(
+        features=["Slow", "Rend Asunder", "Rip and Tear"],
+        hp_max=7,
+        stress_max=4,
+        difficulty=10,
+        major_threshold=8,
+        severe_threshold=15,
+        attack_modifier=2,
+        range="Very Close",
+        damage_dice=[DiceGroup(count=1, sides=12)],
+        damage_modifier=3,
+    )
+    defaults.update(overrides)
+    return _adversary("Brawny Zombie", **defaults)
+
+
+def test_rip_and_tear_holds_the_target_and_forces_two_stress():
+    from content.conditions import RESTRAINED
+    from features.adversaries import rip_and_tear
+
+    zombie = _brawny_zombie()
+    fight = _fight(adversaries=[zombie])
+    target = fight.party[0]
+
+    assert rip_and_tear(zombie, target, None, fight) is None, "it swaps no dice"
+    assert zombie.stress_marked == 1
+    assert target.stress_marked == 2
+    assert fight.condition_on(target, RESTRAINED).source is zombie
+
+
+def test_rip_and_tear_rides_the_printed_attack_through_dispatch():
+    """The point of registering on `standard_damage`: nothing else calls it."""
+    from content.conditions import RESTRAINED
+    from features.adversaries import rip_and_tear  # noqa: F401 - registers the hook
+
+    zombie = _brawny_zombie()
+    fight = _fight(party=_party(armor_max=0), adversaries=[zombie])
+    target = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        zombie.attack(target, fight=fight)
+
+    assert fight.has_condition(target, RESTRAINED)
+    assert zombie.stress_marked == 1
+
+
+def test_rip_and_tear_never_fires_on_a_miss():
+    from content.conditions import RESTRAINED
+    from features.adversaries import rip_and_tear  # noqa: F401
+
+    zombie = _brawny_zombie()
+    fight = _fight(adversaries=[zombie])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(1)):
+        zombie.attack(fight.party[0], fight=fight)
+
+    assert fight.has_condition(fight.party[0], RESTRAINED) is False
+    assert zombie.stress_marked == 0
+
+
+def test_rip_and_tear_stops_once_the_stress_runs_out():
+    from features.adversaries import rip_and_tear
+
+    zombie = _brawny_zombie(stress_marked=4)
+    fight = _fight(adversaries=[zombie])
+
+    rip_and_tear(zombie, fight.party[0], None, fight)
+
+    assert fight.party[0].stress_marked == 0
+
+
+def test_rend_asunder_needs_somebody_the_zombie_is_holding():
+    from features.adversaries import rend_asunder
+
+    zombie = _brawny_zombie(features=["Rend Asunder"])
+    fight = _fight(adversaries=[zombie])
+
+    assert rend_asunder(zombie, fight.party[0], fight) is None
+
+
+def test_rend_asunder_ignores_a_hold_somebody_else_put_on():
+    from content.conditions import RESTRAINED, Condition
+    from features.adversaries import rend_asunder
+
+    zombie = _brawny_zombie(features=["Rend Asunder"])
+    bear = _adversary("Bear")
+    fight = _fight(adversaries=[zombie, bear])
+    fight.apply_condition(
+        fight.party[0], Condition(name=RESTRAINED, source=bear)
+    )
+
+    assert rend_asunder(zombie, fight.party[0], fight) is None
+
+
+def test_rend_asunder_is_direct_and_finds_whoever_it_holds():
+    from content.conditions import RESTRAINED, Condition
+    from features.adversaries import rend_asunder
+
+    zombie = _brawny_zombie(features=["Rend Asunder"])
+    fight = _fight(party=_party(armor_max=2), adversaries=[zombie])
+    held = fight.party[2]
+    fight.apply_condition(held, Condition(name=RESTRAINED, source=zombie))
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        result = rend_asunder(zombie, fight.party[0], fight)
+
+    assert result.damage_roll is not None
+    assert held.hp_marked > 0, "it swings at the one it is holding, not the loop's"
+    assert held.armor_marked == 0, "direct damage marks no Armor Slot"
+    assert fight.party[0].hp_marked == 0
+
+
+def test_rend_asunder_rolls_with_advantage():
+    from content.conditions import RESTRAINED, Condition
+    from features.adversaries import rend_asunder
+
+    zombie = _brawny_zombie(features=["Rend Asunder"])
+    fight = _fight(party=_party(armor_max=0), adversaries=[zombie])
+    fight.apply_condition(
+        fight.party[0], Condition(name=RESTRAINED, source=zombie)
+    )
+
+    with patch(
+        "adversaries.adversary.roll_d20", return_value=_d20(19)
+    ) as rolled:
+        rend_asunder(zombie, fight.party[0], fight)
+
+    assert rolled.call_args.kwargs["advantage_state"] is AdvantageState.ADVANTAGE
+
+
+# --- Batch 9: the Patchwork Zombie Hulk ---------------------------------------
+
+
+def _hulk(**overrides) -> Adversary:
+    """The printed Patchwork Zombie Hulk: 10 HP, 3 Stress, a flat 1d20."""
+    defaults = dict(
+        features=[
+            "Destructible",
+            "Flailing Limbs",
+            "Another for the Pile",
+            "Tormented Screams",
+        ],
+        hp_max=10,
+        stress_max=3,
+        difficulty=13,
+        major_threshold=8,
+        severe_threshold=15,
+        attack_modifier=4,
+        range="Very Close",
+        damage_dice=[DiceGroup(count=1, sides=20)],
+        damage_modifier=0,
+    )
+    defaults.update(overrides)
+    return _adversary("Patchwork Zombie Hulk", **defaults)
+
+
+def test_destructible_marks_an_extra_hp_on_a_major_hit():
+    hulk = _hulk()
+    fight = _fight(adversaries=[hulk])
+
+    assert harden_damage(hulk, amount=8, hp_to_mark=2, fight=fight) == 3
+
+
+def test_destructible_leaves_a_minor_hit_alone():
+    """Keyed on the damage rolled reaching Major, not on the HP it cost."""
+    hulk = _hulk()
+    fight = _fight(adversaries=[hulk])
+
+    assert harden_damage(hulk, amount=7, hp_to_mark=1, fight=fight) == 1
+
+
+def test_destructible_takes_any_damage_type():
+    """Unlike the Construct's Weak Structure, which is physical only."""
+    hulk = _hulk()
+    fight = _fight(adversaries=[hulk])
+
+    assert (
+        harden_damage(
+            hulk, amount=15, hp_to_mark=3, fight=fight, damage_type=DamageType.MAGIC
+        )
+        == 4
+    )
+
+
+def test_flailing_limbs_sweeps_very_close():
+    hulk = _hulk()
+
+    assert standard_attack_area(hulk, _fight(adversaries=[hulk])) is Range.VERY_CLOSE
+
+
+def test_another_for_the_pile_needs_a_body():
+    from features.adversaries import another_for_the_pile
+
+    hulk = _hulk(hp_marked=2, stress_marked=1)
+    fight = _fight(adversaries=[hulk])
+
+    assert another_for_the_pile(hulk, fight.party[0], fight) is None
+
+
+def test_another_for_the_pile_eats_a_defeated_adversary_once():
+    from features.adversaries import another_for_the_pile
+
+    hulk = _hulk(hp_marked=2, stress_marked=1)
+    body = _adversary("Rotted Zombie", hp_max=1, hp_marked=1)
+    fight = _fight(adversaries=[hulk, body])
+
+    assert another_for_the_pile(hulk, fight.party[0], fight) is not None
+    assert hulk.hp_marked == 1
+    assert hulk.stress_marked == 0
+
+    hulk.hp_marked, hulk.stress_marked = 2, 1
+    assert another_for_the_pile(hulk, fight.party[0], fight) is None, (
+        "that body has already been absorbed"
+    )
+
+
+def test_another_for_the_pile_waits_until_it_can_clear_both():
+    from features.adversaries import another_for_the_pile
+
+    hulk = _hulk(hp_marked=3, stress_marked=0)
+    body = _adversary("Rotted Zombie", hp_max=1, hp_marked=1)
+    fight = _fight(adversaries=[hulk, body])
+
+    assert another_for_the_pile(hulk, fight.party[0], fight) is None
+
+
+def test_tormented_screams_costs_a_hope_and_pays_a_fear_for_each():
+    from features.adversaries import tormented_screams
+
+    hulk = _hulk()
+    party = _party()
+    for pc in party:
+        pc.gain_hope(2)
+    fight = _fight(party=party, adversaries=[hulk], fear=0)
+
+    with _scattered(), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        result = tormented_screams(hulk, party[0], fight)
+
+    assert result is not None and result.made_an_attack is False
+    assert hulk.stress_marked == 1
+    # Far, unscattered, reaches all four.
+    assert sum(pc.hope_marked for pc in party) == 4
+    assert fight.fear == 4, "'for each', unlike the Knight's Terrifying"
+
+
+def test_a_made_presence_roll_still_costs_a_stress():
+    from features.adversaries import tormented_screams
+
+    hulk = _hulk()
+    fight = _fight(adversaries=[hulk], fear=0)
+
+    with _scattered(), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        tormented_screams(hulk, fight.party[0], fight)
+
+    assert all(pc.stress_marked == 1 for pc in fight.party)
+    assert fight.fear == 0
+
+
+def test_a_critical_shrugs_the_screaming_off_entirely():
+    from features.adversaries import tormented_screams
+
+    hulk = _hulk()
+    fight = _fight(adversaries=[hulk], fear=0)
+
+    with _scattered(), patch(
+        "features.adversaries.roll_duality",
+        return_value=_duality(succeeds=True, critical=True),
+    ):
+        tormented_screams(hulk, fight.party[0], fight)
+
+    assert all(pc.stress_marked == 0 for pc in fight.party)
+    assert fight.fear == 0
+
+
+# --- Batch 10: the Shambling Zombie -------------------------------------------
+
+
+def _shambling_zombie(**overrides) -> Adversary:
+    """The printed Shambling Zombie: 4 HP, 1 Stress, thresholds only 2 apart."""
+    defaults = dict(
+        features=["Too Many to Handle", "Horrifying"],
+        hp_max=4,
+        stress_max=1,
+        difficulty=10,
+        major_threshold=4,
+        severe_threshold=6,
+        attack_modifier=0,
+        range="Melee",
+        damage_dice=[DiceGroup(count=1, sides=6)],
+        damage_modifier=1,
+    )
+    defaults.update(overrides)
+    return _adversary("Shambling Zombie", **defaults)
+
+
+def test_three_zombies_hand_attacks_on_their_victim_advantage():
+    from features.adversaries import too_many_to_handle
+
+    mob = [_shambling_zombie() for _ in range(3)]
+    fight = _fight(adversaries=mob)
+
+    with _bunched():
+        assert too_many_to_handle(mob[0], fight.party[0], fight) is True
+
+
+def test_two_zombies_are_not_enough_once_the_band_has_its_say():
+    """Close reaches min(n*3//4, n-1), which is 1 at two - so three is the floor."""
+    from features.adversaries import too_many_to_handle
+
+    mob = [_shambling_zombie() for _ in range(2)]
+    fight = _fight(adversaries=mob)
+
+    for spread in (_bunched, _scattered):
+        with spread():
+            assert too_many_to_handle(mob[0], fight.party[0], fight) is False
+
+
+def test_any_zombie_counts_not_just_this_stat_block():
+    """The page names a kind, the way No Quarter names Pirates."""
+    from features.adversaries import too_many_to_handle
+
+    zombie = _shambling_zombie()
+    others = [_adversary("Rotted Zombie"), _adversary("Brawny Zombie")]
+    fight = _fight(adversaries=[zombie, *others])
+
+    with _bunched():
+        assert too_many_to_handle(zombie, fight.party[0], fight) is True
+
+
+def test_a_crowd_of_something_else_is_not_a_mob_of_zombies():
+    from features.adversaries import too_many_to_handle
+
+    zombie = _shambling_zombie()
+    others = [_adversary("Bandit"), _adversary("Guard")]
+    fight = _fight(adversaries=[zombie, *others])
+
+    with _bunched():
+        assert too_many_to_handle(zombie, fight.party[0], fight) is False
+
+
+def test_too_many_to_handle_reaches_an_adversarys_attack_through_dispatch():
+    """The hook is only worth anything if the advantage rule actually asks."""
+    from combat.policy import adversary_attack_advantage
+
+    mob = [_shambling_zombie() for _ in range(3)]
+    stranger = _adversary("Bandit")
+    fight = _fight(adversaries=[*mob, stranger])
+
+    with _bunched():
+        state = adversary_attack_advantage(stranger, fight.party[0], fight)
+
+    assert state is AdvantageState.ADVANTAGE, "all attacks, not just a Zombie's"
+
+
+def test_horrifying_costs_a_stress_when_the_hit_wounds():
+    from features.adversaries import horrifying
+
+    zombie = _shambling_zombie()
+    fight = _fight(adversaries=[zombie])
+
+    horrifying(zombie, fight.party[0], _landed_hit(hp_marked=1), fight)
+
+    assert fight.party[0].stress_marked == 1
+
+
+def test_horrifying_does_nothing_when_armor_swallowed_the_hit():
+    from features.adversaries import horrifying
+
+    zombie = _shambling_zombie()
+    fight = _fight(adversaries=[zombie])
+
+    horrifying(zombie, fight.party[0], _landed_hit(hp_marked=0), fight)
+
+    assert fight.party[0].stress_marked == 0
+
+
+# --- Batch 10: the Zombie Pack ------------------------------------------------
+
+
+def _zombie_pack(**overrides) -> Adversary:
+    """The printed Zombie Pack: 6 HP, 3 Stress, a 1d10+2 Bite."""
+    defaults = dict(
+        features=["Horde (1d4+2)", "Overwhelm"],
+        hp_max=6,
+        stress_max=3,
+        difficulty=8,
+        major_threshold=6,
+        severe_threshold=12,
+        attack_modifier=-1,
+        range="Melee",
+        damage_dice=[DiceGroup(count=1, sides=10)],
+        damage_modifier=2,
+    )
+    defaults.update(overrides)
+    return _adversary("Zombie Pack", **defaults)
+
+
+def test_overwhelm_drags_a_melee_attacker_down():
+    from features.adversaries import overwhelm
+
+    pack = _zombie_pack()
+    fight = _fight(party=_party(armor_max=0), adversaries=[pack])
+    attacker = fight.party[0]
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(19)):
+        overwhelm(
+            pack,
+            attacker,
+            find_weapon("Broadsword"),
+            damage=7,
+            hp_marked=1,
+            fight=fight,
+        )
+
+    assert pack.stress_marked == 1
+    assert attacker.hp_marked > 0
+
+
+def test_overwhelm_leaves_an_archer_alone():
+    from features.adversaries import overwhelm
+
+    pack = _zombie_pack()
+    fight = _fight(adversaries=[pack])
+
+    overwhelm(
+        pack,
+        fight.party[0],
+        find_weapon("Shortbow"),
+        damage=7,
+        hp_marked=1,
+        fight=fight,
+    )
+
+    assert pack.stress_marked == 0
+    assert fight.party[0].hp_marked == 0
+
+
+def test_overwhelm_needs_the_pack_to_have_marked_hp():
+    """It is the Zombies who mark it, not the PC - a hit they shrugged off does
+    nothing."""
+    from features.adversaries import overwhelm
+
+    pack = _zombie_pack()
+    fight = _fight(adversaries=[pack])
+
+    overwhelm(
+        pack,
+        fight.party[0],
+        find_weapon("Broadsword"),
+        damage=3,
+        hp_marked=0,
+        fight=fight,
+    )
+
+    assert pack.stress_marked == 0
+
+
+def test_overwhelm_stops_once_the_stress_runs_out():
+    from features.adversaries import overwhelm
+
+    pack = _zombie_pack(stress_marked=3)
+    fight = _fight(adversaries=[pack])
+
+    overwhelm(
+        pack,
+        fight.party[0],
+        find_weapon("Broadsword"),
+        damage=7,
+        hp_marked=1,
+        fight=fight,
+    )
+
+    assert fight.party[0].hp_marked == 0
+
+
+# --- Free activations ---------------------------------------------------------
+
+
+def test_a_free_activation_is_tracked_apart_from_a_paid_one():
+    thing = _adversary("Thing")
+    fight = _fight(adversaries=[thing])
+
+    fight.grant_activation(thing, free=True)
+
+    assert fight.free_activations(thing) == 1
+    assert fight.granted_activations(thing) == 0
+    assert fight.take_free_activation(thing) is True
+    assert fight.take_free_activation(thing) is False
+
+
+def test_the_gm_turn_takes_free_activations_past_its_cap_and_its_empty_pool():
+    from combat.fight import _take_gm_turn
+
+    adversaries = [_adversary(f"Thing {index}") for index in range(6)]
+    fight = _fight(party=_party(size=2), adversaries=adversaries, fear=0)
+
+    def rally(adversary, state):
+        """The first thing spotlighted rallies the rest, as the Dryad does."""
+        if state.adversary_activations == 1:
+            for other in adversaries[1:]:
+                state.grant_activation(other, free=True)
+
+    with patch("combat.fight.take_adversary_turn", side_effect=rally) as acted:
+        _take_gm_turn(fight)
+
+    # The cap is party size + 1 = 3 and the pool is empty, so exactly one paid
+    # activation - and then five the cap never sees.
+    assert acted.call_count == 6
+    assert fight.fear == 0
+
+
+def test_the_cap_still_binds_when_nothing_is_free():
+    from combat.fight import _take_gm_turn
+
+    adversaries = [_adversary(f"Thing {index}") for index in range(6)]
+    fight = _fight(party=_party(size=2), adversaries=adversaries, fear=12)
+
+    with patch("combat.fight.take_adversary_turn") as acted:
+        _take_gm_turn(fight)
+
+    assert acted.call_count == 3, "party size + 1, unchanged"

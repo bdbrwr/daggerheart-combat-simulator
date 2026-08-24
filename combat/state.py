@@ -70,6 +70,27 @@ class FightState:
     # turn, not a credit carried forward.
     granted: dict[int, int] = field(default_factory=dict)
 
+    # Extra spotlights that cost the GM **nothing** - no Fear, and not counted
+    # against the turn's cap. Kept apart from `granted` rather than merged with a
+    # flag, because the loop has to ask two different questions of them: whether
+    # this adversary may act again, and whether acting is free. Cleared with
+    # `granted` at the start of each GM turn.
+    #
+    # `free_granted` is what content handed out; `free_used` is how much of it the
+    # loop has spent. Two counters rather than one that decrements, so
+    # `_next_adversary` can still see the whole allowance when it works out who
+    # is eligible.
+    free_granted: dict[int, int] = field(default_factory=dict)
+    free_used: dict[int, int] = field(default_factory=dict)
+
+    # Whoever is acting on a free spotlight *right now*, or None. Set by the GM
+    # turn around the activation it is resolving, so content can ask whether this
+    # particular attack is happening on a spotlight somebody else paid for. The
+    # Young Dryad's `Voice of the Forest` needs it: the allies it rallies deal
+    # half damage "while spotlighted this way", and nothing else can tell that
+    # activation apart from the ally's own.
+    acting_free: Adversary | None = None
+
     # Spotlights content has *used up* on somebody other than whoever is acting,
     # during the current GM turn. The mirror of `granted`, cleared with it. A
     # Minion's Group Attack spotlights the whole swarm in one activation, and the
@@ -87,6 +108,21 @@ class FightState:
     @property
     def living_adversaries(self) -> list[Adversary]:
         return [adversary for adversary in self.adversaries if not adversary.is_defeated]
+
+    @property
+    def defeated_adversaries(self) -> list[Adversary]:
+        """Adversaries that have fallen but are still on the field.
+
+        The bodies. Nothing in the loop reads this - a defeated adversary is out
+        of `living_adversaries` and that is all the loop needs - but content can
+        ask, and one does: the Patchwork Zombie Hulk's `Another for the Pile`
+        eats a corpse to clear an HP and a Stress, and the user's ruling is that
+        a defeated adversary is what a corpse means here.
+
+        An adversary taken off the field by `remove` rather than defeated - the
+        Green Ooze splitting - leaves no body, which is right: it did not die.
+        """
+        return [adversary for adversary in self.adversaries if adversary.is_defeated]
 
     @property
     def party_is_down(self) -> bool:
@@ -149,21 +185,61 @@ class FightState:
         self.spent_per_rest.add((id(holder), ability))
         return True
 
-    def grant_activation(self, holder) -> None:
+    def grant_activation(self, holder, free: bool = False) -> None:
         """Let `holder` be spotlighted once more this GM turn.
 
         The Construct's Overload ("the Construct can then take the spotlight
         again") grants one mid-turn, which a feature registered on
         `activation_limit` can't express - that answers before the turn starts.
 
-        Still bounded by the turn's own cap and still charged the usual Fear, on
-        the same reasoning as Relentless: the cap is what holds a simulated fight
-        to something a GM would run, so nothing reaches around it.
+        By default the extra spotlight is bounded by the turn's own cap and
+        charged the usual Fear, on the same reasoning as Relentless: the cap is
+        what holds a simulated fight to something a GM would run, so nothing
+        reaches around it.
+
+        **`free=True` reaches around both**, and is the user's ruling on the Young
+        Dryad's `Voice of the Forest`: that feature's 1d4 spotlights cost the GM
+        no Fear and do not count against party size + 1. The machinery is generic
+        so anything else can be flipped to it later with one keyword, but as a
+        *ruling* it is scoped to that one feature - Rally Guards, Move as a Unit,
+        Tactician and Overload were all ruled the other way and are unchanged.
+        See SIMULATION-RULES.md.
         """
-        self.granted[id(holder)] = self.granted.get(id(holder), 0) + 1
+        table = self.free_granted if free else self.granted
+        table[id(holder)] = table.get(id(holder), 0) + 1
 
     def granted_activations(self, holder) -> int:
         return self.granted.get(id(holder), 0)
+
+    def free_activations(self, holder) -> int:
+        """How many free spotlights `holder` was handed this GM turn, spent or not."""
+        return self.free_granted.get(id(holder), 0)
+
+    def has_free_activation(self, holder) -> bool:
+        """Whether `holder` still has a free spotlight left to take."""
+        return self.free_used.get(id(holder), 0) < self.free_activations(holder)
+
+    def take_free_activation(self, holder) -> bool:
+        """Spend one of `holder`'s free spotlights; return whether there was one.
+
+        The GM takes a free spotlight before a paid one whenever both are
+        available, which is what anybody would do - the paid one is still there
+        afterwards if the turn has room for it.
+        """
+        if not self.has_free_activation(holder):
+            return False
+        self.free_used[id(holder)] = self.free_used.get(id(holder), 0) + 1
+        return True
+
+    def acting_freely(self, combatant) -> bool:
+        """Whether `combatant` is taking a free spotlight at this very moment.
+
+        False everywhere except inside the activation itself, which is what makes
+        it the right question for content scoped to "while spotlighted this way".
+        Asked rather than inferred from `free_used`, which would still read as
+        spent for the rest of the GM turn.
+        """
+        return self.acting_free is combatant
 
     def consume_activation(self, holder) -> None:
         """Use up one of `holder`'s spotlights without them choosing to act.

@@ -45,6 +45,7 @@ from content.conditions import (
     HIDDEN,
     POISONED,
     RESTRAINED,
+    TAUNTED,
     VULNERABLE,
     Condition,
     until_they_clear_hp,
@@ -58,6 +59,7 @@ from content.registry import (
     activation_limit,
     apply_on_hit,
     attack_advantage,
+    attack_advantage_against,
     attack_area,
     before_attacked,
     convert_party_roll,
@@ -77,6 +79,7 @@ from content.registry import (
     on_party_attack_roll,
     on_spotlight,
     party_attack_disadvantage,
+    party_target_override,
     severity_increase,
     skip_spotlight,
     spotlight_cost,
@@ -84,7 +87,7 @@ from content.registry import (
     standard_damage,
     standard_damage_type,
 )
-from dice.common import AdvantageState
+from dice.common import AdvantageState, combined
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import DualityOutcome, roll_duality
@@ -4735,6 +4738,889 @@ def drain_and_multiply(adversary, target, result, fight: Fight) -> None:
         f"{len(gathered)} {TANGLE_BRAMBLE}s knot together into a "
         f"{TANGLE_BRAMBLE_SWARM} with {len(gathered)} HP (Drain and Multiply)"
     )
+
+
+# --- Weaponmaster --------------------------------------------------------------
+
+GOADING_STRIKE = qualified(ADVERSARY, "Goading Strike")
+
+
+@action(GOADING_STRIKE)
+def goading_strike(adversary, target, fight: Fight):
+    """The printed attack, plus a Stress to pin the target's attention.
+
+    SRD: "Make a standard attack against a target. On a success, mark a Stress to
+    Taunt the target until their next successful attack. The next time the
+    Taunted target attacks, they have disadvantage against targets other than the
+    Weaponmaster."
+
+    RULED. **A Taunt fixes the target's target.** The printed text gives two
+    different durations for one clause - "until their next successful attack" and
+    "the next time the Taunted target attacks" - and rather than pick between
+    them, the user ruled the effect itself: a Taunted PC swings at the
+    Weaponmaster. That is what the feature does at a table, it makes the stated
+    duration do work, and it needs no reading of which sentence wins.
+
+    So this is the first GM-side content that reaches the *party's* targeting
+    rule, through `party_target_override`. What the PC then does to the
+    Weaponmaster is still entirely theirs - the compulsion is the target and
+    nothing else.
+
+    The *printed* attack, so no dice are passed and the Claymore's own 1d12+2 is
+    rolled - which is what "a standard attack" says, and what lets a
+    standard-damage swap reach it if the Weaponmaster ever had one. Rolled
+    through the shared advantage rule rather than flat, the way Coup de Grace and
+    Deadly Shot are, so a Vulnerable target hands it Advantage like any other
+    attack.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
+    rule decides when it is on the table. 6 HP against three Stress means the
+    first goad is available from full health, the second waits until 5 unmarked
+    HP and the last until 2. It declines against a target it has *already* Taunted,
+    on Rule 3 - the Taunt is the whole of what this buys over the standard
+    attack, and re-applying it would change nothing while costing a Stress. The
+    loop then falls through to the standard attack, which deals exactly the same
+    damage.
+    """
+    from combat.policy import adversary_attack_advantage
+
+    taunt = fight.condition_on(target, TAUNTED)
+    if taunt is not None and taunt.source is adversary:
+        return None
+    if not adversary.will_spend_stress(1):
+        return None
+
+    result = adversary.attack(
+        target, adversary_attack_advantage(adversary, target, fight), fight
+    )
+    if result.damage_roll is None:
+        return result
+
+    adversary.spend_stress(1)
+    fight.apply_condition(target, Condition(name=TAUNTED, source=adversary))
+    fight.note(
+        f"{adversary.name} goads {target.name}, who can look at nothing else "
+        f"(Taunted)"
+    )
+    return result
+
+
+@party_target_override(GOADING_STRIKE)
+def goading_strike_compels(adversary, attacker, fight=None):
+    """A PC this adversary has Taunted attacks it and nothing else.
+
+    Scanned across the *living* adversaries, so a dead Weaponmaster compels
+    nobody - and the condition itself is swept up by
+    `FightState.release_conditions_from` when it leaves the field, since it
+    carries a source and no `end` of its own.
+    """
+    if fight is None:
+        return None
+    taunt = fight.condition_on(attacker, TAUNTED)
+    if taunt is None or taunt.source is not adversary:
+        return None
+    return adversary
+
+
+@on_party_attack_roll(GOADING_STRIKE)
+def goading_strike_releases(adversary, roller, roll, fight=None) -> None:
+    """The Taunt lifts on the target's next successful attack.
+
+    The printed duration, and the reason this is the hook rather than a
+    `Condition.end`: the loop announces moments (a combatant acting, a GM turn),
+    and none of them is "an attack roll succeeded". This one watches the roll
+    itself, which is exactly what the page names.
+
+    Registered against the same name as the two halves above, so Goading Strike
+    stays one piece of content in one place.
+    """
+    if fight is None or not roll.is_success:
+        return
+
+    taunt = fight.condition_on(roller, TAUNTED)
+    if taunt is None or taunt.source is not adversary:
+        return
+
+    fight.clear_condition(roller, TAUNTED)
+    fight.note(f"{roller.name} lands a blow and shakes off the taunt")
+
+
+ADRENALINE_BURST = qualified(ADVERSARY, "Adrenaline Burst")
+ADRENALINE_BURST_FEAR = 1
+ADRENALINE_BURST_TOKEN = "Adrenaline Burst"
+
+# "Clear 2 HP and 2 Stress", as printed.
+ADRENALINE_BURST_HP = 2
+ADRENALINE_BURST_STRESS = 2
+
+
+@action(ADRENALINE_BURST)
+def adrenaline_burst(adversary, target, fight: Fight):
+    """Once a fight, spend a Fear to clear 2 HP and 2 Stress.
+
+    SRD: "Once per scene, spend a Fear to clear 2 HP and 2 Stress."
+
+    A scene is one fight here, and the limit is held with a token rather than
+    with the per-rest machinery, for the reason Reinforcements gives: a
+    once-per-*scene* ability is available in every fight whatever rest preceded
+    it, where `use_once_per_rest` would correctly refuse it in a no-rest
+    encounter.
+
+    USAGE POLICY - ruled, and general. **A feature that clears fixed quantities
+    is used only when it can clear all of them.** So this waits until 2 HP *and*
+    2 Stress are actually marked; below that the Fear and the scene's single use
+    would buy less than the page promises. The rule is stated once here and in
+    SIMULATION-RULES.md rather than per feature - the Patchwork Zombie Hulk's
+    `Another for the Pile` is the second case in this batch alone.
+
+    Note it is deliberately *not* the Consume Kindling rule, which is a different
+    shape: that one clears "a HP **or** a Stress", so it takes whichever is
+    there. This one names both, so it waits for both.
+
+    A Weaponmaster reaches the bar somewhere in the middle of a fight - three
+    Stress, two of which its own Goading Strikes spend - and buying back 2 HP of
+    6 is most of a second wind.
+    """
+    if fight.token_count(adversary, ADRENALINE_BURST_TOKEN):
+        return None
+    if adversary.hp_marked < ADRENALINE_BURST_HP:
+        return None
+    if adversary.stress_marked < ADRENALINE_BURST_STRESS:
+        return None
+    if fight.fear < ADRENALINE_BURST_FEAR:
+        return None
+
+    fight.spend_fear(ADRENALINE_BURST_FEAR)
+    fight.set_token(adversary, ADRENALINE_BURST_TOKEN, 1)
+    adversary.clear_hp(ADRENALINE_BURST_HP)
+    adversary.clear_stress(ADRENALINE_BURST_STRESS)
+    fight.note(
+        f"{adversary.name} finds a second wind (Adrenaline Burst: clears "
+        f"{ADRENALINE_BURST_HP} HP and {ADRENALINE_BURST_STRESS} Stress, GM "
+        f"spends a Fear)"
+    )
+    # The spotlight is spent, but nothing rolled to hit anybody.
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+# --- Young Dryad ---------------------------------------------------------------
+
+VOICE_OF_THE_FOREST = qualified(ADVERSARY, "Voice of the Forest")
+
+# "Spotlight 1d4 allies", as printed. Rolled with `random` directly, the way
+# Rally Guards' 2d4 and the Spitter Die are - this is neither an attack, a damage
+# roll nor a duality roll, so nothing in dice/ has a shape for it.
+VOICE_OF_THE_FOREST_DIE = 4
+VOICE_OF_THE_FOREST_TOKEN = "Voice of the Forest"
+
+# "Their attacks deal half damage", as printed.
+VOICE_OF_THE_FOREST_HALVED = 0.5
+
+
+@action(
+    VOICE_OF_THE_FOREST,
+    unmodelled=[
+        "Voice of the Forest: 'within range of a target they can attack without "
+        "moving' is positioning, and it constrains the *allies* rather than the "
+        "Dryad - so unlike Rally Guards and Move as a Unit there is no printed "
+        "band to run through the area rule. Every living ally is eligible and "
+        "the 1d4 is the whole cap",
+    ],
+)
+def voice_of_the_forest(adversary, target, fight: Fight):
+    """Mark a Stress to hand 1d4 allies a free spotlight, at half damage.
+
+    SRD: "Mark a Stress to spotlight 1d4 allies within range of a target they can
+    attack without moving. On a success, their attacks deal half damage."
+
+    The second sentence reads oddly on its own - there is no roll here for "a
+    success" to be about - and the SRD prints the clean version of the same
+    clause on three later stat blocks: "attacks they make while spotlighted this
+    way deal half damage" (the Knight of the Realm, the Mortal Hunter, the
+    Secret-Keeper). So the halving is what the rally costs, paid by the allies.
+
+    RULED. **These activations are free**: they cost the GM no Fear and do not
+    count against the turn's cap of party size + 1. That is a deliberate
+    departure from what Rally Guards, Move as a Unit, Tactician and Overload were
+    ruled to do, and it is scoped to this feature alone - the machinery in
+    `FightState.grant_activation` is generic so anything else can be moved to it
+    later, but nothing already ported has been. See SIMULATION-RULES.md.
+
+    Which allies get picked is random among those alive, for the reason every
+    unordered list in this project is shuffled. Nobody's own spotlight is handed
+    out here: the Dryad spends its whole activation rallying and does not attack,
+    the way Move as a Unit does and unlike Rally Guards.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
+    rule decides when it is on the table, and among the options that pass the
+    choice is random. Deliberately **no** target-count threshold, the same ruling
+    Rally Guards and Move as a Unit got: a Dryad standing alone will spend a
+    Stress on nothing rather than be held back by a knob nobody chose.
+
+    Worth knowing where that line falls, because it is the Bear's shape rather
+    than the usual one: 6 HP against only **two** Stress means the first rally
+    waits until the Dryad is at 5 or fewer unmarked HP, and the second until 2.
+    So a Dryad at full health is a 1d8+5 attacker and nothing else, and the
+    forest answers once the party has hurt it.
+    """
+    if not adversary.will_spend_stress(1):
+        return None
+
+    allies = [other for other in fight.living_adversaries if other is not adversary]
+    wanted = random.randint(1, VOICE_OF_THE_FOREST_DIE)
+    rallied = random.sample(allies, min(len(allies), wanted)) if allies else []
+
+    adversary.spend_stress(1)
+    for ally in rallied:
+        fight.grant_activation(ally, free=True)
+        # Stamped with the turn it was granted on, so a free spotlight some other
+        # feature hands the same ally later in the fight isn't quietly halved too.
+        # Offset by one so an ally who was never rallied - whose token reads 0,
+        # the same as never having been set - can't match turn zero.
+        fight.set_token(ally, VOICE_OF_THE_FOREST_TOKEN, fight.gm_turns + 1)
+
+    fight.note(
+        f"{adversary.name} calls the forest to arms, rallying {len(rallied)} "
+        f"{'ally' if len(rallied) == 1 else 'allies'} for free (Voice of the "
+        f"Forest: their attacks deal half damage)"
+    )
+    # The spotlight is spent, but nothing rolled to hit anybody.
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+@damage_multiplier(VOICE_OF_THE_FOREST)
+def voice_of_the_forest_halves(adversary, target, attacker, fight=None) -> float | None:
+    """An ally acting on this adversary's free spotlight deals half damage.
+
+    The other half of the rally, registered against the same name so the feature
+    stays one piece of content in one place - and on the same hook as the Jagged
+    Knife Kneebreaker's `I've Got 'Em`, pointed the other way. That one doubles
+    what a third party deals; this one halves it, which is the same question
+    ("how much of this roll actually lands?") with the number moving the other
+    direction. `content/registry.py`'s `damage_multiplier` says why a fraction is
+    allowed there, and `Adversary._dealt` floors the product once at the end.
+
+    **Scoped to the granted activation**, which is what "while spotlighted this
+    way" means and what `FightState.acting_freely` exists to answer. Asking that
+    rather than spending the token on the first damage roll is what keeps an area
+    attack honest: one sweep is one attack, and every target it catches should be
+    halved, not only the first.
+
+    Halving lands **before** the target's thresholds, the same place I've Got
+    'Em's doubling does - and that is where the effect really lives, since damage
+    reaches HP through bands.
+    """
+    if fight is None or attacker is adversary:
+        return None
+    if not fight.acting_freely(attacker):
+        return None
+    if fight.token_count(attacker, VOICE_OF_THE_FOREST_TOKEN) != fight.gm_turns + 1:
+        return None
+
+    fight.note(
+        f"{attacker.name} strikes on the Dryad's call, and deals half damage "
+        f"(Voice of the Forest: {adversary.name})"
+    )
+    return VOICE_OF_THE_FOREST_HALVED
+
+
+THORNY_CAGE = qualified(ADVERSARY, "Thorny Cage")
+THORNY_CAGE_FEAR = 1
+
+
+def _thorny_cage_breaks(adversary):
+    """The way out of the cage, in the two steps the user ruled.
+
+    The caged PC tries the printed Strength Roll first. If that fails, **another
+    PC marks a Stress and pulls the cage apart** - which is where the page's
+    "when a creature makes an action roll against the cage, they must mark a
+    Stress" lands: the creature acting against the cage is an ally, and the
+    Stress is what it costs them.
+
+    So the cage holds for at most one of its victim's spotlights, and costs the
+    party either nothing (a made roll) or one Stress. Who pays is random among
+    the allies who can, since the order an encounter listed the party in carries
+    no meaning.
+
+    A closure over the Dryad rather than a plain predicate, because the escape
+    Difficulty is the Dryad's own - the page prints none, which is the standing
+    fallback for a reaction roll.
+    """
+
+    def ended(holder, fight, moment: str) -> bool:
+        roll = _reaction_roll(holder, "strength", adversary.difficulty, fight)
+        if roll.is_success:
+            fight.note(f"{holder.name} forces the cage apart ({roll})")
+            return True
+
+        helpers = [
+            pc
+            for pc in fight.conscious_party
+            if pc is not holder and pc.can_spend_stress(1)
+        ]
+        if not helpers:
+            fight.note(
+                f"{holder.name} is caught fast, and nobody is free to pry the "
+                f"cage open ({roll})"
+            )
+            return False
+
+        helper = helpers[0] if len(helpers) == 1 else random.choice(helpers)
+        helper.spend_stress(1)
+        fight.note(
+            f"{helper.name} tears {holder.name}'s cage open, and marks a Stress"
+        )
+        return True
+
+    return ended
+
+
+@action(
+    THORNY_CAGE,
+    unmodelled=[
+        "Thorny Cage: what being Restrained stops - moving - which has no "
+        "representation here. The condition is recorded so content that keys on "
+        "being held can see it, and both ways out are modelled in full",
+    ],
+)
+def thorny_cage(adversary, target, fight: Fight):
+    """Spend a Fear to cage one target, until they or an ally break it open.
+
+    SRD: "Spend a Fear to form a cage around a target within Very Close range and
+    Restrain them until they're freed with a successful Strength Roll. When a
+    creature makes an action roll against the cage, they must mark a Stress."
+
+    No attack roll: the cage simply closes. The Difficulty of the Strength Roll
+    is not printed, so it falls back on the Dryad's own 11 - the standing rule
+    for a reaction roll with no stated number.
+
+    USAGE POLICY - ruled. Used whenever the GM can afford the Fear, and among the
+    options that pass the choice is random. The one check is Rule 3: it declines
+    against somebody this Dryad has already caged, since the cage is the whole of
+    the feature - there is no damage attached - and a second one would spend a
+    Fear and a spotlight to change nothing. That is the Curse's shape rather than
+    Grab and Drag's, which deals real damage around its hold and so has no such
+    check.
+    """
+    if fight.fear < THORNY_CAGE_FEAR:
+        return None
+
+    held = fight.condition_on(target, RESTRAINED)
+    if held is not None and held.source is adversary:
+        return None
+
+    fight.spend_fear(THORNY_CAGE_FEAR)
+    fight.apply_condition(
+        target,
+        Condition(
+            name=RESTRAINED, end=_thorny_cage_breaks(adversary), source=adversary
+        ),
+    )
+    fight.note(
+        f"{adversary.name} closes a cage of thorns around {target.name} "
+        f"(Thorny Cage: GM spends a Fear)"
+    )
+    # The spotlight is spent, but nothing rolled to hit anybody.
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+# --- Brawny Zombie -------------------------------------------------------------
+
+REND_ASUNDER = qualified(ADVERSARY, "Rend Asunder")
+
+
+@action(REND_ASUNDER)
+def rend_asunder(adversary, target, fight: Fight):
+    """The printed attack with Advantage, direct, against somebody it is holding.
+
+    SRD: "Make a standard attack with advantage against a target the Zombie has
+    Restrained. On a success, the attack deals direct damage."
+
+    Gated on a **printed** requirement rather than a policy of ours, the same
+    shape Coup de Grace, Deadly Shot and Crush have - and read strictly through
+    `Condition.source`, so a creature some other adversary is holding does not
+    qualify. Nothing but this Zombie's own *Rip and Tear* puts anybody in that
+    state, so the two halves of the stat block are a sequence: hold first, then
+    tear.
+
+    Chooses whoever it is actually holding rather than the standing target, since
+    the requirement is the whole point of the feature and the loop's target
+    usually will not qualify. The standing target wins when it does, and
+    otherwise the choice is random among those held.
+
+    The *printed* attack, so no dice are passed and the Slam's own 1d12+3 is
+    rolled - which also means the Zombie's own Rip and Tear reaches it, since
+    that fires on any attack that rolls the standard damage.
+
+    The Advantage is **folded** with the shared advantage rule rather than
+    replacing it, so a target who is also Vulnerable does not come out with less
+    than they would have - Advantage doesn't stack, and combining is how every
+    other source in the codebase is handled.
+
+    Direct, so no Armor Slot softens it. Against a party that marks a free slot
+    against everything that is worth close to a whole extra HP on top of an
+    average of 9.5.
+
+    USAGE POLICY - ruled. Nothing to pay, so nothing to gate beyond the printed
+    requirement: it joins the shuffled pool of options whenever the Zombie has
+    somebody held, the standing default.
+    """
+    from combat.policy import adversary_attack_advantage
+
+    held = [
+        pc
+        for pc in fight.conscious_party
+        if (caged := fight.condition_on(pc, RESTRAINED)) is not None
+        and caged.source is adversary
+    ]
+    if not held:
+        return None
+
+    # Identity, not equality: both combatant classes are plain dataclasses, so
+    # `in` would compare field by field and could match the wrong body.
+    if any(pc is target for pc in held):
+        caught = target
+    elif len(held) == 1:
+        caught = held[0]
+    else:
+        caught = random.choice(held)
+
+    fight.note(f"{adversary.name} rends {caught.name} asunder")
+    return adversary.attack(
+        caught,
+        combined(
+            AdvantageState.ADVANTAGE,
+            adversary_attack_advantage(adversary, caught, fight),
+        ),
+        fight,
+        direct=True,
+    )
+
+
+RIP_AND_TEAR = qualified(ADVERSARY, "Rip and Tear")
+
+# "Force them to mark 2 Stress", as printed.
+RIP_AND_TEAR_STRESS = 2
+
+
+@standard_damage(
+    RIP_AND_TEAR,
+    unmodelled=[
+        "Rip and Tear: what being Restrained stops - moving - which has no "
+        "representation here. The condition is recorded so the Zombie's own Rend "
+        "Asunder can key on it, and the forced Stress is modelled in full",
+    ],
+)
+def rip_and_tear(adversary, target, roll=None, fight=None):
+    """Mark a Stress on a landed standard attack to hold the target and cost them 2.
+
+    SRD: "When the Zombie makes a successful standard attack, you can mark a
+    Stress to temporarily Restrain the target and force them to mark 2 Stress."
+
+    **Registered on `standard_damage` although it swaps no dice**, and that is
+    the point rather than a workaround: this hook is asked once, from inside the
+    damage roll, for exactly the attacks that roll the stat block's *printed*
+    damage - which is what the SRD means by "a standard attack". `on_hit` would
+    have been the wrong trigger, since it fires for every attack a feature rolls
+    with dice of its own. Declining the swap by returning None leaves the printed
+    1d12+3 exactly as it was.
+
+    One consequence worth knowing: the forced Stress lands a moment *before* the
+    damage does, since the hook runs while the damage is still being rolled. A PC
+    with no free slot therefore marks the Stress as an HP first and takes the
+    Slam second, where at a table the order would be the other way round. It can
+    change which mark drops somebody, and no other ordering was available without
+    a hook whose only user would be this feature.
+
+    "Temporarily Restrain" with no printed way out, so it lasts the rest of the
+    fight - the standing rule for a condition an adversary puts on a PC. It
+    carries a source and no `end`, which means killing the Zombie frees them,
+    through `FightState.release_conditions_from`.
+
+    USAGE POLICY - ruled. A Reaction, so it fires on every trigger it can pay for
+    and the Stress-desperation rule that gates Actions deliberately does not
+    apply. Four Stress against 7 HP means the Zombie's first four landed attacks
+    each cost the target 2 Stress, from full health. No already-held check: the
+    2 Stress lands whether or not the hold is already on, so declining would give
+    up something real - the Envelop reading rather than the Ignite one.
+    """
+    if fight is None or not adversary.can_spend_stress(1):
+        return None
+
+    adversary.spend_stress(1)
+    fight.apply_condition(target, Condition(name=RESTRAINED, source=adversary))
+    target.mark_stress(RIP_AND_TEAR_STRESS)
+    fight.note(
+        f"{adversary.name} rips into {target.name}, who is Restrained and marks "
+        f"{RIP_AND_TEAR_STRESS} Stress (Rip and Tear)"
+    )
+    # The printed damage is unchanged; this feature only ever rides along.
+    return None
+
+
+# --- Patchwork Zombie Hulk -----------------------------------------------------
+
+DESTRUCTIBLE = qualified(ADVERSARY, "Destructible")
+
+
+@severity_increase(DESTRUCTIBLE)
+def destructible(
+    adversary, amount: int, hp_to_mark: int, fight=None, damage_type=None
+) -> int:
+    """A Major or greater hit on this adversary marks an additional HP.
+
+    SRD: "When the Zombie takes Major or greater damage, they mark an additional
+    HP."
+
+    The Construct's `Weak Structure` on the other hook of the same pair, and
+    keyed differently on purpose: that one triggers on HP being *marked* and is
+    restricted to physical damage, where this one reads the **damage rolled**
+    against the Major threshold and takes any type at all. Both are what their
+    pages say.
+
+    Reading the number rather than the mark is the same choice Acid Bath and
+    Hold Them Down make for "takes Severe damage" and "takes Major or greater
+    damage" - the trigger names the size of the hit, not what it cost.
+
+    On a 10 HP track with thresholds of 8 and 15 this turns every Major hit into
+    3 HP and every Severe into 4. The zero check below never actually bites - a
+    hit at or above the Major threshold has already marked at least 2 - and is
+    there for the same honesty `Swashbuckler`'s lower bound is.
+    """
+    if amount < adversary.major_threshold:
+        return hp_to_mark
+    if hp_to_mark <= 0:
+        return hp_to_mark
+    return hp_to_mark + 1
+
+
+FLAILING_LIMBS = qualified(ADVERSARY, "Flailing Limbs")
+
+
+@attack_area(FLAILING_LIMBS)
+def flailing_limbs(adversary, fight=None):
+    """The standard attack sweeps everyone within Very Close range.
+
+    SRD: "When the Zombie makes a standard attack, they can attack all targets
+    within Very Close range."
+
+    **The band is named on the page**, unlike the Cave Ogre's Ramp Up, which says
+    only "within range" and therefore reads its holder's printed range off the
+    stat block. Here the SRD writes Very Close outright, so that is what is
+    returned - it happens to match the Hulk's own printed range, and would stay
+    correct if it didn't.
+
+    A passive rather than an action, so the sweep is not one option among
+    several: it changes what the ordinary attack *is*. The page's "they can" is
+    read as always taken, because sweeping is weakly better than not - one attack
+    roll and one damage roll either way, applied to everyone it beats rather than
+    to one - so there is never a moment where declining buys anything.
+
+    Worth knowing what the area rule costs it: Very Close is held to two, so
+    against a party of four this reaches one or two, and the 1d20 lands on each
+    of them.
+    """
+    return Range.VERY_CLOSE
+
+
+ANOTHER_FOR_THE_PILE = qualified(ADVERSARY, "Another for the Pile")
+ANOTHER_FOR_THE_PILE_TOKEN = "Absorbed"
+
+# "Clearing a HP and a Stress", as printed.
+ANOTHER_FOR_THE_PILE_HP = 1
+ANOTHER_FOR_THE_PILE_STRESS = 1
+
+
+@action(ANOTHER_FOR_THE_PILE)
+def another_for_the_pile(adversary, target, fight: Fight):
+    """Absorb a body off the field to clear an HP and a Stress.
+
+    SRD: "When the Zombie is within Very Close range of a corpse, they can
+    incorporate it into themselves, clearing a HP and a Stress."
+
+    RULED. **A corpse is an adversary that has been defeated in this fight**, and
+    each one can be absorbed only once. Nothing else in the simulator represents
+    a body, and the alternative - the Consume Kindling ruling, where the fiction
+    is simply assumed available - was declined here: unlike scattered kindling
+    there is a real piece of field state to point at, and using it gives the Hulk
+    a shape that depends on the encounter. A Hulk fielded alone never eats; one
+    standing behind a screen of Rotted Zombies feeds all fight.
+
+    "Within Very Close range" is positioning, and the area rule answers it
+    trivially: the band's reach is floored at one, so a corpse anywhere on the
+    field is always within reach of it. Nothing is gated on the count.
+
+    An adversary taken off the field *without* being defeated - a Green Ooze that
+    Split - leaves no body, which is right: it did not die. See
+    `FightState.defeated_adversaries`.
+
+    USAGE POLICY - ruled, and the same general rule Adrenaline Burst records: a
+    feature that clears fixed quantities is used only when it can clear all of
+    them. So this waits for an HP *and* a Stress to be marked. There is no
+    per-scene limit, because the page prints none - what bounds it is the supply
+    of bodies.
+    """
+    if adversary.hp_marked < ANOTHER_FOR_THE_PILE_HP:
+        return None
+    if adversary.stress_marked < ANOTHER_FOR_THE_PILE_STRESS:
+        return None
+
+    corpses = [
+        corpse
+        for corpse in fight.defeated_adversaries
+        if not fight.token_count(corpse, ANOTHER_FOR_THE_PILE_TOKEN)
+    ]
+    if not corpses:
+        return None
+
+    # Which body gets eaten is random among those left, for the reason every
+    # unordered list in this project is: the order an encounter spawned its
+    # adversaries in carries no meaning.
+    eaten = corpses[0] if len(corpses) == 1 else random.choice(corpses)
+    fight.set_token(eaten, ANOTHER_FOR_THE_PILE_TOKEN, 1)
+
+    adversary.clear_hp(ANOTHER_FOR_THE_PILE_HP)
+    adversary.clear_stress(ANOTHER_FOR_THE_PILE_STRESS)
+    fight.note(
+        f"{adversary.name} folds {eaten.name} into itself (Another for the Pile: "
+        f"clears an HP and a Stress)"
+    )
+    # The spotlight is spent, but nothing rolled to hit anybody.
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+TORMENTED_SCREAMS = qualified(ADVERSARY, "Tormented Screams")
+
+# "A Presence Reaction Roll (13)" - printed, so it doesn't fall back on the
+# Hulk's own Difficulty of 13. (They happen to agree; the number is still read
+# from the feature, since a retuned stat block must not move it.)
+TORMENTED_SCREAMS_DIFFICULTY = 13
+
+
+@action(TORMENTED_SCREAMS)
+def tormented_screams(adversary, target, fight: Fight):
+    """Mark a Stress: everyone at Far saves against losing a Hope, and each costs a Fear.
+
+    SRD: "Mark a Stress to cause all PCs within Far range to make a Presence
+    Reaction Roll (13). Targets who fail lose a Hope and you gain a Fear for
+    each. Targets who succeed must mark a Stress."
+
+    **Both outcomes cost something**, which is unusual - every other reaction roll
+    in the catalogue either buys a clean escape or halves the damage. Only a
+    critical gets away with nothing, per the standing rule that a critical
+    ignores the effect entirely.
+
+    "You gain a Fear **for each**" is the phrase that settled the Skeleton
+    Knight's `Terrifying` at a single Fear two entries earlier on the same page:
+    a bare "you gain a Fear" means one, and this is what the other reading looks
+    like when the SRD wants it. So the two features differ in code, and this one
+    can pay the GM several Fear at once - the second such feature in the
+    catalogue after the Spellblade's Suppressing Blast.
+
+    The Fear is paid per PC who *failed*, whether or not they had a Hope to lose;
+    the trigger names the failure, not the loss. `spend_hope` clamps, so a PC
+    with none simply loses nothing - and it is counted as spent in the report for
+    the reason All Must Fall and Terrifying give.
+
+    Far reaches the whole field, so unlike the Hulk's own Very Close sweep there
+    is no band holding this back.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the Stress-desperation
+    rule decides when it is on the table. 10 HP against three Stress is the
+    deepest HP track in tier 1, and three free slots open at 10 or fewer unmarked
+    HP - so the Hulk is exactly on the line at full health and screams from the
+    opening spotlight.
+    """
+    caught = targets_in_area(Range.FAR, fight.conscious_party)
+    if not caught or not adversary.will_spend_stress(1):
+        return None
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} screams with a dozen stolen voices")
+
+    for pc in caught:
+        roll = _reaction_roll(pc, "presence", TORMENTED_SCREAMS_DIFFICULTY, fight)
+        if roll.is_critical:
+            fight.note(f"{pc.name} shuts the screaming out entirely ({roll})")
+            continue
+        if roll.is_success:
+            pc.mark_stress(1)
+            fight.note(f"{pc.name} holds their nerve, and marks a Stress ({roll})")
+            continue
+
+        if pc.can_spend_hope(1):
+            pc.spend_hope(1)
+        fight.gain_fear(1)
+        fight.note(
+            f"{pc.name} is unmanned by the screaming, losing a Hope ({roll}; GM "
+            f"gains a Fear)"
+        )
+
+    # The spotlight is spent, but nothing rolled to hit anybody.
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+# --- Shambling Zombie ----------------------------------------------------------
+
+TOO_MANY_TO_HANDLE = qualified(ADVERSARY, "Too Many to Handle")
+
+# "At least one other Zombie", so two counting the one holding the feature - the
+# reading Opportunist and No Quarter already take of a printed count.
+TOO_MANY_TO_HANDLE_ZOMBIES = 2
+
+# What counts as a Zombie: any stat block with the word in its name, matched
+# canonically. RULED, on the No Quarter precedent - the SRD writes the
+# requirement as a *kind* ("at least one other Zombie") rather than naming a stat
+# block the way Pack Tactics names "another Sylvan Soldier", and the book prints
+# five Zombies in tier 1 alone.
+ZOMBIE = canonical("Zombie")
+
+
+@attack_advantage_against(TOO_MANY_TO_HANDLE)
+def too_many_to_handle(adversary, target, fight=None) -> bool:
+    """A creature this adversary crowds is attacked at Advantage by everyone.
+
+    SRD: "When the Zombie is within Melee range of a creature and at least one
+    other Zombie is within Close range, all attacks against that creature have
+    advantage."
+
+    The first feature in the catalogue that hands Advantage to attacks made by
+    somebody *else*, which is why `attack_advantage_against` exists: the holder-
+    scoped `attack_advantage` can only speak for the combatant carrying it, and a
+    surrounding feature is precisely not that. It is the exact mirror of the
+    Swarm of Rats' `In Your Face`, pointed across the table in the other
+    direction.
+
+    SIMULATION RULE - policy. Both halves are positioning, so the **area rule
+    answers both**, the way it answers Pack Tactics, No Quarter and Opportunist.
+    Whether this Zombie is in Melee of the creature is `targets_in_area(MELEE,
+    party)`, which reaches one or two of a party of four and takes the most
+    wounded first; whether another Zombie is within Close is
+    `targets_reached(CLOSE, ...)` over the mob, needing
+    `TOO_MANY_TO_HANDLE_ZOMBIES` of them counting this one.
+
+    Both are rolled afresh per attack, which is what the band rules are for -
+    the same field is sometimes bunched and sometimes strung out, and a feature
+    that always found it arranged the way it liked would be priced off its best
+    case.
+
+    Worth knowing before reading numbers, because the printed 1 and the band
+    disagree. Close reaches `min(n * 3 // 4, n - 1)`, which over **two** Zombies
+    is 1 whichever way the spread roll falls - so **this cannot fire below three
+    Zombies on the field**, and above that it always does. That is the same shape
+    No Quarter has at six pirates and Drain and Multiply at four Brambles, and it
+    arrives the same way: a printed count meeting a proportional band, not a
+    threshold of ours.
+    """
+    if fight is None:
+        return False
+    # Identity, not equality - see `rend_asunder` for why `in` is unsafe here.
+    engaged = targets_in_area(Range.MELEE, fight.conscious_party)
+    if not any(pc is target for pc in engaged):
+        return False
+
+    mob = [
+        other for other in fight.living_adversaries if ZOMBIE in canonical(other.name)
+    ]
+    # This Zombie counts: the question is how many of the mob are on this
+    # creature, and it is one of them.
+    if len(mob) < TOO_MANY_TO_HANDLE_ZOMBIES:
+        return False
+    return targets_reached(Range.CLOSE, len(mob)) >= TOO_MANY_TO_HANDLE_ZOMBIES
+
+
+HORRIFYING = qualified(ADVERSARY, "Horrifying")
+
+
+@on_hit(HORRIFYING)
+def horrifying(adversary, target, result, fight: Fight) -> None:
+    """A hit from this adversary that wounds also costs the target a Stress.
+
+    SRD: "Targets who mark HP from the Zombie's attacks must also mark a Stress."
+
+    Keyed on HP actually marked rather than on the attack landing, which is what
+    the trigger says: a hit an Armor Slot swallowed whole wounded nobody, so
+    there is nothing to be horrified by. `AttackResult.hp_marked` carries that
+    figure back from wherever the damage was resolved - the same reading
+    Bloodsucker and Drain and Multiply use.
+
+    "The Zombie's attacks", plural and unqualified, so this reaches every attack
+    it makes rather than only the standard one.
+
+    The Stress is forced, so a PC with no free slot marks an HP instead. On a
+    1 Stress stat block that costs the Zombie nothing at all, which is what makes
+    a mob of them expensive: a party's Stress track is what pays for their cards,
+    and a PC with none spare is Vulnerable for the rest of the fight.
+    """
+    if result is None or result.hp_marked <= 0:
+        return
+
+    target.mark_stress(1)
+    fight.note(f"{target.name} recoils from {adversary.name}, and marks a Stress")
+
+
+# --- Zombie Pack ---------------------------------------------------------------
+
+OVERWHELM = qualified(ADVERSARY, "Overwhelm")
+
+
+@on_attacked(
+    OVERWHELM,
+    unmodelled=[
+        "Overwhelm: only a weapon attack reaches this, as with Armor-Shredding "
+        "Shards. Content that rolls an attack of its own - a Grimoire spell, the "
+        "Beastbound companion - has no weapon and so no range to read, and is "
+        "never counterattacked",
+    ],
+)
+def overwhelm(adversary, attacker, weapon, damage=0, hp_marked=0, fight=None) -> None:
+    """A Melee hit that wounds this adversary buys the attacker a swing back.
+
+    SRD: "When the Zombies mark HP from an attack within Melee range, you can
+    mark a Stress to make a standard attack against the attacker."
+
+    **It is the Zombies who mark the HP**, not the PC - the SRD writes adversary
+    features from the stat block's own side throughout, and reading it the other
+    way round would turn a wounded-beast reflex into a second attack on a hit
+    that never landed. So this fires on a hit that got through, which on a 6 HP
+    Horde with thresholds of 6 and 12 is very nearly every hit.
+
+    SIMULATION RULE - policy. "Within Melee range" is read off the **attacker's
+    weapon**, the handle Armor-Shredding Shards, Fall Back, Magical Reflection,
+    Burning and In Your Face all already use: a PC swinging a Melee weapon is
+    close enough to be grabbed and one shooting from Far is not. The Pack is
+    therefore a tax on the front line and free for archers.
+
+    The counterattack is the *printed* attack, so the Pack's own `Horde (1d4+2)`
+    reaches it and a worn-down Pack swings back for less.
+
+    USAGE POLICY - ruled. A Reaction, so it fires on every trigger it can pay for
+    and the Stress-desperation rule that gates Actions deliberately does not
+    apply. Three Stress means the first three melee hits that hurt it each earn a
+    1d10+2 back, from full health.
+    """
+    if fight is None or hp_marked <= 0:
+        return
+    if canonical(weapon.range) != canonical(Range.MELEE.value):
+        return
+    if not adversary.can_spend_stress(1):
+        return
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} surges over {attacker.name} (Overwhelm)")
+    result = adversary.attack(attacker, fight=fight)
+    if result.damage_roll is None:
+        fight.note(f"{adversary.name} misses {attacker.name} ({result.attack_roll})")
+        return
+
+    fight.note(
+        f"{adversary.name} drags {attacker.name} down for {result.damage_roll.total}"
+    )
+    # A Reaction's attack is made outside the spotlight loop, so the loop isn't
+    # there to hand out the riders a landed attack triggers - the Harrier's Fall
+    # Back and the Skeleton Knight's Dig Two Graves have the same problem and the
+    # same answer. Asked generically.
+    apply_on_hit(adversary, attacker, result, fight)
 
 
 no_combat_effect(

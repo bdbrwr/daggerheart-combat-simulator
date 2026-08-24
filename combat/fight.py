@@ -12,7 +12,8 @@ and this loop is mostly the rules for moving it:
     goes, so a hot party can leave the GM waiting - which is the point.
   * A GM turn spotlights one adversary for free and buys further activations
     at 1 Fear each, no adversary twice in the same turn, up to a cap of party
-    size + 1. Then the spotlight goes back.
+    size + 1. Then the spotlight goes back. Content can hand out an activation
+    that is outside both the charge and the cap; see `_take_gm_turn`.
 
 Nothing here decides *what* a combatant does with its turn - that's
 combat/policy.py. This module only decides who is acting and when the fight
@@ -227,12 +228,22 @@ def _take_gm_turn(state: FightState) -> None:
     Relentless says to "spend Fear as usual", which the loop already does for
     every activation past the first.
 
+    **Some activations are free**, and those are outside both halves of that
+    rule: they cost no Fear and don't count toward the cap. Only the Young
+    Dryad's `Voice of the Forest` hands any out today - see
+    `FightState.grant_activation` - so for every other fight this loop behaves
+    exactly as it did before. `paid` rather than `taken` is what the cap and the
+    turn's one free-of-Fear activation are measured against, which is the whole
+    of the difference.
+
     Fear left over is not spent on anything else yet - adversary Fear features
     aren't implemented, and that's where the rest of the pool would go.
     """
     state.gm_turns += 1
     state.granted.clear()
     state.consumed.clear()
+    state.free_granted.clear()
+    state.free_used.clear()
 
     # A condition the party put on an adversary gets its chance to end here,
     # which for most of them means the GM paying a Fear to shake it off. Done
@@ -242,22 +253,45 @@ def _take_gm_turn(state: FightState) -> None:
             state.note(f"{adversary.name} is no longer {ended}")
 
     taken: dict[int, int] = {}
+    paid = 0
+    out_of_fear = False
 
-    while sum(taken.values()) < state.max_activations_per_gm_turn:
-        adversary = _next_adversary(state, taken)
+    while True:
+        # Whether the turn can still take an activation it has to pay for. Once
+        # it can't, the loop keeps going for *free* ones only rather than
+        # stopping - a rallied ally's spotlight was bought by the feature that
+        # granted it, not by this turn's budget.
+        room = not out_of_fear and paid < state.max_activations_per_gm_turn
+        adversary = _next_adversary(state, taken, paid_allowed=room)
         if adversary is None:
             break
 
-        # One activation a turn is free; every one after costs a Fear. Some
-        # adversaries cost extra on top, even for the free one - the Cave Ogre's
-        # Ramp Up. Asked generically; nothing here knows the feature.
-        owed = (0 if not taken else 1) + extra_spotlight_cost(adversary, state)
-        if owed and not state.spend_fear(owed):
-            break  # can't afford this one, so not the next one either
+        free = state.take_free_activation(adversary)
+        if not free:
+            # One paid activation a turn is free of Fear; every one after costs
+            # a Fear. Some adversaries cost extra on top, even for the first -
+            # the Cave Ogre's Ramp Up. Asked generically; nothing here knows the
+            # feature.
+            owed = (0 if not paid else 1) + extra_spotlight_cost(adversary, state)
+            if owed and not state.spend_fear(owed):
+                # Can't afford this one, so not any other paid one either - but
+                # a free spotlight elsewhere on the field is still owed.
+                out_of_fear = True
+                continue
+            paid += 1
 
         taken[id(adversary)] = taken.get(id(adversary), 0) + 1
         state.adversary_activations += 1
-        take_adversary_turn(adversary, state)
+
+        # Content scoped to "while spotlighted this way" - the Young Dryad's
+        # Voice of the Forest - has no other way to tell this activation from one
+        # the adversary would have had anyway. Cleared in a `finally` so a
+        # feature that raises can't leave the field permanently flagged.
+        state.acting_free = adversary if free else None
+        try:
+            take_adversary_turn(adversary, state)
+        finally:
+            state.acting_free = None
 
         if state.party_is_down:
             break
@@ -265,7 +299,7 @@ def _take_gm_turn(state: FightState) -> None:
     state.spotlight = Side.PCS
 
 
-def _next_adversary(state: FightState, taken: dict[int, int]):
+def _next_adversary(state: FightState, taken: dict[int, int], paid_allowed: bool = True):
     """Which adversary the GM spotlights next, or None if nobody is left.
 
     Everyone who can still act goes before anyone goes again, so a Relentless
@@ -292,10 +326,22 @@ def _next_adversary(state: FightState, taken: dict[int, int]):
     other stat block the answer is False and the list is `living_adversaries`
     exactly as before. Such a spotlight is charged and capped like any other -
     the permission is all the hook grants.
+
+    `paid_allowed` is False once the turn has run out of either cap or Fear, and
+    narrows the field to adversaries still holding a **free** spotlight. Those
+    were paid for by the feature that granted them, so the turn's budget being
+    spent is not a reason to leave one unused.
     """
 
     def spent(adversary) -> int:
         return taken.get(id(adversary), 0) + state.consumed_activations(adversary)
+
+    def allowance(adversary) -> int:
+        return (
+            activations_allowed(adversary, state)
+            + state.granted_activations(adversary)
+            + state.free_activations(adversary)
+        )
 
     standing = state.living_adversaries + [
         adversary
@@ -305,8 +351,8 @@ def _next_adversary(state: FightState, taken: dict[int, int]):
     available = [
         adversary
         for adversary in standing
-        if spent(adversary)
-        < activations_allowed(adversary, state) + state.granted_activations(adversary)
+        if spent(adversary) < allowance(adversary)
+        and (paid_allowed or state.has_free_activation(adversary))
     ]
     if not available:
         return None

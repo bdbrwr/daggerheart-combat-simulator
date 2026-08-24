@@ -189,10 +189,12 @@ class Fight(Protocol):
     """
 
     fear: int
+    gm_turns: int
 
     def note(self, message: str) -> None: ...
+    def acting_freely(self, combatant) -> bool: ...
     def gain_fear(self, amount: int = 1) -> int: ...
-    def grant_activation(self, holder) -> None: ...
+    def grant_activation(self, holder, free: bool = False) -> None: ...
     def consume_activation(self, holder) -> None: ...
     def apply_condition(self, holder, condition) -> None: ...
     def has_condition(self, holder, name: str) -> bool: ...
@@ -213,6 +215,9 @@ class Fight(Protocol):
 
     @property
     def living_adversaries(self) -> list: ...
+
+    @property
+    def defeated_adversaries(self) -> list: ...
 
     @property
     def conscious_party(self) -> list: ...
@@ -265,8 +270,10 @@ _skip_spotlight: dict[str, Callable] = {}
 _spotlight_while_defeated: dict[str, Callable] = {}
 _on_party_attack_rolls: dict[str, Callable] = {}
 _party_attack_disadvantages: dict[str, Callable] = {}
+_party_target_overrides: dict[str, Callable] = {}
 _party_roll_conversions: dict[str, Callable] = {}
 _attack_advantages: dict[str, Callable] = {}
+_attack_advantages_against: dict[str, Callable] = {}
 _damage_multipliers: dict[str, Callable] = {}
 _damage_resistances: dict[str, Callable] = {}
 
@@ -624,17 +631,25 @@ def attack_advantage(name: str, unmodelled: Iterable[str] = ()):
 def damage_multiplier(name: str, unmodelled: Iterable[str] = ()):
     """Register GM-side content that multiplies damage dealt to one of the party.
 
-    Signature: `(holder, target, attacker, fight) -> int | None` - the multiplier,
-    or None to decline. Scanned across the living adversaries rather than across
-    the attacker or the target, because the content belongs to neither: the
-    Jagged Knife Kneebreaker's `I've Got 'Em` says creatures **it** has Restrained
-    take double damage from attacks by *other* adversaries, so the feature is a
-    third party to every attack it changes.
+    Signature: `(holder, target, attacker, fight) -> float | None` - the
+    multiplier, or None to decline. Scanned across the living adversaries rather
+    than across the attacker or the target, because the content belongs to
+    neither: the Jagged Knife Kneebreaker's `I've Got 'Em` says creatures **it**
+    has Restrained take double damage from attacks by *other* adversaries, so the
+    feature is a third party to every attack it changes.
+
+    **A multiplier may be a fraction.** The Young Dryad's `Voice of the Forest`
+    buys extra activations for its allies at the price of their attacks dealing
+    half damage, which is this hook pointed the other way - and it is the same
+    question ("how much of this roll actually lands?") whichever direction it
+    moves the number. `Adversary._dealt` floors the product once at the end, so
+    a halving rounds down like every other halving in the codebase.
 
     Applied to the damage total before the target's thresholds see it, which is
     what "take double damage" means in a game where damage becomes HP through
     bands - doubling afterwards would double the HP instead, which is a much
-    larger and quite different effect.
+    larger and quite different effect. A halving lands in the same place and for
+    the same reason.
 
     Multipliers from several sources multiply together. Nothing in the SRD stacks
     two of these yet; multiplying is the reading that doesn't privilege whichever
@@ -706,6 +721,66 @@ def party_attack_disadvantage(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_party_attack_disadvantages, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def attack_advantage_against(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that hands Advantage to attacks on one creature.
+
+    Signature: `(holder, target, fight) -> bool` - whether attacks made against
+    `target` right now have Advantage. Scanned across the living adversaries,
+    since the content belongs to a third party: the Shambling Zombie's `Too Many
+    to Handle` says "all attacks against that creature have advantage" when the
+    Zombie has it surrounded, so the feature belongs to neither the adversary
+    swinging nor the PC being swung at.
+
+    **The mirror of `party_attack_disadvantage`, pointed the other way across the
+    table.** That one is GM-side content hobbling a *PC's* roll; this is GM-side
+    content aiding a roll *against* a PC. Neither can be written as the other:
+    `attack_advantage` next door is holder-scoped and can only speak for the
+    combatant carrying it, which is exactly what a surrounding feature is not.
+
+    No `weapon` in the signature, unlike its mirror. That one needs it because
+    "within Melee range" has to be read off the attacker's reach; this one asks
+    about where the *target* is standing relative to the content's holder, which
+    the area rule answers without knowing who is swinging.
+
+    Folded into the roll with `combined`, so it cancels against Disadvantage
+    rather than overriding it.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_attack_advantages_against, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def party_target_override(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that decides who a PC attacks this spotlight.
+
+    Signature: `(holder, attacker, fight) -> object | None` - the adversary the
+    PC must swing at, or None to decline. Scanned across the living adversaries,
+    and the first answer wins: two adversaries both compelling the same PC is not
+    a state the SRD has.
+
+    The Weaponmaster's `Goading Strike` is the reason it exists. A Taunt is
+    modelled as the PC's target being **fixed to whoever taunted them**, ruled by
+    the user rather than read off the page - the printed text gives two different
+    durations for the same clause, and pinning the target is what the feature is
+    for at a table.
+
+    Asked once, where the party's own targeting rule is asked, so a compelled PC
+    never even considers the focus-fire choice. It reaches only the *target*: what
+    the PC then does to it - a weapon swing, a domain card - is still theirs.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_party_target_overrides, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -1554,15 +1629,18 @@ def granted_attack_advantage(holder, target, fight=None):
     return combined(*states) if states else AdvantageState.NONE
 
 
-def incoming_damage_multiplier(target, attacker, fight: Fight = None) -> int:
+def incoming_damage_multiplier(target, attacker, fight: Fight = None) -> float:
     """How much the GM's side multiplies this damage by before thresholds.
 
     One, unless something on the field says otherwise. Asked of the living
     adversaries rather than of either combatant in the attack - see
     `damage_multiplier` for why the content is a third party to it.
+
+    May come back a fraction as well as a whole number, since content can halve
+    as well as double. The caller floors once, after everything has multiplied.
     """
     _discover()
-    multiplier = 1
+    multiplier: float = 1
     for adversary, contribute in _gm_offers(fight, _damage_multipliers):
         answer = contribute(adversary, target, attacker, fight)
         if answer:
@@ -1623,6 +1701,42 @@ def party_attack_is_hobbled(attacker, target, weapon, fight: Fight = None) -> bo
         if hobbles(adversary, attacker, target, weapon, fight):
             return True
     return False
+
+
+def attacks_on_are_aided(target, fight: Fight = None) -> bool:
+    """Whether anything on the GM's side hands attacks on `target` Advantage.
+
+    False unless something says otherwise. The mirror of
+    `party_attack_is_hobbled`, and asked the same way: everything registered gets
+    its say and there is no short-circuit, because Advantage doesn't stack and a
+    second answer costs nothing.
+
+    One call site, in `combat/policy.py`'s `adversary_attack_advantage`, where it
+    is folded together with the target being Vulnerable and anything the attacker
+    itself carries.
+    """
+    _discover()
+    for adversary, aids in _gm_offers(fight, _attack_advantages_against):
+        if aids(adversary, target, fight):
+            return True
+    return False
+
+
+def forced_party_target(attacker: Holder, fight: Fight = None):
+    """The adversary GM-side content compels `attacker` to swing at, if any.
+
+    None unless something answers, in which case the party's own targeting rule
+    applies as usual. The first answer wins - see `party_target_override`.
+
+    One call site, in `combat/policy.py`'s `take_pc_turn`, so a compelled PC's
+    target is settled before any of the options are offered a roll.
+    """
+    _discover()
+    for adversary, compel in _gm_offers(fight, _party_target_overrides):
+        forced = compel(adversary, attacker, fight)
+        if forced is not None:
+            return forced
+    return None
 
 
 def apply_on_party_attack_roll(roller: Holder, roll, fight: Fight = None) -> None:

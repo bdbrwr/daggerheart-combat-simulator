@@ -71,6 +71,14 @@ HIDDEN = "Hidden"
 # own `end` and `effect`.
 POISONED = "Poisoned"
 
+# **Taunted**, which fixes its holder's target to whoever taunted them. Ruled by
+# the user rather than read off the page: the Weaponmaster's Goading Strike gives
+# two different durations for the same clause ("until their next successful
+# attack" and "the next time the Taunted target attacks"), and pinning the target
+# is what the feature does at a table. Read in `combat/policy.py`, through the
+# generic `forced_party_target` dispatch - nothing there knows this name.
+TAUNTED = "Taunted"
+
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to
 # fire. The same vocabulary serves both, so a condition that costs something at a

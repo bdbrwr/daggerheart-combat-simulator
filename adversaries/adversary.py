@@ -289,9 +289,15 @@ class Adversary:
         Asked of the field rather than of either combatant, since the content
         doing it belongs to neither. See `content/registry.py`'s
         `damage_multiplier`.
+
+        **Floored once, at the end.** A multiplier can be a fraction - the Young
+        Dryad's `Voice of the Forest` halves what its rallied allies deal - and
+        rounding after everything has multiplied is what keeps a halving and a
+        doubling on the same attack from depending on which was applied first.
+        Half rounds down, following every other halving in the codebase.
         """
         multiplier = incoming_damage_multiplier(target, self, fight)
-        return damage_roll.total * multiplier
+        return int(damage_roll.total * multiplier)
 
     def area_attack(
         self,

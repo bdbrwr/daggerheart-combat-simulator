@@ -125,49 +125,78 @@ small to change an outcome), **not implemented** (work still to do).
 | Sylvan Soldier | Standard | 8 | Pack Tactics (1d8+5), Forest Control, Blend In *implemented* |
 | Tangle Bramble Swarm | Horde (3/HP) | 8 | Horde (1d4+2), Crush, Encumber *implemented* |
 | Tangle Bramble | Minion | 8 | Minion (4), Group Attack, Drain and Multiply *implemented* |
+| Weaponmaster | Bruiser | 9 | Goading Strike, Adrenaline Burst, Momentum *implemented* |
+| Young Dryad | Leader | 9 | Voice of the Forest, Thorny Cage, Momentum *implemented* |
+| Brawny Zombie | Bruiser | 9 | Slow, Rend Asunder, Rip and Tear *implemented* |
+| Patchwork Zombie Hulk | Solo | 9 | Destructible, Flailing Limbs, Another for the Pile, Tormented Screams *implemented* |
+| Rotted Zombie | Minion | 9 | Minion (3), Group Attack *implemented* — needed no new code at all, the fourth after the Jagged Knife Lackey, the Minor Treant and the Sellsword |
+| Shambling Zombie | Standard | 10 | Too Many to Handle, Horrifying *implemented* |
+| Zombie Pack | Horde (2/HP) | 10 | Horde (1d4+2), Overwhelm *implemented* |
+
+**Tier 1 is complete.** Forty-nine of the SRD's 129 adversaries are in — every
+tier 1 stat block except the two Socials, which are skipped by rule — and the
+table above has no *not implemented* rows.
+
+### Batch 9 — Weaponmaster, Young Dryad, and the first three Zombies
+
+Six rulings came back, all recorded in `SIMULATION-RULES.md` §1. Three of them
+needed shared machinery rather than a feature:
+
+- **`attack_advantage_against`** — GM-side content granting Advantage on attacks
+  *against* one creature, the exact mirror of the `party_attack_disadvantage`
+  hook batch 8 built. The holder-scoped `attack_advantage` cannot say it, because
+  a surrounding feature speaks for combatants other than its holder. One call
+  site, in `combat/policy.py` → `adversary_attack_advantage`.
+- **`party_target_override`** — GM-side content that decides who a PC attacks.
+  The first thing in the catalogue to reach the *party's* targeting rule.
+- **Free activations** — `grant_activation(..., free=True)`, which costs the GM
+  no Fear and sits outside the party size + 1 cap. Built generically, but ruled
+  for `Voice of the Forest` alone: Rally Guards, Move as a Unit, Tactician and
+  Overload are all unchanged. `FightState.acting_freely` says whether the
+  activation being resolved right now is one of them, which is what scopes the
+  Dryad's half-damage rider to it.
+
+Two smaller pieces: `damage_multiplier` now accepts a **fraction** (halving is
+the same question as doubling with the number moving the other way), and
+`FightState.defeated_adversaries` exposes the bodies for the Hulk to eat.
+
+Worth looking at when reading numbers rather than predicting from the page:
+
+- Whether the Weaponmaster's Taunt changes who the party kills first, since it is
+  the only thing in the catalogue that overrides focus fire.
+- What free activations do to a GM turn's shape — the Dryad's rally is the first
+  thing that can push a turn past its cap.
+- Whether the Patchwork Zombie Hulk's `Destructible` cancels out its 10 HP, and
+  how often `Another for the Pile` finds a body.
+
+### Batch 10 — the last two Zombies
+
+Two stat blocks and three features, one of them generic. `Too Many to Handle`
+uses the new `attack_advantage_against` hook and matches on part of a name, the
+way `No Quarter` matches Pirates. `Overwhelm` is the Harrier's `Fall Back` shape
+keyed on being wounded rather than on somebody closing in.
+
+One consequence of the area rule worth knowing here: Close reaches
+`min(n * 3 // 4, n - 1)`, which is 1 over two Zombies whichever way the spread
+roll falls. So **Too Many to Handle cannot fire below three Zombies** and always
+fires at three or more — the same shape No Quarter has at six pirates and Drain
+and Multiply at four Brambles, and arriving the same way, from a printed count
+meeting a proportional band.
 
 ---
 
 ## Outstanding
 
-### Tier 1, in print order
+### Tier 1
 
-Next batch starts at the top of this list. Types are confirmed against the
-printed page as each batch is read, so a blank one is unknown rather than
-unknown-to-be-blank - and a Social found there is skipped rather than ported.
+**Nothing left.** Every tier 1 stat block the SRD prints is either in the table
+above or skipped by rule:
 
-1. Courtier — **Social, skipped**
-2. Petty Noble — **Social, skipped**
-3. Weaponmaster — Bruiser
-4. Young Dryad — Leader
-5. Brawny Zombie — Bruiser
-6. Patchwork Zombie Hulk — Solo
-7. Rotted Zombie — Minion
-8. Shambling Zombie
-9. Zombie Pack
+- **Courtier** — Social, skipped
+- **Petty Noble** — Social, skipped
 
-Types down to Rotted Zombie were confirmed against the printed page (SRD
-pp. 78–83), which is also where the Socials were spotted. Only the Shambling
-Zombie and the Zombie Pack are still unknown.
-
-**Batch 9 starts at the Weaponmaster**, and takes the rest of tier 1 — the
-Weaponmaster, Young Dryad, Brawny Zombie, Patchwork Zombie Hulk and Rotted
-Zombie, leaving two stragglers for a short batch 10.
-
-Three things about batch 9 are already visible from the page:
-
-- **Goading Strike (Weaponmaster) is `In Your Face` again.** "The next time the
-  Taunted target attacks, they have disadvantage against targets other than the
-  Weaponmaster" is exactly what `party_attack_disadvantage` was built for in
-  batch 8, so the hook is already there; what it needs is a *Taunted* condition
-  to key on and a "next attack only" ender.
-- **Tormented Screams (Patchwork Zombie Hulk) settles a batch 7 reading in
-  reverse.** It prints "you gain a Fear **for each**", which is the corroboration
-  used to rule the Skeleton Knight's Terrifying at one Fear — so this one really
-  does pay per target and the two will differ in code.
-- **Slow and Momentum** are already modelled, and the Brawny Zombie and the
-  Rotted Zombie between them carry `Slow`, `Minion (3)` and `Group Attack`, all
-  generic. The Rotted Zombie should come online with its JSON alone.
+Both were confirmed against the printed page (SRD pp. 78–84) when batch 9 was
+read, along with every type in the table.
 
 > **The `X/HP` in a Horde's type is flavour**, ruled by the user: it is
 > information for the table and has no bearing on the simulation. So the fact
@@ -178,9 +207,19 @@ Three things about batch 9 are already visible from the page:
 
 ### Tiers 2-4
 
-Not started. The SRD lists them under TIER 2 (LEVELS 2-4), TIER 3 (LEVELS 5-7)
-and TIER 4 (LEVELS 8-10); they get enumerated here when tier 1 is done, so this
-file doesn't carry eighty rows nobody is working from yet.
+Not started, and **batch 11 begins here.** The SRD lists them under TIER 2
+(LEVELS 2-4), TIER 3 (LEVELS 5-7) and TIER 4 (LEVELS 8-10). Tier 2 starts at the
+Archer Squadron (SRD p. 84) and the first five in print order are:
+
+1. Archer Squadron — Horde (2/HP)
+2. Apprentice Assassin — Minion
+3. Assassin Poisoner — Skulk
+4. Master Assassin — Leader
+5. Battle Box — Solo
+
+Types are read off the printed page as each batch is taken, so the rest are
+enumerated here when their batch comes up rather than listing eighty rows nobody
+is working from yet.
 
 ---
 

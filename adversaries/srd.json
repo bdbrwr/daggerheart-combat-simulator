@@ -757,6 +757,132 @@
       "damage_type": "physical",
       "features": ["Minion (4)", "Group Attack", "Drain and Multiply"],
       "notes": "Thorns: Melee, a flat 2 physical - no dice, as the Giant Rat's, the Jagged Knife Lackey's, the Minor Treant's and the Sellsword's are. Thresholds print as 'None'. No Experience printed. Unlike every Minion before it this one needed code: Drain and Multiply turns three or more of them into a Tangle Bramble Swarm Horde whose HP is the number combined, which is the first content that merges adversaries rather than splitting or summoning them."
+    },
+
+    {
+      "name": "Weaponmaster",
+      "tier": 1,
+      "type": "Bruiser",
+      "difficulty": 14,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 6,
+      "stress_max": 3,
+      "attack_modifier": 2,
+      "range": "Very Close",
+      "damage_dice": "1d12",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Goading Strike", "Adrenaline Burst", "Momentum"],
+      "notes": "Claymore: Very Close, 1d12+2 physical. No Experience printed. Momentum is already modelled. Goading Strike is the first content that reaches the *party's* targeting rule - a Taunted PC's target is fixed to the Weaponmaster until they land a hit, which is the user's ruling on a clause the page gives two different durations for. Adrenaline Burst is the first once-per-scene heal on the GM's side."
+    },
+
+    {
+      "name": "Young Dryad",
+      "tier": 1,
+      "type": "Leader",
+      "difficulty": 11,
+      "major_threshold": 6,
+      "severe_threshold": 11,
+      "hp_max": 6,
+      "stress_max": 2,
+      "attack_modifier": 0,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 5,
+      "damage_type": "physical",
+      "features": ["Voice of the Forest", "Thorny Cage", "Momentum"],
+      "notes": "Scythe: Melee, 1d8+5 physical - the largest flat bonus on any tier 1 standard attack. Experience: Leadership +3. Momentum is already modelled. Voice of the Forest is the only feature in the catalogue whose extra spotlights are free: they cost the GM no Fear and sit outside the party size + 1 cap, ruled for this feature alone. What the allies pay for them is half damage on that activation."
+    },
+
+    {
+      "name": "Brawny Zombie",
+      "tier": 1,
+      "type": "Bruiser",
+      "difficulty": 10,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 7,
+      "stress_max": 4,
+      "attack_modifier": 2,
+      "range": "Very Close",
+      "damage_dice": "1d12",
+      "damage_modifier": 3,
+      "damage_type": "physical",
+      "features": ["Slow", "Rend Asunder", "Rip and Tear"],
+      "notes": "Slam: Very Close, 1d12+3 physical. Experience: Collateral Damage +2, Throw +4. Slow is the Green Ooze's feature, generic and needing no new code. The other two are a sequence: Rip and Tear holds somebody on a landed standard attack, and Rend Asunder is the only thing that can then use the hold. Difficulty 10 is low for a Bruiser, which is the trade the page makes for a 1d12+3 attack on a 7 HP track."
+    },
+
+    {
+      "name": "Patchwork Zombie Hulk",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 13,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 10,
+      "stress_max": 3,
+      "attack_modifier": 4,
+      "range": "Very Close",
+      "damage_dice": "1d20",
+      "damage_modifier": 0,
+      "damage_type": "physical",
+      "features": ["Destructible", "Flailing Limbs", "Another for the Pile", "Tormented Screams"],
+      "notes": "Too Many Arms: Very Close, 1d20 physical - no flat bonus, the third tier 1 attack written that way after the Construct's and the Pirate Tough's, and the second 1d20. Experience: Intimidation +2, Tear Things Apart +2. 10 HP is the deepest track in tier 1. Destructible cuts against that: every Major or greater hit marks an extra HP, which is the Construct's Weak Structure keyed on the damage rolled instead of the mark, and with no damage-type restriction. Tormented Screams prints 'you gain a Fear for each', the phrase that settled the Skeleton Knight's Terrifying at one."
+    },
+
+    {
+      "name": "Rotted Zombie",
+      "tier": 1,
+      "type": "Minion",
+      "difficulty": 8,
+      "major_threshold": null,
+      "severe_threshold": null,
+      "hp_max": 1,
+      "stress_max": 1,
+      "attack_modifier": -3,
+      "range": "Melee",
+      "damage_dice": "",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Minion (3)", "Group Attack"],
+      "notes": "Bite: Melee, a flat 2 physical - no dice, as the Giant Rat's, the Jagged Knife Lackey's, the Minor Treant's, the Sellsword's and the Tangle Bramble's are. Thresholds print as 'None'. No Experience printed. The fourth stat block to come online with its JSON alone: Minion (X) reads its own 3 here and Group Attack was written for Minions in general. ATK -3 ties the Swarm of Rats for the worst attack modifier in the catalogue."
+    },
+
+    {
+      "name": "Shambling Zombie",
+      "tier": 1,
+      "type": "Standard",
+      "difficulty": 10,
+      "major_threshold": 4,
+      "severe_threshold": 6,
+      "hp_max": 4,
+      "stress_max": 1,
+      "attack_modifier": 0,
+      "range": "Melee",
+      "damage_dice": "1d6",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Too Many to Handle", "Horrifying"],
+      "notes": "Bite: Melee, 1d6+1 physical. No Experience printed. Thresholds of 4/6 are the tightest gap in tier 1 - only 2 apart - so almost any real hit reaches Severe. Too Many to Handle is the first feature that hands Advantage to attacks made by somebody else, and it counts any adversary with 'Zombie' in its name, on the same reading No Quarter takes of 'three or more Pirates'."
+    },
+
+    {
+      "name": "Zombie Pack",
+      "tier": 1,
+      "type": "Horde (2/HP)",
+      "difficulty": 8,
+      "major_threshold": 6,
+      "severe_threshold": 12,
+      "hp_max": 6,
+      "stress_max": 3,
+      "attack_modifier": -1,
+      "range": "Melee",
+      "damage_dice": "1d10",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Horde (1d4+2)", "Overwhelm"],
+      "notes": "Bite: Melee, 1d10+2 physical. No Experience printed. Horde (X) reads its own 1d4+2 here, as the Giant Mosquitoes', the Pirate Raiders', the Swarm of Rats' and the Tangle Bramble Swarm's do. Overwhelm is the counterattack shape the Harrier's Fall Back has, keyed on being wounded rather than on somebody closing in - and it swings the printed attack, so a worn-down Pack hits back with the Horde damage instead. The type's '2/HP' is the Battle Points shorthand and carries no mechanics."
     }
   ]
 }

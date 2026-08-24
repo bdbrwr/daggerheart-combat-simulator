@@ -48,7 +48,9 @@ from content import (
     action_options,
     apply_on_hit,
     apply_on_spotlight,
+    attacks_on_are_aided,
     find_shielder,
+    forced_party_target,
     granted_attack_advantage,
     hope_die_for,
     is_immune_to,
@@ -98,7 +100,9 @@ FREE_BUDGET_BEFORE_A_ROLL = 1
 FREE_BUDGET_ALONE = 2
 
 
-def choose_pc_target(state: FightState) -> Adversary | None:
+def choose_pc_target(
+    state: FightState, pc: PlayerCharacter | None = None
+) -> Adversary | None:
     """Which adversary the party attacks: the one closest to going down.
 
     Focus fire. It's what a party actually does, and it's the choice that
@@ -106,10 +110,23 @@ def choose_pc_target(state: FightState) -> Adversary | None:
     activation the GM never gets - so modelling anything softer would flatter
     the encounter. Ties go to the one listed first, which keeps a fight
     reproducible under a fixed seed.
+
+    **Unless something on the GM's side has taken the choice away.** The
+    Weaponmaster's Goading Strike fixes a Taunted PC's target to the
+    Weaponmaster, which is asked here through one generic dispatch - nothing in
+    this function knows what a Taunt is, or that any such content exists. `pc` is
+    optional only because callers that ask "who is the party focusing?" in
+    general, rather than on one PC's behalf, have nobody to be compelled.
     """
     living = state.living_adversaries
     if not living:
         return None
+
+    if pc is not None:
+        forced = forced_party_target(pc, state)
+        if forced is not None:
+            return forced
+
     return max(living, key=lambda adversary: adversary.hp_marked)
 
 
@@ -165,7 +182,7 @@ def take_pc_turn(pc: PlayerCharacter, state: FightState) -> AttackResult | None:
     Returns the roll that closed it, or None if there was nothing left to
     attack (which only happens if the fight is already over).
     """
-    target = choose_pc_target(state)
+    target = choose_pc_target(state, pc)
     _use_free_actions(pc, state, roll_to_follow=target is not None)
 
     if target is None:
@@ -408,11 +425,14 @@ def adversary_attack_advantage(
 ) -> AdvantageState:
     """The state an adversary's attack on `target` is rolled in.
 
-    Two sources, folded together rather than either winning outright. A
+    Four sources, folded together rather than any one winning outright. A
     Vulnerable PC hands every roll against them Advantage per the SRD - unless
     something they carry turns the condition off, which is asked generically
-    rather than by name. On top of that, content the *attacker* carries can grant
-    its own: the Jagged Knife Shadow's Cloaked does.
+    rather than by name. Being Hidden is its mirror. On top of those, content the
+    *attacker* carries can grant its own (the Jagged Knife Shadow's Cloaked), and
+    so can content belonging to a **third** adversary that has the target
+    surrounded (the Shambling Zombie's Too Many to Handle) - which is the exact
+    counterpart of the hobble `items/weapons.py` folds in on the party's side.
 
     One function because two callers have to agree. The standard attack rolls in
     whatever this returns, and a feature that needs to know whether the attack
@@ -424,6 +444,11 @@ def adversary_attack_advantage(
     )
     return combined(
         AdvantageState.ADVANTAGE if vulnerable else AdvantageState.NONE,
+        # Content a third adversary carries, keyed on where the target is
+        # standing rather than on who is swinging. Asked generically.
+        AdvantageState.ADVANTAGE
+        if attacks_on_are_aided(target, state)
+        else AdvantageState.NONE,
         # Hidden is Vulnerable's mirror and folds in the same way. Nothing makes
         # a PC Hidden today, so this never fires - it is here because both sides
         # should answer the question the same way, and the party side of it (in
