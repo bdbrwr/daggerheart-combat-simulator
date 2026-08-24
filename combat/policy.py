@@ -51,6 +51,7 @@ from content import (
     apply_on_spotlight,
     attacks_on_are_aided,
     find_shielder,
+    forced_adversary_target,
     forced_party_target,
     granted_attack_advantage,
     hope_die_for,
@@ -143,10 +144,20 @@ def choose_adversary_target(
 
     Unconscious PCs are skipped at every step: per the SRD they can't be
     targeted at all.
+
+    **Unless something the party did has taken the choice away.** Grace's
+    Enrapture fixes an Enraptured adversary's attention on whoever cast it,
+    which is asked here through one generic dispatch - the mirror of the
+    Weaponmaster's Taunt reaching `choose_pc_target`. Nothing in this function
+    knows what an Enrapture is, or that any such content exists.
     """
     standing = state.conscious_party
     if not standing:
         return None
+
+    compelled = forced_adversary_target(adversary, state)
+    if compelled is not None and compelled.is_conscious:
+        return compelled
 
     remembered = state.last_attacker_of.get(id(adversary))
     if remembered is not None and remembered.is_conscious:

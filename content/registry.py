@@ -298,6 +298,8 @@ _damage_die_rerolls: dict[str, Callable] = {}
 _condition_refusals: dict[str, Callable] = {}
 _ally_on_hits: dict[str, Callable] = {}
 _ally_damage_reductions: dict[str, Callable] = {}
+_evasion_bonuses: dict[str, Callable] = {}
+_adversary_target_overrides: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -1188,6 +1190,65 @@ def ally_on_hit(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_ally_on_hits, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def adversary_target_override(name: str, unmodelled: Iterable[str] = ()):
+    """Register party content that decides who an adversary swings at.
+
+    Signature: `(holder, adversary, fight) -> object | None` - the PC the
+    adversary must attack, or None to decline. Scanned across the conscious
+    party, since the content belongs to the PC who cast it rather than to the
+    adversary it is on. The first answer wins.
+
+    **The exact mirror of `party_target_override`**, which is the GM's side of
+    the same idea: that hook is a Weaponmaster's Taunt fixing a PC's target, and
+    this is Grace's *Enrapture* fixing an adversary's. The two are kept apart
+    rather than merged because they are asked in different places, of different
+    lists, on behalf of different sides - and because a single hook would let
+    party content compel a PC, which nothing should.
+
+    It reaches only the *target*. What the adversary then does to that PC - its
+    standard attack, an Action feature - is still the GM's.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_adversary_target_overrides, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def evasion_bonus(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that raises its holder's Evasion against an incoming attack.
+
+    Signature: `(holder, attacker, fight) -> int` - the bonus, or 0 to decline.
+    Holder-scoped: Evasion belongs to whoever is being swung at.
+
+    **Evasion was a fixed number until this existed.** A sheet carries it already
+    resolved and `Adversary.attack` read it straight off, so nothing could change
+    it mid-fight - which is why the Bone card *Ferocity* ("increase your Evasion
+    by the number of Hit Points they marked") had nowhere to put its effect.
+
+    **Asked once per attack, outside the roll's closure**, which makes being asked
+    the commitment - the same contract `total_roll_bonus` keeps and for the same
+    reason. Ferocity's bonus lasts "until after the next attack made against
+    you", so it is consumed when consulted; asking again inside a forced reroll
+    would spend it twice on one attack.
+
+    One call site, in `Adversary.attack`. An **area attack does not consult it**:
+    that resolves one roll against the lowest Evasion present and then re-checks
+    each target, so a per-target bonus would have to reach into `content/aoe.py`,
+    which has no fight to dispatch with. Declared as a gap where content
+    registers.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_evasion_bonuses, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -2105,6 +2166,39 @@ def apply_on_hit(holder: Holder, target, result, fight: Fight) -> None:
         respond = _registered(_on_hits, name)
         if respond is not None:
             respond(holder, target, result, fight)
+
+
+def forced_adversary_target(adversary, fight: Fight = None):
+    """The PC party content compels `adversary` to swing at, if any.
+
+    None unless something answers, in which case the GM's own targeting rule
+    applies as usual. The first answer wins - two PCs both enrapturing the same
+    adversary is not a state the SRD has.
+
+    One call site, in `combat/policy.py`'s `choose_adversary_target`.
+    """
+    _discover()
+    for holder, compel in _party_offers(fight, _adversary_target_overrides):
+        forced = compel(holder, adversary, fight)
+        if forced is not None:
+            return forced
+    return None
+
+
+def total_evasion_bonus(target, attacker, fight: Fight = None) -> int:
+    """Everything `target` carries that raises their Evasion against this attack.
+
+    Zero unless something answers, and the answers sum. Consulted once per
+    attack, before the roll is made - see `evasion_bonus` for why that is the
+    commitment rather than a free question.
+    """
+    _discover()
+    total = 0
+    for name in target.named_features:
+        contribute = _registered(_evasion_bonuses, name)
+        if contribute is not None:
+            total += contribute(target, attacker, fight)
+    return total
 
 
 def party_damage_reduction(target, amount: int, fight: Fight = None, damage_type=None) -> int:

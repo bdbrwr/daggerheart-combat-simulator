@@ -27,12 +27,18 @@ def _make_adversary(**overrides) -> Adversary:
 class FakeTarget:
     """A minimal stand-in for the adversaries.adversary.Target protocol."""
 
-    def __init__(self, evasion: int = 10, hp_unmarked: int = 6):
+    def __init__(self, evasion: int = 10, hp_unmarked: int = 6, carrying=None):
         self.evasion = evasion
         self.hp_unmarked = hp_unmarked
         self.damage_taken: list[int] = []
         self.direct_damage_taken: list[int] = []
         self.types_taken: list = []
+
+        # Part of the protocol so content that raises the target's own Evasion
+        # can be looked for - an attack now asks what the target is carrying
+        # before it settles the number to roll against. Empty by default, since
+        # these cases are about the adversary's side of the swing.
+        self.named_features: list[str] = list(carrying or [])
 
     @property
     def is_near_death(self) -> bool:

@@ -45,6 +45,7 @@ from content.registry import (
     standard_attack_damage_type,
     total_damage_bonus,
     total_difficulty_bonus,
+    total_evasion_bonus,
 )
 from dice.common import AdvantageState
 from dice.d20 import roll_d20
@@ -55,6 +56,11 @@ class Target(Protocol):
     """Anything an adversary's attack can target - a PC, for now."""
 
     evasion: int
+
+    # Scanned for content that raises the target's own Evasion against this
+    # attack - the Bone card Ferocity. Evasion used to be read straight off the
+    # sheet and could not change mid-fight.
+    named_features: list[str]
 
     # Read by nothing here, but handed to the party's forced-reroll content: how
     # close the target is to going down is what decides whether stopping an
@@ -405,10 +411,18 @@ class Adversary:
         this module knows which content that is.
         """
 
+        # Worked out once, and *outside* the closure below, for the reason
+        # `items/weapons.py` computes its roll modifier outside its own: asking
+        # content for an Evasion bonus is the commitment, and the Bone card
+        # Ferocity's bonus lasts only "until after the next attack made against
+        # you". Asking again inside a forced reroll would spend it twice on one
+        # attack. Nothing here knows what content answers.
+        evasion = target.evasion + total_evasion_bonus(target, self, fight)
+
         def swing():
             return roll_d20(
                 modifier=self.attack_modifier,
-                evasion=target.evasion,
+                evasion=evasion,
                 advantage_state=advantage_state,
             )
 

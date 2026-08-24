@@ -52,37 +52,43 @@ measuring. Expect a longer ruling table per batch than the adversary batches had
 
 ## Levels 1-2
 
-✅ modelled · 🚫 assessed, no combat effect · ⏸ out of combat · ⬜ not implemented
+✅ modelled · 🚫 no combat effect · ➖ insignificant · ⏸ out of combat ·
+⬜ not implemented
 
 | Domain | Level 1 | Level 2 |
 |---|---|---|
 | **Arcana** | ✅ Rune Ward · ✅ Unleash Chaos · 🚫 Wall Walk | ✅ Cinder Grasp · 🚫 Floating Eye |
 | **Blade** | ✅ Get Back Up · ✅ Not Good Enough · ✅ Whirlwind | ⏸ A Soldier's Bond · ✅ Reckless |
-| Bone | ⬜ Deft Maneuvers · ⬜ I See It Coming · ⬜ Untouchable | ⬜ Ferocity · ⬜ Strategic Approach |
+| **Bone** | ➖ Deft Maneuvers · ➖ I See It Coming · 🚫 Untouchable | ✅ Ferocity · ✅ Strategic Approach |
 | **Codex** | ✅ Book of Ava · ✅ Book of Illiat · ✅ Book of Tyfar | ✅ Book of Sitil · 🚫 Book of Vagras |
-| Grace | ⬜ Deft Deceiver · ⬜ Enrapture · ⬜ Inspirational Words | ⬜ Tell No Lies · ⬜ Troublemaker |
-| Midnight | ⬜ Pick and Pull · ⬜ Rain of Blades · ⬜ Uncanny Disguise | ⬜ Midnight Spirit · ⬜ Shadowbind |
+| **Grace** | 🚫 Deft Deceiver · ✅ Enrapture · ⏸ Inspirational Words | 🚫 Tell No Lies · ✅ Troublemaker |
+| **Midnight** | 🚫 Pick and Pull · ✅ Rain of Blades · 🚫 Uncanny Disguise | ✅ Midnight Spirit · ✅ Shadowbind |
 | **Sage** | 🚫 Gifted Tracker · 🚫 Nature's Tongue · ✅ Vicious Entangle | ✅ Conjure Swarm · ✅ Natural Familiar |
 | **Splendor** | ✅ Bolt Beacon · ⏸ Mending Touch · ✅ Reassurance | 🚫 Final Words · ✅ Healing Hands |
 | **Valor** | 🚫 Bare Bones · ✅ Forceful Push · ✅ I Am Your Shield | ✅ Body Basher · ✅ Bold Presence |
 
-**24 modelled, 8 dismissed, 2 out of combat, 15 outstanding.** Six of the nine
-domains are complete: Arcana, Blade, Codex, Sage, Splendor and Valor.
+**31 modelled, 13 no effect, 2 insignificant, 3 out of combat, 0 outstanding.**
+
+**Levels 1 and 2 are complete across all nine domains.** Every card a level 2
+party of any class combination could hold is either running or assessed, and
+nothing in the slice is in the *unimplemented* state.
 
 The card counts hide how much is in a Codex card: the five books hold fifteen
 spells between them, of which six change a fight. A book counts once in the
 table above and its spells are declared individually.
 
-### Order
+### Order it was done in
 
 The five domains the Immareth sheets already draw from first - **Blade, Codex,
-Sage, Splendor, Valor**, 14 cards - so every card landing is a loadout the
-current party could actually swap to. Then the four with no module at all:
-Arcana, Bone, Grace, Midnight. Nothing was ever decided about those; they simply
-never came up.
+Sage, Splendor, Valor**, 14 cards - so every card landing was a loadout the
+current party could actually swap to. Then the four that had no module at all:
+**Arcana, Bone, Grace, Midnight**.
 
-Remaining: one domain per batch, five cards each - **Bone, Grace, Midnight**.
-Each needs a new module; none of them has one today.
+### What's next, when a party levels
+
+**Level 3** is the natural next slice: two cards per domain, eighteen in all.
+Nothing needs it until a party reaches level 3, which is why the scope stops
+here. The batch process below applies unchanged.
 
 ### What the modelled ones cover
 
@@ -221,3 +227,60 @@ one card:
 condition in the simulator had to be ruled on because the SRD gives it a name and
 nothing else; Cinder Grasp prints the burn on the card. It lasts until the GM
 pays a Fear, so the card poses the GM a question that costs them either way.
+
+### Batch 5 — Bone (5 cards)
+
+Bone is the Evasion domain, and that turned out to be the whole story of the
+batch. **Verified against the printed page** (SRD p. 122).
+
+| Card | Disposition |
+|---|---|
+| **Ferocity** (2) | Modelled. 2 Hope after a landed hit buys Evasion equal to the HP it marked, spent on the next attack that comes in |
+| **Strategic Approach** (2) | Modelled. A token per adversary, always buying the d8; empty if the party took no long rest |
+| **Untouchable** (1) | No combat effect - a sheet carries Evasion resolved, so running it would count it twice |
+| **Deft Maneuvers** (1) | Insignificant - +1 on one attack roll, once per rest |
+| **I See It Coming** (1) | Insignificant - the Wings ruling, and it is the **larger** of the two |
+
+One piece of shared machinery: **`evasion_bonus`**. Evasion was a fixed number
+until this batch - a sheet carries it resolved and `Adversary.attack` read it
+straight off - so nothing could change it once a fight had started. Asked once
+per attack and outside the reroll closure, because Ferocity's bonus lasts only
+"until after the next attack made against you" and asking twice would spend it
+twice. Area attacks don't consult it, which is declared as a gap.
+
+**Three of these five are about not being hit, and only one is modelled.** Worth
+knowing why they split the way they did, because the reasons are all different:
+Untouchable is already in the sheet's number, I See It Coming asks the holder to
+decide against a roll they cannot see, and Ferocity asks them to decide off their
+own landed hit - which is why it is the one that runs.
+
+### Batch 6 — Grace and Midnight (10 cards)
+
+The last two domains, taken together to finish the slice. **Verified against the
+printed page** (SRD pp. 126 and 128).
+
+| Card | Disposition |
+|---|---|
+| **Enrapture** (Gr 1) | Modelled. The target's attacks are fixed on the caster until the GM pays a Fear, plus a once-per-rest Stress forced on them |
+| **Troublemaker** (Gr 2) | Modelled. A **Presence** Roll - the only action card that rolls a named trait rather than Spellcast - forcing Stress equal to the highest of Proficiency d4s |
+| **Rain of Blades** (Mid 1) | Modelled. The Fire Flies shape, declining below two targets, with the Vulnerable rider rolled **per target** |
+| **Midnight Spirit** (Mid 2) | Modelled. A Hope, then Spellcast-trait d6s of magic; summon and attack are one action |
+| **Shadowbind** (Mid 2) | Modelled. Restrains everything it beats - which here means one Fear per adversary for the GM to undo |
+| **Inspirational Words** (Gr 1) | Out of combat - the third card in that state |
+| **Deft Deceiver**, **Tell No Lies**, **Pick and Pull**, **Uncanny Disguise** | No combat effect - social and exploration rolls the simulator never makes |
+
+One piece of shared machinery: **`adversary_target_override`**, the exact mirror
+of the `party_target_override` a Weaponmaster's Taunt uses. Kept as two hooks
+rather than merged into one, because a single hook would let party content compel
+a PC, which nothing should.
+
+**Two cards are worth reading the numbers of carefully.** Enrapture is the first
+party card whose point is *being attacked* - it moves danger onto its caster - and
+Shadowbind's entire effect turns out to be the GM's Fear pool, since Restrained
+does nothing by itself here. Neither is what the page appears to promise, and
+both follow from rulings made long before the cards.
+
+`_spellcast` is now duplicated across six modules and has drifted in three
+directions (a `bonus`, a `difficulty`, a `trait`). Consolidating it is a small
+mechanical change and should be its own, since it touches every one of them and
+one test patches `roll_duality` through a module that would stop calling it.

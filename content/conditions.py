@@ -86,6 +86,14 @@ POISONED = "Poisoned"
 # generic `forced_party_target` dispatch - nothing there knows this name.
 TAUNTED = "Taunted"
 
+# **Enraptured**, Taunted's mirror across the table: an Enraptured adversary
+# swings at whoever enraptured them. Ruled by the user on exactly that reading -
+# the printed text is fiction ("their attention is fixed on you, narrowing their
+# field of view and drowning out any sound but your voice"), and fixing the
+# target is what it comes to in a fight. Read in `combat/policy.py` through the
+# generic `forced_adversary_target` dispatch; nothing there knows this name.
+ENRAPTURED = "Enraptured"
+
 # **On Fire**, the first condition whose own damage the SRD spells out on the
 # card that applies it. Its holder burns each time they act, which is why it is
 # the first real user of `Condition.effect` on the *acting* moment rather than

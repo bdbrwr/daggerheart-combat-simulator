@@ -78,6 +78,10 @@ the balance numbers, and none of them is wrong in a rules sense.
 | **Forceful Push** spends its Hope on every successful hit, skipping only a target already Vulnerable or one the hit just defeated | `domain_cards/valor.py` → `_press_them` | Using the card is a choice. Unlike Vicious Entangle's second Restrain, this buys something at 0 Fear: Vulnerable is modelled outright, so the Hope is never spent on nothing. The two skips are not thresholds — both are states visible at a table, and re-applying a condition somebody already has buys nothing (the same reasoning as the Poisoned/Cursed row above). |
 | **Wild Flame never declines**, where Fire Flies declines below 2 targets | `domain_cards/codex.py` → `wild_flame`; contrast `domain_cards/sage.py` → `FIRE_FLIES_WORTH_IT` | Casting is a choice, but the two cards are not the same choice. Fire Flies spends a Hope, so aiming it at one adversary is a real cost for less than a bow. Wild Flame costs nothing but the roll the caster was making anyway, so there is no state where casting it is worse than not — and it deals its damage to whatever the Melee band happens to reach. |
 | **Parallela is cast on another party member**, never the caster, and the ally is random among the conscious ones | `domain_cards/codex.py` → `parallela` | The card says "yourself or an ally". Ruled by the user for the caster's own reason: optimal play puts it on somebody else and still spends the caster's own action roll, where casting it on yourself gets one attack's use out of one spotlight. Which ally follows the standing random-among-viable rule — picking the party's best attacker would be scoring the party, which is ruled out. It declines while it would buy nothing: one adversary standing means no second target exists, and the card itself says it can only hang on one creature at a time. |
+| **Enraptured fixes its holder's target**, so an enraptured adversary swings at whoever enraptured them | `domain_cards/grace.py` → `enrapture`, `enrapture_compels`; `content/registry.py` → `adversary_target_override` | The printed text is fiction — "their attention is fixed on you, narrowing their field of view and drowning out any sound but your voice" — with no mechanic attached. Ruled as the exact mirror of the Taunt ruling already made for the Weaponmaster, pointed the other way across the table. It makes Enrapture the first party card whose point is *being attacked*: it takes danger off somebody else and puts it on the caster until the GM pays a Fear. Enrapture declines against a target already enraptured, per the standing don't-re-apply rule. |
+| **Rain of Blades declines below two targets**, as Fire Flies does | `domain_cards/midnight.py` → `RAIN_OF_BLADES_WORTH_IT` | Both cost a Hope and both sweep an area, so both wait until the area rule says there is more than one adversary to catch — a Hope spent on a single target is a worse weapon swing. Very Close reaches `n // 3` held to two, so on a small field this card often declines. |
+| **Ferocity is bought whenever its 2 Hope can be paid** | `domain_cards/bone.py` → `ferocity` | The card sets no limit. Note this is deliberately *not* the imperfect-information case: the choice is made when the PC's own hit lands, before any attack comes back, so nothing here reads a roll a player could not see — which is exactly what separates it from Wings and I See It Coming. The common case is 2 Hope for +1 Evasion against one attack. |
+| **Strategic Approach's token always buys the d8** | `domain_cards/bone.py` → `strategic_approach` | The card offers three options and says nothing about choosing. Ruled to the damage die because it is the only one always available — Advantage would have to be decided before the roll this hook is asked after, and clearing an ally's Stress needs an ally with Stress marked. The trigger, "the first time you move within Close range of an adversary and make an attack", drops its positional half and is read as **the first attack against each adversary**. A party that took no long rest walks in with the card empty, following the standing no-rest rule. |
 | **Rune Ward goes to the frailest ally, and its Hope is spent only when the 1d8 could save an HP** | `domain_cards/arcana.py` → `rune_ward`, `_ward_holder`, `_could_save_an_hp` | The card says "held as a ward by you or an ally" and sets no rule for when to use it. Ruled: it goes to whoever has the least unmarked HP, **never the caster**, so a Wizard's Hope pays for somebody else's defence. It fires only when the damage is within 8 of a threshold it could fall below (Severe, Major, or 1 — that last being the hit vanishing). That test reads only what a player can see when they decide: the damage announced and their own printed thresholds. It deliberately does **not** read the Ward Die, which nobody has rolled yet, so a hit two points above Severe is warded even though a 1 wouldn't have saved it. |
 | **Unleash Chaos spends every token on every cast**, refilling with a Stress whenever the shared rule allows | `domain_cards/arcana.py` → `unleash_chaos` | The card lets you spend "any number of tokens" and says nothing about how many. Ruled as all of them, so it opens at full power, empties, and comes back once the caster can afford the Stress — rather than trickling out one d10 at a time. The refill needs no threshold of its own: `will_spend_stress` already answers when a PC is willing to mark one. |
 | **Unleash Chaos fills to the Spellcast trait at the start of each fight** | `domain_cards/arcana.py` → `_prime` | The card says "at the beginning of a session", and the simulator has no sessions — only fights and rests. This is the closest reading available today and it is a simplification, not a rule: once encounters run in sequence a session will span several of them and the tokens should carry over. Declared as a gap on the card too. |
@@ -263,7 +267,10 @@ rather than implemented.
 
 The Faerie's **Wings** is the case this was ruled on: its Stress buys +2 Evasion
 against an incoming attack, and a player never learns what that attack needed to
-beat. Note the boundary — this covers information genuinely unavailable when the
+beat. Bone's **I See It Coming** is the same shape and got the same ruling, and
+it is the **larger** of the two — +1d4 averages +2.5 and it is repeatable while
+Stress lasts, where Wings is a flat +2 once. If this rule is ever revisited, that
+is the card whose numbers move most. Note the boundary — this covers information genuinely unavailable when the
 choice is made, not content that is merely hard to optimise. A trigger the player
 can see (their own failed roll, an announced critical, an ally already down) is
 ordinary content and gets modelled with a stated policy. That's exactly why
@@ -366,6 +373,15 @@ ahead of the shuffled options rather than among them (`combat/policy.py` →
 `_search_for_hidden`). A condition with no `found_by` offers no such roll, which
 is why a cloaked Shadow cannot be hunted — the page prints no roll for it.
 
+**Shadowbind is the first party card whose whole value is the Fear it costs the
+GM.** Midnight's level 2 area spell Restrains everything it beats within Very
+Close, and Restrained does nothing by itself here (below) — so what the card
+actually buys is one Fear per adversary bound, spent on the GM's turn to shake
+it off, or nothing at all if the GM would rather leave them bound. That falls out
+of two rulings made long before the card, and it is worth naming because the
+result is a Fear-burner rather than the control spell the page describes. If
+Restrained is ever given an effect, this is the card that changes most.
+
 **Restrained is recorded, and still does nothing by itself.** It stops a
 combatant moving and no movement is modelled, so the condition has no effect of
 its own — that ruling is unchanged. What *is* new is that a feature applying one
@@ -407,6 +423,15 @@ everyone that adversary is holding — `_release_held`. What is not modelled is 
 *cost* of trying: the attempt rides on the announced moments rather than
 spending the PC's spotlight.
 
+**Enraptured is Taunted's mirror**, and got the same ruling for the same reason:
+Grace's *Enrapture* describes an adversary's attention being fixed on the caster
+and attaches no mechanic, so the effect was ruled rather than read. An enraptured
+adversary swings at whoever enraptured them until the GM pays a Fear. It is read
+by the *GM's* targeting rule through `content/registry.py` →
+`adversary_target_override`, the exact counterpart of the hook Taunted uses on
+the party's side — kept as two hooks rather than one, because merging them would
+let party content compel a PC.
+
 **Taunted fixes its holder's target**, which is the third condition ruled rather
 than read — the Weaponmaster's *Goading Strike* prints two different durations
 for one clause, so the user settled the effect instead of choosing a sentence. A
@@ -428,6 +453,8 @@ ran would never have come back. `content/registry.py` → `condition_refusal`,
 `refuses_condition`, asked from `combat/state.py` → `apply_condition`. A refresh
 of a condition already held is not offered, so a once-per-rest dodge is never
 spent on one.
+
+**Enraptured** is modelled as the target-fixing described above.
 
 **On Fire is modelled, and it is the one condition that arrived with its own
 mechanic.** Every other condition here had to be ruled on because the SRD gives
@@ -595,9 +622,13 @@ complete simulation of the game.
   encounters are simulated one at a time; when they are run in **sequence**, this
   state is the list of what the party does in the gaps. `content/registry.py` →
   `out_of_combat_ability`, and see `combat/rest.py` for the rest machinery it
-  will hang off. **Splendor's Mending Touch** is the second entry — 2 Hope for a
-  HP or a Stress, gated on "a few minutes to focus on the target", which is not
-  something that happens while a fight is on
+  will hang off. Three cards are in it: **Blade's A Soldier's Bond** (3 Hope each
+  to two PCs off a compliment), **Splendor's Mending Touch** (2 Hope for a HP or
+  a Stress, gated on "a few minutes to focus"), and **Grace's Inspirational
+  Words** (a pool of tokens equal to Presence, each clearing a Stress or a HP or
+  handing over a Hope). Together they are most of a support character's
+  contribution between fights, which is the point: none of them is small, and all
+  of them are waiting on the same machinery
 
 - **Massive Damage** (SRD-optional: 2× Severe marks 4 HP instead of 3) — `characters/player_character.py`
 - **Range and positioning entirely.** Every range band ("Melee", "Very Close", "Far") is treated as always satisfied. This is why `I Am Your Shield` never checks distance, and why adversary features keyed to position are skipped.
