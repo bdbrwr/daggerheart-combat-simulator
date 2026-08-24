@@ -140,6 +140,13 @@ def _take_pc_spotlight(state: FightState) -> None:
     state.acted_this_pass.add(id(pc))
     result = take_pc_turn(pc, state)
 
+    # Conditions that *do* something when their holder acts get their moment
+    # first - On Fire burns whoever is carrying it. Before the expiry below,
+    # because the SRD's wording is "if they are still On Fire at the end of their
+    # action": the burn is part of the action ending, and shaking the condition
+    # off comes after.
+    state.apply_condition_effects(pc, WHEN_THEY_ACT)
+
     # "Until they next act" ends *after* the acting, so a PC knocked over is
     # still Vulnerable for the action that gets them back up - which is the whole
     # point of having been knocked over.
@@ -292,6 +299,16 @@ def _take_gm_turn(state: FightState) -> None:
             take_adversary_turn(adversary, state)
         finally:
             state.acting_free = None
+
+        # The same moment the party side announces, on the GM's side of the
+        # table. Until On Fire existed nothing needed it - every condition an
+        # adversary could carry either did nothing by itself or ended on a GM
+        # turn - so this is where the asymmetry gets closed rather than a rule of
+        # its own. Effects before expiry, for the reason `_take_pc_spotlight`
+        # gives.
+        state.apply_condition_effects(adversary, WHEN_THEY_ACT)
+        for ended in state.expire_conditions(adversary, WHEN_THEY_ACT):
+            state.note(f"{adversary.name} is no longer {ended}")
 
         if state.party_is_down:
             break

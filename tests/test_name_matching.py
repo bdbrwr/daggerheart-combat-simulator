@@ -85,11 +85,16 @@ def test_an_assessment_keeps_the_spelling_it_was_declared_with():
 
 
 def test_an_unimplemented_name_is_reported_as_the_sheet_wrote_it():
-    """Nothing to correct it to, so the report shows what to go and look for."""
-    unknown = assess("Rune WARD")
+    """Nothing to correct it to, so the report shows what to go and look for.
+
+    A made-up name rather than a real card. This used to say "Rune WARD" and
+    broke the day Rune Ward was implemented - a real card illustrates
+    *unimplemented* only until somebody gets to it.
+    """
+    unknown = assess("No Such CARD")
 
     assert unknown.status is Status.UNIMPLEMENTED
-    assert unknown.name == "Rune WARD"
+    assert unknown.name == "No Such CARD"
 
 
 def test_dispatch_reaches_a_card_the_sheet_miscapitalised():

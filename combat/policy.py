@@ -46,6 +46,7 @@ from dataclasses import replace
 
 from content import (
     action_options,
+    apply_ally_on_hit,
     apply_on_hit,
     apply_on_spotlight,
     attacks_on_are_aided,
@@ -407,6 +408,11 @@ def _make_the_roll(
 
     if result.damage_roll is not None:
         apply_on_hit(pc, target, result, state)
+        # And content another PC put *on* this one, which the holder-scoped call
+        # above can't reach - the Book of Sitil's Parallela hangs on an ally and
+        # resolves when they land a hit. Asked party-wide; nothing here knows
+        # what any of it is, or that any of it exists.
+        apply_ally_on_hit(pc, target, result, state)
 
     if result.damage_roll is None:
         state.note(f"{pc.name} misses {target.name} ({result.attack_roll})")

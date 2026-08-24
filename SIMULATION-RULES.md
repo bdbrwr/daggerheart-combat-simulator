@@ -37,7 +37,7 @@ the balance numbers, and none of them is wrong in a rules sense.
 | The GM spends Fear greedily on extra activations and on nothing else | `combat/fight.py` → `_take_gm_turn` | Fear also pays for adversary Fear features and GM moves, neither implemented. |
 | PCs always take **Avoid Death** as their death move | `characters/player_character.py` → `take_damage`, `avoid_death` | Three death moves exist. Blaze of Glory and Risk It All are not modelled. |
 | An unconscious PC is never revived and takes no further part | `characters/player_character.py` → `clear_hp` | Per the SRD an ally can clear a downed PC's HP to revive them. Spending a turn on that isn't modelled. |
-| **Get Back Up**: pay the Stress if the hit would drop the PC, otherwise only while a spare Stress slot remains | `domain_cards/blade.py` → `_worth_a_stress` | Using the card is a choice. |
+| **A PC marks Stress freely, except their last slot, which is held until they are at 2 or fewer unmarked HP** | `characters/player_character.py` → `will_spend_stress`; consulted by `domain_cards/blade.py` → `get_back_up`, `reckless` and `domain_cards/sage.py` → `tekaira_armored_beetles` | Nothing; every Stress cost in the SRD is a player's choice. Ruled as one general rule for all PC content rather than a threshold per card, and it **replaced two earlier per-card policies**: Get Back Up used to pay whenever the hit would drop the PC, and the beetles used to refuse the last slot outright. Both now answer here. The last slot is held because marking it makes the PC Vulnerable *and* shuts off every other card costing a Stress, which outlives what any single use buys — and released at the same line the near-death rate is reported at, which is also where an adversary's last slot opens. See "PC Stress — when a player marks it" below. |
 | **I Am Your Shield**: step in only when the ally is closer to going down than the shielder, and never on the shielder's last HP | `domain_cards/valor.py` → `_worth_shielding` | Using the card is a choice. |
 | A PC picks **at random among the options they can actually use** - every ability whose resources they can pay, plus their weapon attack | `content/registry.py` → `action_options`, `use_free_abilities`; `combat/policy.py` → `_make_the_roll` | Nothing; a player weighs their options. Random-among-viable is the stand-in until there's something better. **No automated scoring** - deliberately not built. |
 | A **no-rest encounter** assumes *every* per-rest ability was already spent | `combat/rest.py` → `Rest.NONE` | Nothing carries between encounters yet, so the simulator can't know which were actually used. Conservative, and makes a no-rest fight harder than it may really be. |
@@ -45,7 +45,7 @@ the balance numbers, and none of them is wrong in a rules sense.
 | **Strange Patterns**: the number the Wizard watches for is drawn at random at the start of each fight rather than written on the sheet, and the trigger clears a Stress when any is marked, otherwise gains a Hope | `features/classes.py` → `_watched_number`, `strange_patterns` | Choosing the number is the player's, and every number is as good as every other. Which reward to take is also theirs; Stress is the scarcer resource here, since running out of it hands every adversary Advantage. |
 | **Hold Them Off** spends its 3 Hope only when there are two other adversaries *and* the roll would beat at least one of them | `features/classes.py` → `_hold_them_off` | Using the feature is a choice. Spending 3 Hope on a roll that beats nobody is the one outcome a player at the table would avoid. |
 | **Vicious Entangle** never declines, and spends the Hope for a second Restrain only when there's another adversary *and* the GM holds at least 1 Fear | `domain_cards/sage.py` → `_entangle_a_second` | Using the card is a choice. At 0 Fear a temporary condition costs the GM nothing (see below), so the Hope would buy nothing. |
-| **Tekaira Armored Beetles** are conjured whenever they aren't already up and a spare Stress slot remains; the Hope to keep them up after a hit is spent only above 3 Hope | `domain_cards/sage.py` → `tekaira_armored_beetles`, `BEETLES_HOPE_FLOOR` | Both are player choices. Marking the last Stress hands every adversary Advantage, which outlives the one threshold the beetles save. |
+| **Tekaira Armored Beetles** are conjured whenever they aren't already up and the shared Stress rule allows it; the Hope to keep them up after a hit is spent only above 3 Hope | `domain_cards/sage.py` → `tekaira_armored_beetles`, `BEETLES_HOPE_FLOOR` | Both are player choices. The Stress half is no longer this card's own policy - it now asks `will_spend_stress` like everything else, which releases the last slot at 2 or fewer unmarked HP where this card used to refuse it outright. |
 | **Fire Flies** declines unless it would reach 2 or more adversaries | `domain_cards/sage.py` → `FIRE_FLIES_WORTH_IT` | The card can be cast at one target; against one it's a Hope spent for less than a weapon swing. |
 | **Healing Hands** always clears HP rather than Stress, and only fires for an ally at 2 or fewer unmarked HP | `domain_cards/splendor.py` | The card offers the choice; HP is taken because a downed PC is what ends a fight. |
 | **Unstoppable** is turned on once the Guardian has 1 or more HP marked, not on the first spotlight | `features/classes.py` → `UNSTOPPABLE_HP_MARKED_BEFORE_USE` | Nothing - the rules let a player flip it whenever they like. Going early runs the damage bonus for longer; going late keeps the damage reduction for the dangerous end of a fight. A knob. |
@@ -74,6 +74,16 @@ the balance numbers, and none of them is wrong in a rules sense.
 | **`Voice of the Forest`'s spotlights are free** — no Fear, and outside the party size + 1 cap | `features/adversaries.py` → `voice_of_the_forest`; `combat/state.py` → `grant_activation`, `take_free_activation`; `combat/fight.py` → `_take_gm_turn` | Nothing; the SRD caps activations nowhere, and our cap is the entry above. This is the one feature ruled to sit outside it. **Scoped deliberately**: Rally Guards, Move as a Unit, Tactician and Overload all still grant activations that cost the usual Fear and count against the cap, and none of them changed. The machinery is generic (`grant_activation(..., free=True)`) so any of them could be moved later with one keyword. What the rallied allies pay is the row below. |
 | **A Taunt fixes the target's target** | `features/adversaries.py` → `goading_strike`, `goading_strike_compels`; `content/registry.py` → `party_target_override` | The Weaponmaster's *Goading Strike* prints two different durations for one clause — "until their next successful attack" and "the next time the Taunted target attacks" — so rather than pick between them the effect itself was ruled: a Taunted PC swings at the Weaponmaster until they land a hit. The first GM-side content that reaches the party's own targeting rule. What the PC then *does* to it is still theirs. |
 | **A caged PC rolls to break out, and on a failure an ally spends a Stress to tear the cage open** | `features/adversaries.py` → `_thorny_cage_breaks` | The Young Dryad's *Thorny Cage* prints a Strength Roll to get free, plus "when a creature makes an action roll against the cage, they must mark a Stress" — an ally attacking the cage, which nothing here does. Ruled as the two-step above, so the printed Stress lands on the ally rather than being declared a gap. Who pays is random among the allies who can. The cage therefore holds for at most one of its victim's spotlights and costs the party either nothing or one Stress. |
+| **Reckless** marks its Stress on every weapon swing the shared Stress rule allows | `domain_cards/blade.py` → `reckless` | Nothing; the card sets no limit at all ("mark a Stress to gain advantage on an attack"). No threshold of its own — it asks `will_spend_stress` — so a Reckless PC swings with Advantage from the first spotlight until one slot is left. That is a fast way through a Stress track, and it is what the card is for. |
+| **Forceful Push** spends its Hope on every successful hit, skipping only a target already Vulnerable or one the hit just defeated | `domain_cards/valor.py` → `_press_them` | Using the card is a choice. Unlike Vicious Entangle's second Restrain, this buys something at 0 Fear: Vulnerable is modelled outright, so the Hope is never spent on nothing. The two skips are not thresholds — both are states visible at a table, and re-applying a condition somebody already has buys nothing (the same reasoning as the Poisoned/Cursed row above). |
+| **Wild Flame never declines**, where Fire Flies declines below 2 targets | `domain_cards/codex.py` → `wild_flame`; contrast `domain_cards/sage.py` → `FIRE_FLIES_WORTH_IT` | Casting is a choice, but the two cards are not the same choice. Fire Flies spends a Hope, so aiming it at one adversary is a real cost for less than a bow. Wild Flame costs nothing but the roll the caster was making anyway, so there is no state where casting it is worse than not — and it deals its damage to whatever the Melee band happens to reach. |
+| **Parallela is cast on another party member**, never the caster, and the ally is random among the conscious ones | `domain_cards/codex.py` → `parallela` | The card says "yourself or an ally". Ruled by the user for the caster's own reason: optimal play puts it on somebody else and still spends the caster's own action roll, where casting it on yourself gets one attack's use out of one spotlight. Which ally follows the standing random-among-viable rule — picking the party's best attacker would be scoring the party, which is ruled out. It declines while it would buy nothing: one adversary standing means no second target exists, and the card itself says it can only hang on one creature at a time. |
+| **Rune Ward goes to the frailest ally, and its Hope is spent only when the 1d8 could save an HP** | `domain_cards/arcana.py` → `rune_ward`, `_ward_holder`, `_could_save_an_hp` | The card says "held as a ward by you or an ally" and sets no rule for when to use it. Ruled: it goes to whoever has the least unmarked HP, **never the caster**, so a Wizard's Hope pays for somebody else's defence. It fires only when the damage is within 8 of a threshold it could fall below (Severe, Major, or 1 — that last being the hit vanishing). That test reads only what a player can see when they decide: the damage announced and their own printed thresholds. It deliberately does **not** read the Ward Die, which nobody has rolled yet, so a hit two points above Severe is warded even though a 1 wouldn't have saved it. |
+| **Unleash Chaos spends every token on every cast**, refilling with a Stress whenever the shared rule allows | `domain_cards/arcana.py` → `unleash_chaos` | The card lets you spend "any number of tokens" and says nothing about how many. Ruled as all of them, so it opens at full power, empties, and comes back once the caster can afford the Stress — rather than trickling out one d10 at a time. The refill needs no threshold of its own: `will_spend_stress` already answers when a PC is willing to mark one. |
+| **Unleash Chaos fills to the Spellcast trait at the start of each fight** | `domain_cards/arcana.py` → `_prime` | The card says "at the beginning of a session", and the simulator has no sessions — only fights and rests. This is the closest reading available today and it is a simplification, not a rule: once encounters run in sequence a session will span several of them and the tokens should carry over. Declared as a gap on the card too. |
+| **Natural Familiar's d6 is rolled per attack against the Melee band's odds** | `domain_cards/sage.py` → `familiar_flanks`; `content/aoe.py` → `chance_within` | "When you deal damage to an adversary within Melee range of your familiar" is positioning, and none is tracked. Answered by the same function that decides whether Luckbender can reach an ally: the chance that this particular adversary is inside the familiar's Melee band. Rolled per attack rather than settled once, since where the familiar stands is exactly what changes between swings. So the d6 is near-certain in a duel and occasional in a brawl. Reading it as always-on, and as pinned to the party's focus target, were both offered and declined. |
+| **Reassurance** rerolls any **failed** roll by an ally, once per rest | `domain_cards/splendor.py` → `reassurance` | The card says only "after an ally attempts an action roll". Luckbender's trigger without its Hope floor, because this costs nothing but the single per-rest use — there is no resource to weigh, and rerolling a success buys nothing measurable. An ally's roll only: the card says "an ally" where Luckbender says "yours or a willing ally's". |
+| **Bold Presence** spends its once-per-rest condition dodge on the first condition that would land | `domain_cards/valor.py` → `bold_presence`; `content/registry.py` → `condition_refusal` | Nothing; the card says only "once per rest when you would gain a condition". The standing default applies - it costs nothing to use, and a PC has no way of knowing a worse condition is coming, so holding it back would be inventing foresight. It cannot stop a PC going Vulnerable by marking their last Stress, which is a standing state rather than a condition anything applies. |
 | **"Another Zombie" means any adversary with "Zombie" in its name** | `features/adversaries.py` → `too_many_to_handle`, `ZOMBIE` | The Shambling Zombie's *Too Many to Handle* names a **kind** rather than a stat block, the way the Pirate Captain's *No Quarter* says "three or more Pirates" and unlike Pack Tactics' "another Sylvan Soldier". The SRD prints five Zombies in tier 1 alone. Matched on part of a name, canonically — the second feature in the catalogue to do so. |
 
 ### Adversary desperation — when Stress gets spent
@@ -117,6 +127,35 @@ full health.
 
 Both halves are knobs. The exponent, the `+ 1`, and the action/reaction split are
 each worth sweeping.
+
+### PC Stress — when a player marks it
+
+The party side of the rule above, and deliberately a much simpler shape. A PC's
+Stress is spent on cards rather than hoarded for a moment, so there is no
+desperation curve here: **spend freely, except the last slot.**
+
+```
+will_spend_stress(n)  =  can_spend_stress(n)
+                         and (a slot remains after paying  or  is_near_death)
+```
+
+The last slot is held back until the PC has `NEAR_DEATH_HP_UNMARKED` (2) or fewer
+unmarked HP, for two reasons that compound: marking it makes them Vulnerable, so
+every adversary rolls against them with Advantage for the rest of the fight, and
+it also shuts off every *other* card that costs a Stress — which for a loadout
+built around them is most of what the character does. Neither cost is worth one
+card's use, and both stop mattering once the PC is a hit from the floor.
+
+That is the same line an adversary's last Stress slot opens at, and the same one
+the near-death rate is reported at. One number, read from one place.
+
+**It is one rule for all PC content**, asked through `will_spend_stress` on the
+character rather than re-derived per card. Two cards had their own policies
+before it existed and were moved onto it; the behaviour that changed is noted in
+their rows above. `spend_stress` itself is deliberately *not* gated on it — that
+is the payment, and whether to make it is the caller's decision.
+
+A knob, like its adversary counterpart: the release line is the thing to sweep.
 
 ### Area of effect, standing in for range
 
@@ -378,7 +417,36 @@ attack roll succeeding rather than an announced moment — so it lifts from
 `on_party_attack_roll` rather than from a `Condition.end`. It carries a source and
 no `end`, so a dead Weaponmaster releases it like any other hold.
 
-The rest — On Fire, Stunned — have no representation and nothing applies one.
+**A condition can be refused as it lands, which is not the same as immunity to
+it.** The Valor card *Bold Presence* shrugs one off per rest, and that had to be
+its own hook: `immunity` is a *standing* answer read wherever a condition's
+effect is consulted — the Guardian's Unstoppable turns Vulnerable off while it
+runs, and the condition is still there when it stops — where this is asked once,
+at the moment the condition would land, and a refusal is permanent. Folding the
+two together would have broken Unstoppable, since a condition applied while it
+ran would never have come back. `content/registry.py` → `condition_refusal`,
+`refuses_condition`, asked from `combat/state.py` → `apply_condition`. A refresh
+of a condition already held is not offered, so a once-per-rest dodge is never
+spent on one.
+
+**On Fire is modelled, and it is the one condition that arrived with its own
+mechanic.** Every other condition here had to be ruled on because the SRD gives
+it a name and nothing else; Arcana's *Cinder Grasp* prints the rule on the card —
+"when a creature acts while On Fire, they must take an extra **2d6** magic
+damage if they are still On Fire at the end of their action" — so the burn is
+simply what the page says. It rides `Condition.effect` at `WHEN_THEY_ACT`, and
+it lasts until the GM spends a Fear to put it out, which is the standing reading
+for a condition the party puts on an adversary. That makes the card a question
+the GM has to answer, and it costs them either way.
+
+Closing it needed one thing in the loop: `WHEN_THEY_ACT` was announced to a
+**PC's** conditions only, and only for expiry. Both sides now get both halves —
+effects first, then expiry, because "at the end of their action" puts the burn
+before the chance to shake it off (`combat/fight.py` → `_take_pc_spotlight`,
+`_take_gm_turn`). Nothing else changes: until On Fire existed, every condition an
+adversary could carry either did nothing by itself or ended on a GM turn.
+
+The rest — Stunned — has no representation and nothing applies it.
 
 **The GM pays to shake a condition off**, which is `when_the_gm_pays`: a
 condition the party put on an adversary ends when the GM spends 1 Fear on their
@@ -461,7 +529,7 @@ the numbers.
 | **Hold Them Off** deals the *same damage roll in full* to each additional adversary | `features/classes.py` → `_hold_them_off` | Whirlwind says explicitly that additional targets take half damage; this card says nothing at all, so nothing is halved. |
 | **Ranger's Focus** spends its Hope on an attack that has already landed, rather than being declared before the roll | `features/classes.py` → `_rangers_focus` | The card reads "spend a Hope and make an attack". Spending afterwards means a missed Focus attempt costs nothing, which is slightly generous - but deciding beforehand would mean committing Hope without knowing whether the attack even happens. |
 | **Strange Patterns** fires once on a roll showing the number on **both** dice, not twice | `features/classes.py` → `strange_patterns` | The card is written as a trigger on the roll rather than on each die, and doubles are already a critical. |
-| An attack rolled **against a whole area** ("against all adversaries within Close range") is one roll checked against each target's own Difficulty. The roll counts as a success if it beat the **lowest** Difficulty in the area | `content/aoe.py` → `area_difficulty`, `targets_beaten`; `domain_cards/sage.py` → `fire_flies` | Such a spell has no single Difficulty, but the spotlight rules need to know whether the roll succeeded. Reading it as "you beat somebody" keeps the spotlight on a partial hit; reading it as the highest would hand the spotlight over whenever the toughest adversary shrugged it off. This is a different shape from Whirlwind, which rolls against one target and reuses that roll. |
+| An attack rolled **against a whole area** ("against all adversaries within Close range") is one roll checked against each target's own Difficulty. The roll counts as a success if it beat the **lowest** Difficulty in the area | `content/aoe.py` → `area_difficulty`, `targets_beaten`; `domain_cards/sage.py` → `fire_flies`; `domain_cards/codex.py` → `wild_flame` | Such a spell has no single Difficulty, but the spotlight rules need to know whether the roll succeeded. Reading it as "you beat somebody" keeps the spotlight on a partial hit; reading it as the highest would hand the spotlight over whenever the toughest adversary shrugged it off. This is a different shape from Whirlwind, which rolls against one target and reuses that roll. |
 | Extra damage dice a feature adds for how the attack roll came out (**Face Your Fear**) are rolled **as part of the same damage roll**, not applied afterwards | `content/registry.py` → `extra_damage`, `total_extra_damage`; `items/weapons.py` → `_attack_with` | The SRD says "you deal an extra 1d10 magic damage", which reads as one total. Applying it after the fact would measure it against the target's thresholds a second time and could mark an HP the rules never intended. |
 | **Reinforced** (armor) applies to the hit that marked the last Armor Slot, not only to later ones | `features/armor.py` → `reinforced` | The SRD raises the thresholds "when you mark your last Armor Slot". By the time damage responses are consulted that slot has already been marked, so the wearer is in the state the feature describes. Reading it the other way would need the damage pipeline to remember what armor looked like before the hit, for a difference of one HP on one hit per fight. |
 | A **weapon's** feature applies only to attacks made with that weapon; an **armor's** applies to everything that happens to its wearer | `items/weapons.py` → `attack_with`; `characters/player_character.py` → `named_features`, `weapon_features` | Not an ambiguity in the rules so much as one the code could easily introduce. Dispatch is holder-scoped by default, so registering a Broadsword's *Reliable* that way would silently add +1 to a Wizard's spell attacks. Armor genuinely is holder-scoped - Fortified changes what any hit costs - so the two reach a fight by different routes. |
@@ -487,6 +555,10 @@ the numbers.
 | **Tactician does not cost the Lieutenant its action** | `features/adversaries.py` → `tactician` | The SRD files it as an Action, but the text triggers "when you spotlight the Lieutenant… to **also** spotlight two allies". Ruled as a rider on being spotlighted, so it registers on `on_spotlight` and the Lieutenant still attacks afterwards. Reading it the other way would make it one option among several and roughly halve how often a Jagged Knife band gets its extra activations. |
 | **Magical Reflection** reads "within Close range" off the attacker's weapon, and halves the damage **rolled**, rounding down | `features/adversaries.py` → `magical_reflection` | The same handle on distance Armor-Shredding Shards uses, so Melee, Very Close and Close weapons trigger it and Far ones don't. "The damage they dealt" is read as the number rolled rather than the HP it cost, so a hit the Elemental shrugged off still rebounds at full size. The rebound's **type** is the Elemental's own — see the untyped-feature entry above. |
 | **Split** takes the Green Ooze off the field **without defeating it** | `combat/state.py` → `remove`; `features/adversaries.py` → `split` | "Split them into two Tiny Green Oozes" leaves nothing said about what becomes of the original, and `is_defeated` was the simulator's only way for anything to leave. Marking its HP would have looked identical to the loop and lied to the reader — a play-by-play announcing the Ooze "defeated" as the field doubles reads as a win. A defeated Ooze also doesn't split, since a stat block that split as it died would let one Fear undo the kill. |
+| **Parallela's second target takes the full damage roll**, and the spell is spent on the next attack that **lands** rather than on the next one attempted | `domain_cards/codex.py` → `parallela_doubles`; `content/registry.py` → `ally_on_hit`, `apply_ally_on_hit` | "They can hit an additional target within range that their attack roll would succeed against" says nothing about halving, so nothing is halved — the same reading Hold Them Off gets, and the opposite of Whirlwind, which says "half damage" outright. "The next time the target makes an attack" is the looser half: read as the next attack that connects, so a miss doesn't burn 2 Hope on a roll that hit nobody. Where the roll beat several adversaries, which one gets the second hit is random. |
+| **Bolt Beacon's Hope is the delivery, not an upgrade**, so with none banked the spell isn't cast at all | `domain_cards/splendor.py` → `bolt_beacon` | "On a success, **spend a Hope** to send a bolt of shimmering light toward them, dealing d8+2" puts the entire damage clause inside the Hope. Read as: no Hope, no bolt — so the card declines before rolling rather than rolling and then failing to pay, which would waste the spotlight. The Vulnerable is stated as part of what the bolt does rather than bought separately, which is why nothing weighs whether to apply it. Contrast Forceful Push, where the attack lands either way and the Hope buys only the condition. |
+| **A critical is its own outcome — neither "with Hope" nor "with Fear"** | `features/subclasses.py` → `face_your_fear`, `_press_the_advantage`; `domain_cards/valor.py` → `forceful_push_momentum` | The two dice matched, so neither won. Content keyed on "a success with Hope" or "with Fear" therefore doesn't fire on a crit, which is already paying out the maximum of every damage die. Asking for `outcome` rather than comparing the dice keeps this right for free at every site. |
+| **Not Good Enough** rerolls each qualifying die **once**, after the dice are read and before any discard | `content/registry.py` → `damage_die_reroll`, `reroll_damage_dice`; `domain_cards/blade.py` → `not_good_enough`; `items/weapons.py` → `attack_with` | "Reroll any 1s or 2s" doesn't say whether a rerolled 2 can be rerolled again — read as one fresh throw per die, so a reroll can come up a 1 and stay there. Ordering against Massive/Powerful is unstated too: the reroll happens first and the discard then takes the lowest of the *new* results, which falls out of `dropped` being derived rather than stored. The other order would sometimes throw away a die that was about to improve. |
 | A die discarded by **Massive**/**Powerful** doesn't count toward the critical bonus - a crit adds the maximum of the dice that were kept, not of every die rolled | `dice/damage.py` → `critical_bonus` | A crit "adds the maximum possible result of the damage dice"; the SRD doesn't say whether a discarded die is still one of "the damage dice". Counting it would pay for a die that was thrown away. |
 | **Opportunist** counts every living adversary, the Skeleton Archer included, and asks the **area rule** how many of them are on the target | `features/adversaries.py` → `opportunist`, `OPPORTUNIST_ADVERSARIES` | "When two or more adversaries are within Very Close range of a creature" names a number of adversaries rather than "other adversaries", where Pack Tactics is explicit about "*another* Dire Wolf" — so the Archer counts itself, the same reading No Quarter takes of its three Pirates. The range half follows Pack Tactics and No Quarter exactly. Consequence worth knowing: Very Close reaches `n // 3` capped at 2, so **the feature cannot fire below six adversaries** — the No Quarter situation again, arriving from a printed 2 meeting the band rather than from any threshold of ours. It is also the mirror of `I've Got 'Em` on the same hook: that one belongs to a third party and doubles what *other* adversaries deal, this one belongs to the attacker and doubles only its own. |
 | **Terrifying** hands the GM **one** Fear, not one per PC | `features/adversaries.py` → `terrifying` | "All PCs within Close range lose a Hope and you gain a Fear" is grammatically open to either. The corroboration is two entries further down the same page: the Patchwork Zombie Hulk's *Tormented Screams* has to write "you gain a Fear **for each**" to get the other reading, which is only worth printing if a bare "you gain a Fear" means one. The Hope loss is an *area* and so goes through `targets_in_area`, where the Minor Demon's All Must Fall asks `chance_within` because its trigger is one particular PC's roll. |
@@ -508,16 +580,28 @@ complete simulation of the game.
 > ancestries, communities, classes, subclasses, gear features and adversary
 > features each declare their own state in `content/registry.py` — *modelled*
 > (optionally with declared gaps), *no combat effect*, *insignificant combat
-> effect* (both with a reason), or *unimplemented*. Every run prints the
-> breakdown per combatant, so this section covers only the rules that apply to
-> everyone. Never leave content silently absent when the answer is "it can't
-> matter" or "it barely matters": declare it, so a judgement never looks like a
-> gap — and never park a decision in *unimplemented*, which reports it as work
-> nobody has done.
+> effect* (both with a reason), *out of combat*, or *unimplemented*. Every run
+> prints the breakdown per combatant, so this section covers only the rules that
+> apply to everyone. Never leave content silently absent when the answer is "it
+> can't matter" or "it barely matters": declare it, so a judgement never looks
+> like a gap — and never park a decision in *unimplemented*, which reports it as
+> work nobody has done.
+
+- **Abilities used between fights, not in them.** *Out of combat* is a state of
+  its own and deliberately not a third dismissal: the effect is real and fully
+  representable, it simply never happens inside an encounter. The Blade card **A
+  Soldier's Bond** is the first — once per long rest, complimenting an ally gives
+  you both 3 Hope, which nobody stops mid-fight to do. Nothing runs today because
+  encounters are simulated one at a time; when they are run in **sequence**, this
+  state is the list of what the party does in the gaps. `content/registry.py` →
+  `out_of_combat_ability`, and see `combat/rest.py` for the rest machinery it
+  will hang off. **Splendor's Mending Touch** is the second entry — 2 Hope for a
+  HP or a Stress, gated on "a few minutes to focus on the target", which is not
+  something that happens while a fight is on
 
 - **Massive Damage** (SRD-optional: 2× Severe marks 4 HP instead of 3) — `characters/player_character.py`
 - **Range and positioning entirely.** Every range band ("Melee", "Very Close", "Far") is treated as always satisfied. This is why `I Am Your Shield` never checks distance, and why adversary features keyed to position are skipped.
-- **All conditions except Vulnerable, Hidden and the trait hobble** — see the conditions section above. Restrained is *ruled* to have no combat effect here rather than merely absent; On Fire and Stunned have no representation and nothing applies them. *Cursed* (the Jagged Knife Hexer's) is a named condition whose whole effect is its own feature's, so it needs nothing from this list.
+- **All conditions except Vulnerable, Hidden, On Fire and the trait hobble** — see the conditions section above. Restrained is *ruled* to have no combat effect here rather than merely absent; Stunned has no representation and nothing applies it. *Cursed* (the Jagged Knife Hexer's) is a named condition whose whole effect is its own feature's, so it needs nothing from this list.
 - **Direct damage bypasses the Armor Slot only.** `characters/player_character.py` → `take_damage(direct=True)`; `content/registry.py` → `direct_damage`, `deals_direct_damage`. Thresholds still decide how many HP it costs, and damage responses still get their say — the SRD's restriction is on armor. Against this party it's worth close to a whole HP per hit, since the policy otherwise marks a free slot against everything
 - **Adversary Fear features** — no adversary has one implemented yet. Note this is distinct from features that merely *cost* the GM Fear, several of which are modelled (Ramp Up charges to spotlight, Grab and Drag spends on a hit)
 - **Adversary Experiences — ruled out, not outstanding.** The SRD gives adversaries optional Experiences the GM can spend a Fear on, "to raise their attack roll or increase the Difficulty of a roll made against them". The user has decided not to model them, and the reason is the Fear economy rather than the effort: this simulator already commits a great deal of Fear to extra activations, and an Experience competes for that same Fear while buying a comparatively minor bonus on a single roll. A GM in this simulator would essentially never take that trade, so implementing it would add a branch that never fires. They stay recorded in each catalogue entry's `notes` so an entry remains checkable against the printed page, and there is deliberately no field and no mechanic. This is a decision, so it does not belong on anyone's list of work to do

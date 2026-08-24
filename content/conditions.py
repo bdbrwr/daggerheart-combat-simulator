@@ -32,8 +32,15 @@ condition may also carry `found_by`, the action roll somebody else can spend
 their spotlight on to end it - the Sylvan Soldier's Blend In prints one and the
 Shadow's Cloaked does not.
 
-The rest of the SRD's conditions - On Fire, Stunned - have no representation at
-all and no content applies one yet.
+**On Fire**, which burns whoever carries it each time they act. Modelled because
+the card applying it prints the whole rule itself - Arcana's *Cinder Grasp* says
+"when a creature acts while On Fire, they must take an extra 2d6 magic damage if
+they are still On Fire at the end of their action" - so unlike the conditions
+that arrive with only a name, this one came with its own mechanic and nothing had
+to be invented. The burn rides `Condition.effect` at `WHEN_THEY_ACT`.
+
+The rest of the SRD's conditions - Stunned - have no representation at all and
+nothing applies one yet.
 
 ## Why `end` is a callable
 
@@ -78,6 +85,13 @@ POISONED = "Poisoned"
 # is what the feature does at a table. Read in `combat/policy.py`, through the
 # generic `forced_party_target` dispatch - nothing there knows this name.
 TAUNTED = "Taunted"
+
+# **On Fire**, the first condition whose own damage the SRD spells out on the
+# card that applies it. Its holder burns each time they act, which is why it is
+# the first real user of `Condition.effect` on the *acting* moment rather than
+# before an action roll. How much it burns for belongs to whoever lit the fire,
+# not here - Cinder Grasp's is 2d6 magic, and a future card's may not be.
+ON_FIRE = "On Fire"
 
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to

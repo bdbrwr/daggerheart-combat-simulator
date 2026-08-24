@@ -20,7 +20,13 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from content import apply_on_damaged, harden_damage, resistance_to, soften_damage
+from content import (
+    apply_on_damaged,
+    harden_damage,
+    party_damage_reduction,
+    resistance_to,
+    soften_damage,
+)
 from content.damage_types import damage_type_named, reduced
 from items.registry import find_armor, find_weapon
 
@@ -205,8 +211,48 @@ class PlayerCharacter:
         """
         return self.stress_marked + amount <= self.stress_max
 
+    def will_spend_stress(self, amount: int = 1) -> bool:
+        """Whether this PC would *choose* to pay a Stress cost, not just whether
+        they can.
+
+        SIMULATION RULE - policy, ruled by the user. `can_spend_stress` answers
+        whether the slots exist; this answers whether a player would spend them:
+
+            freely, **except the last slot**, which is only marked once the PC
+            is at 2 or fewer unmarked HP.
+
+        Marking the last Stress is a cliff rather than an empty resource. It
+        makes the PC Vulnerable - Advantage on every roll against them, per the
+        SRD - and it also shuts off every other card that costs a Stress, which
+        for a loadout built around them is most of what the character does. So it
+        is held back until the PC is close enough to the floor that the immediate
+        problem outweighs both.
+
+        `is_near_death` is the same line the near-death rate is reported at and
+        the same one `Adversary.will_spend_stress` draws for an adversary's last
+        slot, so both sides of the table hold their last Stress until the same
+        point. One number, read in one place, rather than three that could drift.
+
+        A cost of several slots is measured at the last one it would mark, since
+        that is the one that has to be worth paying.
+
+        Content asks the *holder*, never re-deriving this: the two sides answer
+        differently (an adversary follows a desperation curve) and the caller
+        should not have to know which kind of combatant it is holding.
+        """
+        if not self.can_spend_stress(amount):
+            return False
+        if self.stress_marked + amount < self.stress_max:
+            return True
+        return self.is_near_death
+
     def spend_stress(self, amount: int = 1) -> bool:
-        """Pay a voluntary Stress cost; return whether it went through."""
+        """Pay a voluntary Stress cost; return whether it went through.
+
+        Deliberately *not* gated on `will_spend_stress`: this is the payment, and
+        whether the PC wants to make it is the caller's decision. Content that
+        should hold the last slot back asks first.
+        """
         if not self.can_spend_stress(amount):
             return False
         self.stress_marked += amount
@@ -456,6 +502,14 @@ class PlayerCharacter:
         kind = damage_type_named(damage_type)
 
         amount = reduced(amount, resistance_to(self, kind, fight))
+
+        # Party content that subtracts from the number itself - Arcana's Rune
+        # Ward takes 1d8 off. After the resistance, which the SRD fixes as the
+        # first thing to happen, and before the thresholds, which is what lets a
+        # ward drop a hit a whole band or take it away entirely. Asked
+        # generically; nothing here knows what a ward is.
+        amount = max(amount - party_damage_reduction(self, amount, fight, kind), 0)
+
         if amount <= 0:
             return 0
 

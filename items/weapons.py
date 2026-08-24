@@ -39,7 +39,9 @@ from content import (
 from content.registry import (
     apply_before_attacked,
     apply_on_attacked,
+    granted_attack_advantage,
     party_attack_is_hobbled,
+    reroll_damage_dice,
 )
 from dice.common import AdvantageState, combined
 from dice.damage import DiceGroup, roll_damage
@@ -105,6 +107,18 @@ def attack_with(
     # cannot stop what follows: the swing happens either way. Nothing here knows
     # what any of it is.
     apply_before_attacked(target, attacker, weapon, fight)
+
+    # Content the *attacker* carries that grants Advantage on the swing they're
+    # making - the Blade card Reckless, which marks a Stress for it. The GM side
+    # has asked this of its own standard attack since Cloaked was written; a PC's
+    # standard attack is this function, so it asks here. Folded rather than
+    # overwriting, so a Reckless PC swinging at something Hidden comes out even.
+    #
+    # Being asked is the commitment, which is why it is asked once per swing and
+    # not per reroll: content here spends its Stress on being consulted.
+    advantage_state = combined(
+        advantage_state, granted_attack_advantage(attacker, target, fight)
+    )
 
     # A condition can hobble the trait this weapon rolls - the Archer Guard's
     # Hobbling Shot leaves its target with disadvantage on Agility Rolls. Folded
@@ -185,6 +199,15 @@ def attack_with(
         is_critical=attack_roll.is_critical,
         drop_lowest=pool.drop_lowest,
     )
+
+    # Content that re-throws individual dice of the roll just made - the Blade
+    # card Not Good Enough, which rerolls any 1s or 2s. Asked after the dice are
+    # read and before anything else looks at the total, so a reroll is
+    # indistinguishable from having rolled that way, exactly as a remade attack
+    # roll is. The discard, if the weapon has one, takes the lowest of whatever
+    # this leaves - `dropped` is derived from the results rather than stored.
+    damage_roll = reroll_damage_dice(attacker, damage_roll, fight)
+
     # Typed off the weapon, which is where the SRD prints it - a Broadsword deals
     # physical damage and a Greatstaff magic - so a target's resistance is
     # answered by what the PC chose to carry rather than by anything decided here.

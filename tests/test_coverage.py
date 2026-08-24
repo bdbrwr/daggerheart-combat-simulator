@@ -1,4 +1,4 @@
-"""Tests for the three-state content registry and the coverage report.
+"""Tests for the content registry's states and the coverage report.
 
 The point of all of this is one distinction: content assessed as having no
 combat effect must never look like content nobody has written yet. So most of
@@ -6,7 +6,9 @@ these check that the two stay apart, in the registry and in the printed block.
 
 Declarations are made against throwaway names rather than real cards, so these
 don't break every time a card is implemented. The real content is checked only
-where the test is about the real content.
+where the test is about the real content - and **an example of *unimplemented*
+must always be a made-up name**, since any real one stops being an example the
+moment somebody ports it.
 """
 
 import pytest
@@ -53,7 +55,7 @@ def _make_character(**overrides) -> PlayerCharacter:
     return PlayerCharacter(**defaults)
 
 
-# --- The three states --------------------------------------------------------
+# --- The states --------------------------------------------------------------
 
 
 def test_anything_nobody_declared_is_unimplemented():
@@ -68,9 +70,14 @@ def test_an_implemented_card_is_modelled():
 
 
 def test_a_dismissed_card_is_not_the_same_as_a_missing_one():
-    """The whole reason this module exists."""
+    """The whole reason this module exists.
+
+    The missing half is a throwaway name, per this module's own rule: it used to
+    be Rune Ward, and broke the day Rune Ward was implemented. A real card can
+    only ever illustrate "unimplemented" until somebody implements it.
+    """
     dismissed = assess("Bare Bones")
-    missing = assess("Rune Ward")
+    missing = assess("A Card Nobody Has Written")
 
     assert dismissed.status is Status.NO_COMBAT_EFFECT
     assert missing.status is Status.UNIMPLEMENTED

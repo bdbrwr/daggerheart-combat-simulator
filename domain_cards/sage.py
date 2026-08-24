@@ -9,14 +9,24 @@ mismatch between the code and the rule is easy to spot while debugging. The
 verbatim text is in .reference/abilities.json.
 """
 
+import random
+
 from combat.results import AttackResult
-from content.aoe import Range, area_difficulty, targets_beaten, targets_in_area
+from content.aoe import (
+    Range,
+    area_difficulty,
+    chance_within,
+    targets_beaten,
+    targets_in_area,
+)
 from content.damage_types import DamageType
 from content.grimoire import Grimoire
 from content.registry import (
     Fight,
     Holder,
     action,
+    extra_damage,
+    free,
     hope_die_for,
     no_combat_effect,
     remake_action_roll,
@@ -172,18 +182,20 @@ def tekaira_armored_beetles(caster: Holder, fight: Fight) -> bool:
     Conjuring is all that happens here - the reduction itself arrives with the
     damage, which is why the other half of this card is a damage response.
 
-    SIMULATION RULE - policy. Conjured whenever they aren't already up and a
-    spare Stress slot remains. Marking the last Stress hands every adversary
-    Advantage on every roll, which costs more than the one threshold this saves.
+    SIMULATION RULE - policy, ruled. Conjured whenever they aren't already up and
+    the shared last-slot rule allows the Stress
+    (`PlayerCharacter.will_spend_stress`). This card used to refuse the last slot
+    outright; the user's general rule releases it once the caster is at 2 or
+    fewer unmarked HP, which is the one point where a threshold off the next hit
+    is worth going Vulnerable for.
     """
     if fight.token_count(caster, BEETLES):
         return False
     if not fight.living_adversaries:
         return False
-    if caster.stress_marked + 1 >= caster.stress_max:
+    if not caster.will_spend_stress(1):
         return False
-    if not caster.spend_stress(1):
-        return False
+    caster.spend_stress(1)
 
     fight.add_token(caster, BEETLES, cap=1)
     fight.note(f"{caster.name} conjures armored beetles")
@@ -284,7 +296,104 @@ def fire_flies(caster: Holder, target, fight: Fight) -> AttackResult | None:
     )
 
 
+# --- Natural Familiar --------------------------------------------------------
+
+NATURAL_FAMILIAR = "Natural Familiar"
+
+# The familiar itself, once it's out. A token rather than a combatant: nothing
+# can target it, so it has no state of its own worth tracking.
+FAMILIAR = "Natural Familiar summoned"
+
+FAMILIAR_DIE = 6
+
+
+@free(
+    NATURAL_FAMILIAR,
+    unmodelled=[
+        "The extra Hope for a familiar that flies - flight has no "
+        "representation here",
+        "Commanding it with a Spellcast Roll, and marking a Stress to see "
+        "through its eyes - both produce information rather than an effect",
+        "'or the familiar is targeted by an attack' - nothing ever targets it, "
+        "the same gap the Beastbound companion declares, so once summoned it "
+        "stays for the whole fight",
+    ],
+)
+def natural_familiar(caster: Holder, fight: Fight) -> bool:
+    """Natural Familiar (Sage, level 2). Spend a Hope to summon it.
+
+    SRD: spend a Hope to summon a small nature spirit or forest critter to your
+    side until your next rest, you cast Natural Familiar again, or the familiar
+    is targeted by an attack. When you deal damage to an adversary within Melee
+    range of your familiar, you add a d6 to your damage roll.
+
+    Summoning is all that happens here; the d6 arrives with the damage, which is
+    why the other half of this card is an `extra_damage` rider.
+
+    Fires whenever the Hope can be paid and it isn't already out, which is the
+    standing default. The one thing it won't do is summon into an empty field -
+    a familiar with nothing to stand next to buys nothing at all.
+    """
+    if fight.token_count(caster, FAMILIAR):
+        return False
+    if not fight.living_adversaries:
+        return False
+    if not caster.can_spend_hope(1):
+        return False
+
+    caster.spend_hope(1)
+    fight.add_token(caster, FAMILIAR, cap=1)
+    fight.note(f"{caster.name} summons a familiar")
+    return True
+
+
+@extra_damage(NATURAL_FAMILIAR)
+def familiar_flanks(attacker: Holder, target, roll, fight: Fight = None) -> list:
+    """Natural Familiar's d6, when the familiar happens to be next to the target.
+
+    SIMULATION RULE - policy, ruled. "Within Melee range of your familiar" is
+    positioning, and none is tracked, so **the area rule answers it**: the odds
+    that this particular adversary is within the familiar's Melee band, via
+    `chance_within` - the same function that decides whether the Faerie's
+    Luckbender can reach an ally.
+
+    Rolled per attack rather than settled once, because where the familiar is
+    standing is exactly the thing that changes between one swing and the next.
+    Reading it as "always adjacent" was offered and declined; so was pinning the
+    familiar to the party's focus target.
+
+    What that comes to: against a single adversary the familiar is always beside
+    it, and the odds fall away as the field grows - `n // 3`-ish for a Melee
+    band, so the d6 is a reliable bonus in a duel and an occasional one in a
+    brawl.
+
+    `discardable=False`, like every other die a feature adds to somebody else's
+    roll: a Massive or Powerful weapon discards the lowest of the dice *it*
+    rolled, and this is not one of them.
+    """
+    if fight is None or not fight.token_count(attacker, FAMILIAR):
+        return []
+
+    living = fight.living_adversaries
+    if not living:
+        return []
+    if random.random() >= chance_within(Range.MELEE, len(living)):
+        return []
+
+    return [DiceGroup(count=1, sides=FAMILIAR_DIE, discardable=False)]
+
+
 # Dismissals are the user's call, not the assistant's.
+no_combat_effect(
+    "Gifted Tracker",
+    "Spend Hope while tracking to ask the GM about a creature's passage, and "
+    "gain +1 Evasion against creatures tracked that way. The questions produce "
+    "information about the past. The Evasion bonus is real and would be "
+    "represented - but it applies only against creatures the party actually "
+    "tracked, and nothing here records that they did, so the trigger has no "
+    "representation. Modelling it as always on, or as a flag on the encounter, "
+    "were both offered and declined.",
+)
 no_combat_effect(
     "Nature's Tongue",
     "Speaking with plants and animals can't change a fight. Its second clause - "

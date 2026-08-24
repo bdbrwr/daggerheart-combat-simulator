@@ -5,7 +5,7 @@ a subclass. Some of it changes a fight, some of it can't, and some of it simply
 hasn't been written yet. This module is where all three are declared, so that
 the third is never mistaken for the second.
 
-## The three states
+## The states
 
 Before this existed, an unimplemented card and a card we'd judged irrelevant
 both looked the same from the outside - a lookup returning nothing. That is a
@@ -22,11 +22,16 @@ simulator is actually running.
                         but is so small it is very unlikely to change an outcome
                         across a high-N run. The reason says by how much.
                         Declared with `insignificant_combat_effect(name, reason)`.
+  * OUT_OF_COMBAT     - assessed, and **not a dismissal**: players don't use it
+                        during a fight, they use it between fights. Nothing runs
+                        today because encounters aren't sequenced yet; when they
+                        are, everything here is the to-do list. Declared with
+                        `out_of_combat_ability(name, reason)`.
   * UNIMPLEMENTED     - not declared at all. Work not done, and it should be
                         visible in output rather than silently absent.
 
-The middle two both run no code; what differs is the judgement recorded, and the
-two claims are genuinely different. The first says the simulator has nothing for
+The two dismissals both run no code; what differs is the judgement recorded, and
+the two claims are genuinely different. The first says the simulator has nothing for
 this effect to touch - a knockback moves a combatant, and no position is
 tracked. Note the scope: that is a statement about *this simulation*, not about
 the game, and a knockback really does change a fight at a table. The second says
@@ -38,7 +43,13 @@ outside what is modelled; the second needs a number. Neither is ever the
 assistant's call - dismissing content is a judgement about the game, and it
 belongs to the user.
 
-A fourth state also means a measured decision never has to be parked in
+OUT_OF_COMBAT is not a third dismissal, and reading it as one would lose the
+point of it. A Soldier's Bond hands two PCs 3 Hope each: that is neither
+unrepresented nor small, so both dismissals would be false. What is true of it is
+*when* it happens - between fights, never during one. So it records a decision
+with a scheduled home rather than a judgement that nothing is lost.
+
+The extra states also mean a measured decision never has to be parked in
 UNIMPLEMENTED for want of anywhere better, which would misreport it as work
 nobody has done.
 
@@ -64,7 +75,7 @@ import importlib
 import inspect
 import pkgutil
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Callable, Iterable, NamedTuple, Protocol
 
@@ -83,6 +94,7 @@ class Status(Enum):
     MODELLED = "modelled"
     NO_COMBAT_EFFECT = "no combat effect"
     INSIGNIFICANT_COMBAT_EFFECT = "insignificant combat effect"
+    OUT_OF_COMBAT = "out of combat"
     UNIMPLEMENTED = "unimplemented"
 
     @property
@@ -149,6 +161,12 @@ class Holder(Protocol):
 
     def spend_stress(self, amount: int = 1) -> bool: ...
     def can_spend_stress(self, amount: int = 1) -> bool: ...
+
+    # Whether the holder is *willing* to pay, as opposed to able to. Both sides
+    # answer it and they answer it differently - a PC by the last-slot rule, an
+    # adversary by its desperation curve - which is exactly why content asks the
+    # holder rather than working it out.
+    def will_spend_stress(self, amount: int = 1) -> bool: ...
     def clear_stress(self, amount: int) -> None: ...
     def gain_hope(self, amount: int) -> None: ...
     def can_spend_hope(self, amount: int = 1) -> bool: ...
@@ -276,6 +294,10 @@ _attack_advantages: dict[str, Callable] = {}
 _attack_advantages_against: dict[str, Callable] = {}
 _damage_multipliers: dict[str, Callable] = {}
 _damage_resistances: dict[str, Callable] = {}
+_damage_die_rerolls: dict[str, Callable] = {}
+_condition_refusals: dict[str, Callable] = {}
+_ally_on_hits: dict[str, Callable] = {}
+_ally_damage_reductions: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -342,6 +364,73 @@ def severity_increase(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_severity_increases, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def damage_die_reroll(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that re-rolls individual dice of a damage roll just made.
+
+    Signature: `(holder, sides, result, fight) -> bool` - whether the die that
+    came up `result` on a d`sides` should be rolled again. The Blade card Not
+    Good Enough ("when you roll your damage dice, you can reroll any 1s or 2s")
+    is the reason it exists.
+
+    **None of the three damage hooks next door can say this.** `damage_bonus`
+    moves the total, `extra_damage` adds dice, `damage_pool` reshapes the pool
+    before anything is thrown - and all three run *before* the dice are read.
+    This one is asked afterwards, per die, which is the only place a rule about
+    the number showing on a die can be answered.
+
+    **Each die is offered once.** Content that says yes gets one fresh throw of
+    the same size, and the new result is not offered back - "reroll any 1s or 2s"
+    is one reroll, not a re-roll-until-happy. A die can therefore come up a 1
+    again and stay there.
+
+    The rerolled results replace the originals in the roll, so everything derived
+    from them follows: a Massive discard takes the lowest of the *new* values, and
+    the critical bonus is untouched because it is computed from the dice sizes.
+    See SIMULATION-RULES.md on the ordering.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_damage_die_rerolls, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def condition_refusal(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that can stop a condition landing on its holder at all.
+
+    Signature: `(holder, condition, fight) -> bool` - True to refuse it, so it is
+    never recorded. The condition is passed as the `Condition` record rather than
+    by name, since content may want to know who applied it. The Valor card Bold
+    Presence ("once per rest when you would gain a condition, you can avoid
+    gaining the condition") is the reason it exists.
+
+    **Distinct from `immunity` below, which cannot express it.** That hook is a
+    *standing* answer, asked wherever a condition's effect is read - the
+    Guardian's Unstoppable turns Vulnerable off for as long as it runs, and the
+    condition itself is still sitting there when it stops. This one is asked
+    once, at the moment the condition would land, and a refusal is permanent for
+    that application. Folding the two together would break Unstoppable: a
+    condition applied while it ran would never come back afterwards.
+
+    Because it is asked only when a condition would really land, **being asked is
+    the commitment** - content here can spend a per-rest use on the spot without
+    checking anything else first.
+
+    Not asked when the holder already carries a condition of that name: a refresh
+    is not gaining a condition, and charging a per-rest use for one would spend it
+    on nothing.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_condition_refusals, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -616,8 +705,13 @@ def attack_advantage(name: str, unmodelled: Iterable[str] = ()):
     after the Shadow's next attack", so it spends its token when consulted rather
     than needing to be told afterwards that the attack happened.
 
-    Only the *standard* attack consults this. A feature that rolls an attack of
-    its own passes whatever state it means to roll in, which is usually none.
+    Only the *standard* attack consults this - on **both sides of the table**.
+    For an adversary that is the stat block's printed attack; for a PC it is the
+    weapon swing, which is why `items/weapons.py` folds this in alongside the
+    hobbles it already asks about. Content that rolls an attack of its own passes
+    whatever state it means to roll in, which is usually none, so a card like
+    Reckless reaches a swing and not a Grimoire spell - declared as a gap where
+    it registers.
     """
 
     def register(function: Callable) -> Callable:
@@ -1069,6 +1163,74 @@ def on_hit(name: str, unmodelled: Iterable[str] = ()):
     return register
 
 
+def ally_on_hit(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that responds to *any* party member's landed attack.
+
+    Signature: `(holder, attacker, target, result, fight) -> None`. Scanned across
+    the conscious party rather than across whoever swung, because `holder` and
+    `attacker` are generally different PCs - the same arrangement `reroll` and
+    `force_reroll` already use for content that reaches somebody else's roll.
+
+    **Distinct from `on_hit` next door, which is holder-scoped.** That one fires
+    only for its own holder's attacks, which is right for Whirlwind: a Guardian's
+    card has no business firing off a Ranger's bow. This is for content a PC
+    *puts on* somebody else - the Book of Sitil's Parallela hangs on an ally and
+    resolves the next time **they** attack - and holder-scoping it would mean the
+    spell only ever worked when cast on yourself.
+
+    Fires on a landed attack, from the same call site as `apply_on_hit`, so
+    content here sees a hit and never a miss.
+
+    Content is expected to check for itself that the attack belongs to it -
+    usually by a token placed on the attacker when the spell was cast. Every
+    registrant is asked about every party attack.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_on_hits, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def ally_damage_reduction(name: str, unmodelled: Iterable[str] = ()):
+    """Register party content that subtracts from the raw damage a PC is taking.
+
+    Signature: `(holder, target, amount, fight, damage_type) -> int` - how much to
+    take off the number, or 0 to decline. Scanned across the conscious party,
+    since `holder` and `target` are generally different PCs: Arcana's *Rune Ward*
+    is the Wizard's trinket held by somebody else, and the ally who spends the
+    Hope is not the one whose sheet the card is on.
+
+    **The first hook that reaches the damage number itself**, and none of the
+    three next to it can say what this says. An Armor Slot and `severity_response`
+    both work in *thresholds*, moving how many HP a hit marks; `damage_multiplier`
+    scales the number but cannot subtract a flat amount. "Reduce incoming damage
+    by 1d8" is arithmetic on the raw total, and it lands **before the thresholds
+    are read** - so it can drop a hit a whole band, or below 1 and away entirely.
+
+    Applied after any resistance has halved the hit, which is the order the SRD
+    fixes for resistance ("before comparing it to their Hit Point Thresholds")
+    and the conventional one for a multiplier followed by a subtraction.
+
+    Every registrant is asked and the reductions sum. Content decides for itself
+    whether it has a claim on this particular PC - usually by a token saying who
+    is carrying the thing.
+
+    A holder-scoped twin would suit an adversary that reduces its own incoming
+    damage (the Fallen Warlord's *Faltering Armor* is written that way). Nothing
+    needs one yet, so there isn't one.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_damage_reductions, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
 def hope_die(name: str, unmodelled: Iterable[str] = ()):
     """Register content that changes the size of the Hope Die.
 
@@ -1218,6 +1380,33 @@ def insignificant_combat_effect(name: str, reason: str) -> None:
     is the user's call to make, not the assistant's.
     """
     _assess(name, Status.INSIGNIFICANT_COMBAT_EFFECT, _calling_module(), reason=reason)
+
+
+def out_of_combat_ability(name: str, reason: str) -> None:
+    """Declare that `name` is used **between** fights rather than during one.
+
+        out_of_combat_ability(
+            "A Soldier's Bond",
+            "Once per long rest, complimenting an ally gives you both 3 Hope.
+             Players don't stop mid-fight to do it; they do it between
+             encounters, so it belongs to the sequenced-encounter machinery
+             that doesn't exist yet.",
+        )
+
+    Not a dismissal. Both dismissals say the fight is unaffected - one because
+    the effect has nothing here to touch, the other because it is too small to
+    matter. This says neither: the effect is real, fully representable, and would
+    change a fight it was used in. It simply isn't used in one.
+
+    Which makes this state a **to-do list**, and the reason it must not be filed
+    as no-combat-effect. Encounters run one at a time today; the plan is to run
+    them in sequence, sharing a party's state and their rests (see
+    `combat/rest.py` and `rest-state-belongs-on-the-encounter`). When that lands,
+    everything declared here is what the party does in the gaps.
+
+    Like every assessment it is the user's call, not the assistant's.
+    """
+    _assess(name, Status.OUT_OF_COMBAT, _calling_module(), reason=reason)
 
 
 def _calling_module() -> str:
@@ -1779,9 +1968,9 @@ def remake_action_roll(roller: Holder, roll, remake: Callable, fight: Fight = No
 
     Called immediately after the roll is made and before anything reads it, so a
     replacement is indistinguishable from having rolled that way first. Content
-    that rolls its own attack should reach this through
-    `content/rolls.py`'s `make_action_roll` rather than calling `roll_duality`
-    directly - the same contract that already applies to `total_roll_bonus`.
+    that rolls its own attack is expected to offer it here, the same contract
+    that already applies to `total_roll_bonus` - each such module has a small
+    `_spellcast` helper that rolls and then hands the result straight to this.
     """
     _discover()
     for holder, offer in _party_offers(fight, _rerolls):
@@ -1846,6 +2035,45 @@ def total_extra_damage(holder: Holder, target, roll, fight=None) -> list:
     return groups
 
 
+def reroll_damage_dice(holder, roll, fight=None):
+    """Let content re-throw individual dice of a damage roll that has just landed.
+
+    Returns the roll to carry on with - a copy with the new results if anything
+    was rerolled, otherwise the roll it was given, so a caller can use the result
+    unconditionally. The same contract `remake_action_roll` keeps for the attack
+    roll, one step further down.
+
+    Every registrant is asked about every die and the answers are OR-ed, with no
+    short-circuit: being asked is what lets content that pays for a reroll know
+    it happened, and skipping the second responder once the first said yes would
+    leave it out of step. Each die is offered exactly one fresh throw.
+
+    Called wherever a *PC* rolls damage. `roll_damage` itself doesn't ask,
+    deliberately: dice/ knows nothing about content, and a `reroll_below=`
+    parameter existing because of one card is the coupling this registry is for.
+    """
+    _discover()
+    responders = [
+        found
+        for name in holder.named_features
+        if (found := _registered(_damage_die_rerolls, name)) is not None
+    ]
+    if not responders:
+        return roll
+
+    results = [list(group_results) for group_results in roll.die_results]
+    rerolled = False
+    for group, group_results in zip(roll.dice_groups, results):
+        for index, value in enumerate(group_results):
+            # Listed, not generated: every responder is asked about every die.
+            answers = [again(holder, group.sides, value, fight) for again in responders]
+            if any(answers):
+                group_results[index] = random.randint(1, group.sides)
+                rerolled = True
+
+    return replace(roll, die_results=results) if rerolled else roll
+
+
 # One spotlight per combatant per GM turn, unless content says otherwise.
 DEFAULT_ACTIVATIONS = 1
 
@@ -1877,6 +2105,40 @@ def apply_on_hit(holder: Holder, target, result, fight: Fight) -> None:
         respond = _registered(_on_hits, name)
         if respond is not None:
             respond(holder, target, result, fight)
+
+
+def party_damage_reduction(target, amount: int, fight: Fight = None, damage_type=None) -> int:
+    """How much party content takes off the damage `target` is about to suffer.
+
+    Zero unless something answers. Every registrant is asked and the answers sum,
+    since two wards on one hit each reduce it - nothing in the SRD says otherwise
+    and taking only the largest would be inventing a rule.
+
+    Called from `PlayerCharacter.take_damage`, after any resistance and before
+    the thresholds are read. Never floored here: the caller clamps the damage,
+    because "reduced below zero" and "reduced to zero" are the same hit.
+    """
+    _discover()
+    total = 0
+    for holder, reduce in _party_offers(fight, _ally_damage_reductions):
+        total += reduce(holder, target, amount, fight, damage_type)
+    return total
+
+
+def apply_ally_on_hit(attacker, target, result, fight: Fight = None) -> None:
+    """Let party content respond to a landed attack made by *anyone* in the party.
+
+    The party-wide counterpart of `apply_on_hit`, called from the same place and
+    on the same trigger. Everything registered is asked; content decides for
+    itself whether this particular attack is one it has a claim on.
+
+    Note the scope is the *conscious* party, so a caster who has gone down stops
+    maintaining what they cast. That falls out of `_party_offers` rather than
+    being a rule anyone wrote, and it is the sensible reading of a held spell.
+    """
+    _discover()
+    for holder, respond in _party_offers(fight, _ally_on_hits):
+        respond(holder, attacker, target, result, fight)
 
 
 def soften_damage(
@@ -2101,6 +2363,25 @@ def harden_damage(
         if respond is not None:
             hp_to_mark = respond(character, amount, hp_to_mark, fight, damage_type)
     return hp_to_mark
+
+
+def refuses_condition(holder, condition, fight=None) -> bool:
+    """Whether anything `holder` carries stops `condition` landing at all.
+
+    False unless something says otherwise, and the first refusal wins - once a
+    condition has been refused there is nothing left for a second piece of content
+    to refuse, and asking on would charge two per-rest uses for one dodge.
+
+    One call site, in `FightState.apply_condition`, which is what makes "when you
+    would gain a condition" a moment content can be asked about. See
+    `condition_refusal` for why this is not `is_immune_to`.
+    """
+    _discover()
+    for name in holder.named_features:
+        refuse = _registered(_condition_refusals, name)
+        if refuse is not None and refuse(holder, condition, fight):
+            return True
+    return False
 
 
 def is_immune_to(holder: Holder, condition: str, fight=None) -> bool:

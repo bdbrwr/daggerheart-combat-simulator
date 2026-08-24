@@ -1,29 +1,71 @@
-"""Tests for the two implemented domain cards.
+"""Tests for the Blade and Valor domain cards.
 
-Both are damage responses, which makes them easy to test honestly: damage of a
-chosen size goes in, and the HP it marks comes out. No dice are involved in any
-of this except the death move, which the cases here stay clear of unless
-they're testing it.
+The two oldest are damage responses, which makes them easy to test honestly:
+damage of a chosen size goes in, and the HP it marks comes out. No dice are
+involved in those except the death move, which the cases here stay clear of
+unless they're testing it. The later ones reach a roll, and stay deterministic by
+constructing the result they need or by giving the target a Difficulty of 1 so
+that whether the attack landed is never what a case turns on.
 
 The rules readings these pin down are the ones the card modules document as
 choices rather than as SRD text - that Get Back Up triggers on the damage amount
-and so stacks with an Armor Slot, and that I Am Your Shield swaps the target
-before the attack is rolled. If either reading changes, these are the tests that
-should fail.
+and so stacks with an Armor Slot, that I Am Your Shield swaps the target before
+the attack is rolled, that Not Good Enough rerolls each die once and before any
+discard, and that a critical is not a success with Hope. If any of those change,
+these are the tests that should fail.
+
+The shared Stress rule is pinned here too, since every card costing a Stress asks
+it rather than deciding for itself.
 
 Cards are tested through the dispatch functions the rest of the codebase calls,
-plus one case through combat/policy.py to prove that call site is wired up.
+plus a case each through combat/policy.py and items/weapons.py to prove those
+call sites are wired up.
 """
 
+import random
+from unittest.mock import patch
+
+from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.policy import _shield
 from combat.state import FightState
-from content import find_guard, find_severity_response, find_shielder
-from domain_cards.blade import get_back_up
-from domain_cards.valor import i_am_your_shield
+from content import (
+    Status,
+    assess,
+    find_guard,
+    find_severity_response,
+    find_shielder,
+    granted_attack_advantage,
+    reroll_damage_dice,
+)
+from content.conditions import RESTRAINED, VULNERABLE, Condition
+from dice.common import AdvantageState
+from dice.damage import DamageRollResult, DiceGroup
+from dice.duality import DualityRollResult
+from domain_cards.blade import get_back_up, not_good_enough, reckless
+from domain_cards.valor import (
+    bold_presence,
+    forceful_push,
+    forceful_push_momentum,
+    i_am_your_shield,
+)
+from items.registry import find_weapon
+from items.weapons import attack_with
 
 GET_BACK_UP = "Get Back Up"
 I_AM_YOUR_SHIELD = "I Am Your Shield"
+NOT_GOOD_ENOUGH = "Not Good Enough"
+RECKLESS = "Reckless"
+FORCEFUL_PUSH = "Forceful Push"
+BOLD_PRESENCE = "Bold Presence"
+A_SOLDIERS_BOND = "A Soldier's Bond"
+
+# The default sheet names a real ancestry and community, which carry content of
+# their own. That's fine for the damage-response cases above, which measure HP;
+# it isn't for a case counting Hope or Stress to the point, since a rider that
+# spends either would land in the same total. These blank both out for the same
+# reason the defaults blank out the class and subclass.
+NOTHING_ELSE = dict(ancestry="Unwritten Ancestry", community="Unwritten Community")
 
 
 def _make_character(**overrides) -> PlayerCharacter:
@@ -69,14 +111,21 @@ def test_cards_are_discovered_without_being_registered_by_hand():
     assert find_guard(I_AM_YOUR_SHIELD) is i_am_your_shield
 
 
-def test_an_unimplemented_card_is_skipped_rather_than_an_error():
-    """A loadout may name cards nobody has written yet."""
-    assert find_severity_response("Rune Ward") is None
+def test_a_card_that_registered_no_such_hook_is_skipped_rather_than_an_error():
+    """A lookup asks one hook table, and most content isn't in it.
+
+    Whirlwind is implemented and is not a guard; a name nobody has written is in
+    no table at all. Both have to come back None rather than raising, because a
+    sheet is allowed to carry either.
+    """
+    assert find_severity_response("A Card Nobody Has Written") is None
     assert find_guard("Whirlwind") is None
 
 
 def test_a_pc_carrying_an_unimplemented_card_still_takes_damage_normally():
-    character = _make_character(domain_cards_loadout=["Not Good Enough", "Whirlwind"])
+    character = _make_character(
+        domain_cards_loadout=["A Card Nobody Has Written", "Whirlwind"]
+    )
 
     assert character.take_damage(12) == 3
 
@@ -154,12 +203,36 @@ def test_get_back_up_keeps_its_last_stress_when_the_hit_is_survivable():
     assert character.is_vulnerable is False
 
 
-def test_get_back_up_spends_its_last_stress_to_stay_conscious():
-    """Going Vulnerable beats going down - the fight continues either way."""
+def test_get_back_up_holds_its_last_stress_even_against_a_hit_that_drops_them():
+    """The behaviour the shared Stress rule changed, pinned deliberately.
+
+    This card used to pay whenever the hit would put the PC down. It now asks
+    `will_spend_stress` like every other Stress cost, which releases the last
+    slot only at 2 or fewer unmarked HP - and 3 unmarked HP against a 3 HP hit
+    is exactly the case that falls outside it.
+    """
     character = _make_character(domain_cards_loadout=[GET_BACK_UP], stress_max=2, hp_max=3)
     character.mark_stress(1)
 
-    assert character.take_damage(12) == 2
+    assert character.take_damage(12) == 3
+    assert character.stress_marked == 1
+    assert character.is_conscious is False
+
+
+def test_get_back_up_spends_its_last_stress_once_the_pc_is_near_death():
+    """At 2 or fewer unmarked HP the last slot is released, per the shared rule.
+
+    Armor is on so the reduction has somewhere to land: 3 HP, less one for the
+    free slot, less one for the card, leaves the PC standing on their last HP.
+    """
+    character = _make_character(
+        domain_cards_loadout=[GET_BACK_UP], stress_max=2, hp_max=6, armor_max=1
+    )
+    character.mark_stress(1)
+    character.mark_hp(4)  # 2 unmarked - near death
+
+    assert character.take_damage(12) == 1
+    assert character.stress_marked == 2
     assert character.is_vulnerable is True
     assert character.is_conscious is True
 
@@ -216,6 +289,404 @@ def test_a_solo_pc_is_never_shielded_by_themselves():
 
     assert find_shielder(alone, [alone]) is None
     assert alone.stress_marked == 0
+
+
+# --- The shared Stress rule --------------------------------------------------
+#
+# `will_spend_stress` is one rule for every PC Stress cost: freely, except the
+# last slot, which waits until 2 or fewer HP are unmarked. Every card below asks
+# it rather than deciding for itself, so it is pinned here once.
+
+
+def test_a_pc_spends_stress_freely_while_a_slot_remains():
+    character = _make_character(stress_max=3)
+
+    assert character.will_spend_stress(1) is True
+    character.mark_stress(1)
+    assert character.will_spend_stress(1) is True
+
+
+def test_a_pc_holds_their_last_stress_slot_while_healthy():
+    character = _make_character(stress_max=3, hp_max=7)
+    character.mark_stress(2)
+
+    assert character.can_spend_stress(1) is True  # able
+    assert character.will_spend_stress(1) is False  # unwilling
+
+
+def test_a_pc_releases_their_last_stress_slot_when_near_death():
+    character = _make_character(stress_max=3, hp_max=7)
+    character.mark_stress(2)
+    character.mark_hp(5)  # 2 unmarked
+
+    assert character.is_near_death is True
+    assert character.will_spend_stress(1) is True
+
+
+def test_a_cost_bigger_than_the_pool_is_refused_outright():
+    character = _make_character(stress_max=2)
+
+    assert character.will_spend_stress(3) is False
+
+
+def test_a_multi_slot_cost_is_measured_at_the_last_slot_it_would_mark():
+    """Two slots free and a cost of two lands on the last one, so the rule bites."""
+    character = _make_character(stress_max=3, hp_max=7)
+    character.mark_stress(1)
+
+    assert character.will_spend_stress(2) is False
+    character.mark_hp(5)
+    assert character.will_spend_stress(2) is True
+
+
+def test_spending_stress_is_not_itself_gated_on_wanting_to():
+    """`spend_stress` is the payment; whether to pay is the caller's decision."""
+    character = _make_character(stress_max=2, hp_max=7)
+    character.mark_stress(1)
+
+    assert character.will_spend_stress(1) is False
+    assert character.spend_stress(1) is True
+    assert character.stress_marked == 2
+
+
+# --- Not Good Enough ---------------------------------------------------------
+
+
+def _damage_roll(die_results, sides=6, **overrides) -> DamageRollResult:
+    """A damage roll with dice already showing what a case needs them to show."""
+    defaults = dict(
+        dice_groups=[DiceGroup(count=len(die_results), sides=sides)],
+        die_results=[list(die_results)],
+        modifier=0,
+    )
+    defaults.update(overrides)
+    return DamageRollResult(**defaults)
+
+
+def test_not_good_enough_rerolls_ones_and_twos_and_leaves_the_rest():
+    character = _make_character(domain_cards_loadout=[NOT_GOOD_ENOUGH])
+    roll = _damage_roll([1, 2, 3, 6])
+
+    with patch("content.registry.random.randint", return_value=5):
+        rerolled = reroll_damage_dice(character, roll, None)
+
+    assert rerolled.die_results == [[5, 5, 3, 6]]
+
+
+def test_a_reroll_replaces_the_roll_rather_than_mutating_it():
+    """Roll results are frozen dataclasses; the original has to survive intact."""
+    character = _make_character(domain_cards_loadout=[NOT_GOOD_ENOUGH])
+    roll = _damage_roll([1, 6])
+
+    with patch("content.registry.random.randint", return_value=4):
+        rerolled = reroll_damage_dice(character, roll, None)
+
+    assert roll.die_results == [[1, 6]]
+    assert rerolled.die_results == [[4, 6]]
+    assert rerolled.total == 10
+
+
+def test_a_die_is_offered_one_reroll_and_not_a_second():
+    """A rerolled 2 that comes up a 1 stays a 1 - reroll, not reroll-until-happy."""
+    character = _make_character(domain_cards_loadout=[NOT_GOOD_ENOUGH])
+    roll = _damage_roll([2])
+
+    with patch("content.registry.random.randint", return_value=1) as thrown:
+        rerolled = reroll_damage_dice(character, roll, None)
+
+    assert rerolled.die_results == [[1]]
+    assert thrown.call_count == 1
+
+
+def test_a_roll_with_nothing_to_reroll_comes_back_unchanged():
+    character = _make_character(domain_cards_loadout=[NOT_GOOD_ENOUGH])
+    roll = _damage_roll([3, 4, 5])
+
+    assert reroll_damage_dice(character, roll, None) is roll
+
+
+def test_a_pc_without_the_card_keeps_every_die():
+    character = _make_character(domain_cards_loadout=[])
+    roll = _damage_roll([1, 1, 1])
+
+    assert reroll_damage_dice(character, roll, None) is roll
+
+
+def test_the_card_answers_for_itself_whatever_die_it_is_asked_about():
+    character = _make_character()
+
+    assert not_good_enough(character, 12, 2, None) is True
+    assert not_good_enough(character, 4, 3, None) is False
+
+
+def test_a_reroll_happens_before_a_massive_discard_takes_the_lowest():
+    """The discard is derived from the results, so it sees the new values."""
+    character = _make_character(domain_cards_loadout=[NOT_GOOD_ENOUGH])
+    roll = _damage_roll([1, 4, 6], drop_lowest=1)
+
+    with patch("content.registry.random.randint", return_value=5):
+        rerolled = reroll_damage_dice(character, roll, None)
+
+    assert rerolled.dropped == [4]  # not the 1, which is now a 5
+    assert rerolled.rolled_total == 11
+
+
+# --- Reckless ----------------------------------------------------------------
+
+
+def _make_adversary(**overrides) -> Adversary:
+    defaults = dict(
+        name="Test Adversary",
+        tier=1,
+        # Trivial on purpose: these cases are about what a card does on a hit,
+        # not about whether the attack landed.
+        difficulty=1,
+        major_threshold=100,
+        severe_threshold=200,
+        hp_max=50,
+        stress_max=3,
+        attack_modifier=0,
+        damage_dice=[DiceGroup(count=1, sides=4)],
+        damage_modifier=0,
+    )
+    defaults.update(overrides)
+    return Adversary(**defaults)
+
+
+def _fight(party, adversaries) -> FightState:
+    return FightState(
+        encounter_name="test", party=list(party), adversaries=list(adversaries)
+    )
+
+
+def test_reckless_marks_a_stress_for_advantage():
+    character = _make_character(domain_cards_loadout=[RECKLESS], stress_max=3)
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+
+    assert reckless(character, adversary, fight) is AdvantageState.ADVANTAGE
+    assert character.stress_marked == 1
+
+
+def test_reckless_declines_on_the_last_slot_while_the_pc_is_healthy():
+    character = _make_character(domain_cards_loadout=[RECKLESS], stress_max=2, hp_max=7)
+    character.mark_stress(1)
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+
+    assert reckless(character, adversary, fight) is None
+    assert character.stress_marked == 1
+
+
+def test_reckless_reaches_a_weapon_swing_through_dispatch():
+    """Nothing in items/weapons.py knows this card; it asks the hook."""
+    character = _make_character(domain_cards_loadout=[RECKLESS], stress_max=3)
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+
+    assert granted_attack_advantage(character, adversary, fight) is AdvantageState.ADVANTAGE
+    assert character.stress_marked == 1
+
+
+def test_a_reckless_pc_rolls_their_swing_with_advantage():
+    character = _make_character(
+        domain_cards_loadout=[RECKLESS], stress_max=3, **NOTHING_ELSE
+    )
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+
+    random.seed(11)
+    result = attack_with(character, find_weapon("Broadsword"), adversary, fight=fight)
+
+    assert result.attack_roll.advantage_state is AdvantageState.ADVANTAGE
+    assert character.stress_marked == 1
+
+
+# --- Forceful Push -----------------------------------------------------------
+
+
+def test_forceful_push_hits_and_leaves_the_target_vulnerable():
+    character = _make_character(
+        domain_cards_loadout=[FORCEFUL_PUSH], hope_max=6, **NOTHING_ELSE
+    )
+    character.gain_hope(3)
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+
+    random.seed(3)
+    result = forceful_push(character, adversary, fight)
+
+    assert result.damage_roll is not None
+    assert fight.has_condition(adversary, VULNERABLE) is True
+    assert character.hope_marked == 2
+
+
+def test_forceful_push_keeps_its_hope_when_the_target_is_already_vulnerable():
+    character = _make_character(
+        domain_cards_loadout=[FORCEFUL_PUSH], hope_max=6, **NOTHING_ELSE
+    )
+    character.gain_hope(3)
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+    fight.apply_condition(adversary, Condition(name=VULNERABLE))
+
+    random.seed(3)
+    forceful_push(character, adversary, fight)
+
+    assert character.hope_marked == 3
+
+
+def test_forceful_push_keeps_its_hope_with_none_banked():
+    character = _make_character(
+        domain_cards_loadout=[FORCEFUL_PUSH], hope_max=6, **NOTHING_ELSE
+    )
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+
+    random.seed(3)
+    forceful_push(character, adversary, fight)
+
+    assert fight.has_condition(adversary, VULNERABLE) is False
+
+
+def test_forceful_push_declines_for_a_pc_carrying_no_weapon():
+    character = _make_character(domain_cards_loadout=[FORCEFUL_PUSH], primary_weapon="")
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+
+    assert forceful_push(character, adversary, fight) is None
+
+
+def _duality(hope: int, fear: int, difficulty: int = 5) -> DualityRollResult:
+    return DualityRollResult(
+        hope_die_result=hope,
+        fear_die_result=fear,
+        modifier=0,
+        advantage_state=AdvantageState.NONE,
+        advantage_die_result=None,
+        help_dice_results=None,
+        difficulty=difficulty,
+    )
+
+
+def test_the_extra_die_rides_a_success_with_hope():
+    character = _make_character(domain_cards_loadout=[FORCEFUL_PUSH])
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+    fight.set_token(character, "Forceful Push in flight", 1)
+
+    dice = forceful_push_momentum(character, adversary, _duality(10, 4), fight)
+
+    assert [(group.count, group.sides) for group in dice] == [(1, 6)]
+    assert dice[0].discardable is False
+
+
+def test_the_extra_die_does_not_ride_a_success_with_fear():
+    character = _make_character(domain_cards_loadout=[FORCEFUL_PUSH])
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+    fight.set_token(character, "Forceful Push in flight", 1)
+
+    assert forceful_push_momentum(character, adversary, _duality(4, 10), fight) == []
+
+
+def test_the_extra_die_does_not_ride_a_critical():
+    """A crit is its own outcome, not a success with Hope - the standing reading."""
+    character = _make_character(domain_cards_loadout=[FORCEFUL_PUSH])
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+    fight.set_token(character, "Forceful Push in flight", 1)
+
+    assert forceful_push_momentum(character, adversary, _duality(7, 7), fight) == []
+
+
+def test_the_extra_die_never_rides_an_ordinary_swing():
+    """Without the token this is any other attack, and the card adds nothing."""
+    character = _make_character(domain_cards_loadout=[FORCEFUL_PUSH])
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+
+    assert forceful_push_momentum(character, adversary, _duality(10, 4), fight) == []
+
+
+def test_the_token_is_cleared_once_the_push_resolves():
+    character = _make_character(domain_cards_loadout=[FORCEFUL_PUSH])
+    adversary = _make_adversary()
+    fight = _fight([character], [adversary])
+
+    random.seed(3)
+    forceful_push(character, adversary, fight)
+
+    assert fight.token_count(character, "Forceful Push in flight") == 0
+
+
+# --- Bold Presence -----------------------------------------------------------
+
+
+def test_bold_presence_refuses_the_first_condition_that_would_land():
+    character = _make_character(domain_cards_loadout=[BOLD_PRESENCE])
+    fight = _fight([character], [])
+
+    fight.apply_condition(character, Condition(name=VULNERABLE))
+
+    assert fight.has_condition(character, VULNERABLE) is False
+
+
+def test_bold_presence_only_dodges_once_per_rest():
+    character = _make_character(domain_cards_loadout=[BOLD_PRESENCE])
+    fight = _fight([character], [])
+
+    fight.apply_condition(character, Condition(name=VULNERABLE))
+    fight.apply_condition(character, Condition(name=RESTRAINED))
+
+    assert fight.has_condition(character, VULNERABLE) is False
+    assert fight.has_condition(character, RESTRAINED) is True
+
+
+def test_a_refresh_of_a_condition_already_held_is_not_a_dodge():
+    """"When you would gain a condition" - a PC who already has it isn't gaining one."""
+    character = _make_character(domain_cards_loadout=[BOLD_PRESENCE])
+    fight = _fight([character], [])
+    fight.conditions[(id(character), RESTRAINED)] = Condition(name=RESTRAINED)
+
+    fight.apply_condition(character, Condition(name=RESTRAINED))
+
+    assert fight.has_condition(character, RESTRAINED) is True
+    assert fight.can_use_once_per_rest(character, BOLD_PRESENCE) is True
+
+
+def test_a_pc_without_the_card_gains_the_condition():
+    character = _make_character(domain_cards_loadout=[])
+    fight = _fight([character], [])
+
+    fight.apply_condition(character, Condition(name=VULNERABLE))
+
+    assert fight.has_condition(character, VULNERABLE) is True
+
+
+def test_bold_presence_declines_outside_a_fight():
+    """The per-rest use lives on the fight, so there is nothing to spend."""
+    character = _make_character(domain_cards_loadout=[BOLD_PRESENCE])
+
+    assert bold_presence(character, Condition(name=VULNERABLE), None) is False
+
+
+# --- Assessed, but used between fights ---------------------------------------
+
+
+def test_a_soldiers_bond_is_recorded_as_an_out_of_combat_ability():
+    """Not a dismissal: it is the to-do list for sequenced encounters."""
+    assessment = assess(A_SOLDIERS_BOND)
+
+    assert assessment.status is Status.OUT_OF_COMBAT
+    assert assessment.reason  # a state that records a decision has to say why
+
+
+def test_out_of_combat_content_is_neither_dismissed_nor_missing():
+    assessment = assess(A_SOLDIERS_BOND)
+
+    assert assessment.status.is_dismissed is False
+    assert assessment.status is not Status.UNIMPLEMENTED
 
 
 def test_the_card_reports_whether_it_stepped_in():

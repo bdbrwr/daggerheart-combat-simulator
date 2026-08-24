@@ -11,21 +11,26 @@ makes an encounter look easier rather than harder. Both sides are printed for
 that reason: the two errors point in opposite directions, and a reader who can
 only see one has no idea which way a number is wrong.
 
-Four states per named thing, from content/registry.py:
+Five states per named thing, from content/registry.py:
 
   * modelled          - code runs it (possibly with declared gaps)
   * no effect         - assessed and dismissed: it cannot change a fight
   * insignificant     - assessed and dismissed: it could, by too little to model
+  * out of combat     - assessed: real, but used between fights rather than in
+                        one. Waiting on sequenced encounters
   * unimplemented     - nobody has looked at it yet
 
-The distinction the report exists to make is between the dismissals and the last
-one. A dismissal costs the results nothing, because somebody looked and said so.
+The distinction the report exists to make is between everything assessed and the
+last one. An assessment costs the results nothing that nobody has looked at.
 "Unimplemented" costs them something nobody has measured, which is why it is the
 only state that prints a warning.
 
 The two dismissals are kept apart because they are different claims - "this
 cannot matter" versus "this matters by about a point of damage" - and a reader
-deciding how far to trust a win rate should be able to see which was made.
+deciding how far to trust a win rate should be able to see which was made. "Out
+of combat" is a third claim again and not a dismissal at all: the effect is real
+and would change a fight, it just never happens inside one. It prints only when
+a combatant has any, since most carry none.
 
 ## How much of it prints
 
@@ -160,15 +165,21 @@ def _for_combatant(name, assessments, excluded, detail, width) -> list[str]:
     modelled = _with_status(assessments, Status.MODELLED)
     dismissed = _with_status(assessments, Status.NO_COMBAT_EFFECT)
     minor = _with_status(assessments, Status.INSIGNIFICANT_COMBAT_EFFECT)
+    between = _with_status(assessments, Status.OUT_OF_COMBAT)
     missing = _with_status(assessments, Status.UNIMPLEMENTED)
 
     # The modelled count is the one figure that says what *is* running, so it
-    # only appears at FULL. The other three are the point of the summary.
+    # only appears at FULL. The rest are the point of the summary.
     counted = f"{len(modelled)} modelled  " if detail is CoverageDetail.FULL else ""
+
+    # Appended rather than always present, because a fixed sixth column would
+    # push the line past WIDTH for the sake of a zero on almost every combatant.
+    # It goes last so the columns before it still line up across the block.
+    also = f"  {len(between)} out of combat" if between else ""
     lines = [
         f"    {name:<{width}}{counted}"
         f"{len(dismissed)} no effect  {len(minor)} insignificant  "
-        f"{len(missing)} unimplemented"
+        f"{len(missing)} unimplemented{also}"
     ]
 
     if missing:
@@ -184,6 +195,12 @@ def _for_combatant(name, assessments, excluded, detail, width) -> list[str]:
         lines.append(_detail("no effect", _described(assessment)))
     for assessment in minor:
         lines.append(_detail("insignificant", _described(assessment)))
+
+    # Named with its reason for the same reason the dismissals are, but making a
+    # different claim: not "this costs you nothing" but "this happens between
+    # fights, and there is nowhere yet for it to happen".
+    for assessment in between:
+        lines.append(_detail("out of combat", _described(assessment)))
 
     # Gaps hang off content that *is* modelled - a partial implementation saying
     # what it left out. They belong with the modelled half, so they print at FULL

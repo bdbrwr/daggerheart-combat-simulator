@@ -15,6 +15,7 @@ from combat.common import Side
 from combat.rest import Rest
 from content.conditions import HIDDEN, VULNERABLE, Condition
 from content.names import canonical
+from content.registry import refuses_condition
 
 # Per the SRD the GM can hold up to 12 Fear at once. Fear generated past the
 # cap is simply lost, which matters for balance: a party that rolls badly for
@@ -315,7 +316,21 @@ class FightState:
         Replacing rather than stacking: nothing in the SRD makes being Vulnerable
         twice worse than once, and a re-application refreshes how long it lasts,
         which is what the later of two overlapping effects should do.
+
+        **Content the holder carries can refuse it outright** - the Valor card
+        Bold Presence shrugs one off per rest - so this is the moment "when you
+        would gain a condition" happens, and the only place it can be asked.
+        Asked generically; nothing here knows what any such content is.
+
+        A refresh is *not* gaining a condition, so a holder who already carries
+        one of that name is never offered the refusal. Otherwise a once-per-rest
+        dodge would be spent on a Vulnerable the PC already had.
         """
+        if not self.has_condition(holder, condition.name) and refuses_condition(
+            holder, condition, self
+        ):
+            self.note(f"{holder.name} shrugs off {condition.name}")
+            return
         self.conditions[(id(holder), condition.name)] = condition
 
     def has_condition(self, holder, name: str) -> bool:
