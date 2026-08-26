@@ -22,6 +22,7 @@ from pathlib import Path
 
 from content import (
     apply_on_damaged,
+    extra_armor_slots,
     harden_damage,
     party_damage_reduction,
     resistance_to,
@@ -476,7 +477,10 @@ class PlayerCharacter:
         with no type is never reduced - see `content/damage_types.py`.
 
         Armor goes first so a card is never asked to spend a resource on a hit
-        the free slot already absorbed. Content that *worsens* a hit is asked
+        the free slot already absorbed. Content that marks *additional* Armor
+        Slots is asked inside that same step, since "when you mark an Armor Slot"
+        is its trigger and there is nothing for a second slot to be additional to
+        otherwise. Content that *worsens* a hit is asked
         last, through `harden_damage`, so that "when you mark HP" is measured
         against what the hit finally costs rather than what it started at.
         Nothing on the PC side registers there yet; the call is here so both
@@ -518,6 +522,22 @@ class PlayerCharacter:
         if not direct and self.should_mark_armor_slot():
             self.mark_armor_slot(1)
             hp_to_mark = max(hp_to_mark - 1, 0)
+
+            # And content that marks *further* slots off the back of that one -
+            # the Bone card Brace, which pays a Stress for a second. Asked here
+            # rather than beside the severity hooks below, because the card's
+            # trigger is literally "when you mark an Armor Slot": inside this
+            # branch is the only place that has happened. So direct damage never
+            # reaches it, and neither does a hit on a PC with no slots free.
+            #
+            # Clamped to what is actually left, so content asking for more slots
+            # than the PC has cannot mark negative HP. Nothing here knows what
+            # any of it is.
+            wanted = extra_armor_slots(self, amount, hp_to_mark, fight, kind)
+            marked_extra = min(max(wanted, 0), self.armor_unmarked)
+            if marked_extra:
+                self.mark_armor_slot(marked_extra)
+                hp_to_mark = max(hp_to_mark - marked_extra, 0)
 
         hp_to_mark = soften_damage(self, amount, hp_to_mark, fight, kind)
         hp_to_mark = harden_damage(self, amount, hp_to_mark, fight, kind)

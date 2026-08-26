@@ -322,7 +322,7 @@ def test_the_spirit_costs_its_hope_even_on_a_miss():
         help_dice_results=None,
         difficulty=99,
     )
-    with patch("domain_cards.midnight.roll_duality", return_value=missed):
+    with patch("content.spellcast.roll_duality", return_value=missed):
         result = midnight_spirit(caster, adversary, state)
 
     assert result.damage_roll is None

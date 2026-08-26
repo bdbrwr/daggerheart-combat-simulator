@@ -33,13 +33,16 @@ from content import (
     DamagePool,
     adjust_damage_pool,
     remake_action_roll,
+    total_ally_extra_damage,
     total_extra_damage,
     total_roll_bonus,
 )
+from content.help import help_with_roll
 from content.registry import (
     apply_before_attacked,
     apply_on_attacked,
     granted_attack_advantage,
+    maximise_damage_dice,
     party_attack_is_hobbled,
     reroll_damage_dice,
 )
@@ -144,6 +147,12 @@ def attack_with(
     # content for a roll bonus is the commitment, so several of them spend Hope
     # or mark Stress on being asked. A reroll re-makes the dice, not the
     # decisions that fed them - evaluating this twice would charge for it twice.
+    # An ally spending a Hope to help, which is a party move rather than anything
+    # the attacker carries - see `content/help.py`. Asked here, outside the
+    # closure, for the reason the modifier is worked out here: being asked is the
+    # commitment, and the helper's Hope is spent on being consulted.
+    help_offered = help_with_roll(attacker, fight)
+
     modifier = (
         # Indexed, not `.get(..., 0)`: the catalogue already validated the
         # trait against the six real ones and sheets lowercase their trait
@@ -152,6 +161,10 @@ def attack_with(
         attacker.traits[weapon.trait]
         + bonus
         + total_roll_bonus(attacker, target, fight, names=weapon.named_features)
+        # Content the *helper* carries - the Bone card Tactician lends one of its
+        # own Experiences. A flat add, so it folds in here rather than into the
+        # help pool, which resolves to its single best die.
+        + help_offered.bonus
     )
 
     def roll():
@@ -160,6 +173,7 @@ def attack_with(
             difficulty=target.difficulty,
             advantage_state=advantage_state,
             hope_die=hope_die,
+            help_dice=help_offered.dice,
         )
 
     # Content that can re-make a resolved roll gets its say before anything
@@ -171,9 +185,15 @@ def attack_with(
     if not attack_roll.is_success:
         return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
-    # The weapon's own pool first, reshaped by its own features - this is where
-    # Massive and Powerful roll their extra die and discard the lowest, and the
-    # discard is theirs alone, reaching only the dice the weapon rolled.
+    # Content the *character* carries that changes the shape of the pool before
+    # the weapon's own features see it - Splendor's Voice of Reason adds a
+    # Proficiency die while all its holder's Stress is marked. Asked holder-wide,
+    # the same way `total_roll_bonus` is asked twice: once for the holder and
+    # once for the weapon.
+    #
+    # Before the weapon's own features rather than after, because a Proficiency
+    # bonus really is one more of the *weapon's* dice - so a Massive discard
+    # should see the bumped pool and take the lowest of all of them.
     pool = adjust_damage_pool(
         attacker,
         weapon,
@@ -183,7 +203,13 @@ def attack_with(
             modifier=weapon.damage_modifier,
         ),
         fight,
-        names=weapon.named_features,
+    )
+
+    # Then the weapon's own features - this is where Massive and Powerful roll
+    # their extra die and discard the lowest, and the discard is theirs alone,
+    # reaching only the dice the weapon rolled.
+    pool = adjust_damage_pool(
+        attacker, weapon, pool, fight, names=weapon.named_features
     )
 
     # Then content the *character* carries that adds dice conditional on how the
@@ -192,6 +218,12 @@ def attack_with(
     # a Greatstaff's Powerful has no business throwing away a Wizard's die.
     dice_groups = list(pool.dice_groups)
     dice_groups += total_extra_damage(attacker, target, attack_roll, fight)
+
+    # And dice another PC's content hangs on the *target* rather than on whoever
+    # is swinging - Midnight's Chokehold pays out for anyone who attacks the
+    # creature it has hold of. Joins the same roll, so it crosses the target's
+    # thresholds once, exactly as the holder-scoped dice above do.
+    dice_groups += total_ally_extra_damage(attacker, target, attack_roll, fight)
 
     damage_roll = roll_damage(
         dice_groups=dice_groups,
@@ -207,6 +239,12 @@ def attack_with(
     # roll is. The discard, if the weapon has one, takes the lowest of whatever
     # this leaves - `dropped` is derived from the results rather than stored.
     damage_roll = reroll_damage_dice(attacker, damage_roll, fight)
+
+    # And content that buys the top face of one die outright - the Blade card
+    # Versatile Fighter, which marks a Stress for it. After the reroll rather
+    # than before, so a die Not Good Enough has already rescued is judged on what
+    # it now shows and the Stress goes to whatever is still worst.
+    damage_roll = maximise_damage_dice(attacker, damage_roll, fight)
 
     # Typed off the weapon, which is where the SRD prints it - a Broadsword deals
     # physical damage and a Greatstaff magic - so a target's resistance is

@@ -13,10 +13,26 @@ Grace is the talking domain, and at levels 1-2 most of it is talking: three of
 the five cards resolve rolls the simulator never makes. What is left are the two
 that reach across the table - one fixing an adversary's attention, one making it
 mark Stress for being provoked.
+
+Level 3 changes the shape of the domain, and both cards brought a condition with
+them. **Hypnotic Shimmer** applies *Stunned*, which was the last of the SRD's
+named conditions with no representation here at all - and like Cinder Grasp's On
+Fire, the card prints the whole rule, so nothing had to be invented.
+**Invisibility** applies *Invisible*, which the page spells out as the thing
+Hidden had to be ruled to be worth.
 """
 
 from combat.results import AttackResult
-from content.conditions import ENRAPTURED, Condition, when_the_gm_pays
+from content.aoe import Range, area_difficulty, targets_beaten, targets_in_area
+from content.conditions import (
+    ENRAPTURED,
+    INVISIBLE,
+    STUNNED,
+    WHEN_THEY_ACT,
+    Condition,
+    when_the_gm_pays,
+)
+from content.help import help_with_roll
 from content.registry import (
     Fight,
     Holder,
@@ -25,11 +41,29 @@ from content.registry import (
     hope_die_for,
     no_combat_effect,
     out_of_combat_ability,
-    remake_action_roll,
-    total_roll_bonus,
 )
+from content.spellcast import spellcast
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import roll_duality
+
+HYPNOTIC_SHIMMER = "Hypnotic Shimmer"
+
+# The same floor Fire Flies and Rain of Blades use: a once-per-rest area spell
+# aimed at a single adversary is a spotlight spent for less than a weapon swing.
+SHIMMER_WORTH_IT = 2
+
+INVISIBILITY = "Invisibility"
+
+# Printed on the card - Invisibility rolls against a flat 10 rather than against
+# anybody's Difficulty, since it targets a willing creature.
+INVISIBILITY_DIFFICULTY = 10
+
+# Who is currently Invisible, as a token on the caster - the card holds on one
+# creature at a time, so a second cast has to find the first gone.
+INVISIBILITY_HELD = "Invisibility held"
+
+# How many actions the invisible creature has left, as a token on them.
+INVISIBILITY_TOKENS = "Invisibility actions"
 
 # --- Enrapture ---------------------------------------------------------------
 
@@ -73,7 +107,7 @@ def enrapture(caster: Holder, target, fight: Fight) -> AttackResult | None:
     if fight.has_condition(target, ENRAPTURED):
         return None
 
-    attack_roll = _spellcast(caster, target, fight)
+    attack_roll = spellcast(caster, target, fight)
     if attack_roll is None:
         return None
 
@@ -166,7 +200,7 @@ def troublemaker(caster: Holder, target, fight: Fight) -> AttackResult | None:
     if not fight.can_use_once_per_rest(caster, TROUBLEMAKER):
         return None
 
-    attack_roll = _spellcast(caster, target, fight, trait=trait)
+    attack_roll = spellcast(caster, target, fight, trait=trait)
     if attack_roll is None:
         return None
 
@@ -184,33 +218,200 @@ def troublemaker(caster: Holder, target, fight: Fight) -> AttackResult | None:
     return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
 
-# --- Shared ------------------------------------------------------------------
+# --- Hypnotic Shimmer --------------------------------------------------------
 
 
-def _spellcast(caster: Holder, target, fight: Fight, trait: str = ""):
-    """An action roll against a target's Difficulty, or None if we can't make one.
+@action(
+    HYPNOTIC_SHIMMER,
+    unmodelled=[
+        "'in front of you within Close range' - no positions are tracked, so "
+        "the area rule in SIMULATION-RULES.md decides how many are caught and "
+        "nothing distinguishes what is in front of the caster from what is "
+        "behind them",
+        "Stunned's 'they can't use reactions' - only the acting half is "
+        "modelled. An adversary's Reaction features fire from a dozen dispatch "
+        "points rather than from the spotlight, so gating them would mean a "
+        "check at every one",
+    ],
+)
+def hypnotic_shimmer(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Hypnotic Shimmer (Grace, level 3).
 
-    `trait` names which of the caster's traits to roll, defaulting to their
-    Spellcast trait - Troublemaker rolls Presence instead, which is why this copy
-    of the helper takes the argument and the other modules' don't.
+    SRD: make a Spellcast Roll against all adversaries in front of you within
+    Close range. Once per rest on a success, create an illusion of flashing
+    colors and lights that temporarily Stuns targets you succeed against and
+    forces them to mark a Stress. While Stunned, they can't use reactions and
+    can't take any other actions until they clear this condition.
 
-    A sheet that names no trait to roll declines rather than guessing, so
-    unusable content shows up as content that never fires rather than as content
-    that quietly fires with the wrong number.
+    **The card prints what Stunned does**, which is why the condition is modelled
+    rather than standing in for something. Stunned was the last of the SRD's
+    named conditions with no representation here; every other one had to be ruled
+    on because the book gives it a name and nothing else, and this one arrives
+    with its own rule exactly as Cinder Grasp's On Fire did.
+
+    A Stunned adversary **loses its spotlight and the Fear that bought it** - the
+    activation is spent and nothing happens, which is the Green Ooze's `Slow`
+    shape. That is read generically off `Condition.prevents_action`, so nothing
+    in the fight loop knows this card or this condition exists.
+
+    "Until they clear this condition" is the standing reading for a condition the
+    party puts on an adversary: it lifts when the GM spends a Fear on their turn.
+    So the card poses the GM the same question Cinder Grasp does, and it costs
+    them either way - a Fear, or an activation.
+
+    The roll is made **against the whole area at once**, each adversary checked
+    against its own Difficulty - the Fire Flies shape.
+
+    SIMULATION RULE - policy. Declines below two adversaries in the area, the
+    same floor Fire Flies and Rain of Blades use. The per-rest use is checked
+    before the roll and claimed after it, so declining costs nothing and a failed
+    cast still spends the card - "once per rest on a success" gates the payoff
+    rather than the attempt, which is the reading Troublemaker already takes.
     """
-    rolling = trait or getattr(caster, "spellcast_trait", "")
-    if not rolling or rolling not in caster.traits:
+    if not fight.can_use_once_per_rest(caster, HYPNOTIC_SHIMMER):
         return None
 
-    modifier = caster.traits[rolling] + total_roll_bonus(caster, target, fight)
-    hope_die = hope_die_for(caster, fight)
+    area = targets_in_area(Range.CLOSE, fight.living_adversaries)
+    if len(area) < SHIMMER_WORTH_IT:
+        return None
 
-    def roll():
-        return roll_duality(
-            modifier=modifier, difficulty=target.difficulty, hope_die=hope_die
+    attack_roll = spellcast(caster, target, fight, difficulty=area_difficulty(area))
+    if attack_roll is None:
+        return None
+
+    fight.use_once_per_rest(caster, HYPNOTIC_SHIMMER)
+
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    dazzled = targets_beaten(attack_roll, area)
+    for adversary in dazzled:
+        fight.apply_condition(
+            adversary,
+            Condition(
+                name=STUNNED,
+                end=when_the_gm_pays,
+                source=caster,
+                prevents_action=True,
+            ),
         )
+        adversary.mark_stress(1)
 
-    return remake_action_roll(caster, roll(), roll, fight)
+    if dazzled:
+        fight.note(
+            f"{caster.name}'s shimmer Stuns {len(dazzled)}, each marking a Stress"
+        )
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+# --- Invisibility ------------------------------------------------------------
+
+
+@action(
+    INVISIBILITY,
+    unmodelled=[
+        "'an ally within Melee range' - no positions are tracked, so any "
+        "conscious PC can be reached",
+        "An Invisible creature not being *seen* - only the mechanical half is "
+        "modelled, which is that attack rolls against them have Disadvantage. "
+        "Focus fire still picks its target the same way, so being invisible "
+        "never takes somebody off the GM's list. The same gap Cloaked declares",
+    ],
+)
+def invisibility(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Invisibility (Grace, level 3).
+
+    SRD: make a Spellcast Roll (10). On a success, mark a Stress and choose
+    yourself or an ally within Melee range to become Invisible. An Invisible
+    creature can't be seen except through magical means and attack rolls against
+    them are made with disadvantage. Place tokens equal to your Spellcast trait
+    on this card; the invisible creature spends one when they take an action, and
+    the effect ends after the action that spends the last. Only one creature at a
+    time.
+
+    **The card spells out what Invisible is worth** - "attack rolls against them
+    are made with disadvantage" - which is precisely what Hidden had to be ruled
+    to be worth. So the two are one effect under two names here, and
+    `content/conditions.py` keeps the list rather than either reader branching.
+
+    SIMULATION RULE - policy, ruled. It goes to the **frailest conscious PC,
+    the caster included** - whoever has the least unmarked HP. That is Rune
+    Ward's rule minus its never-the-caster clause, which was there because a ward
+    is a trinket you hand somebody; this is a spell you can just as well cast on
+    yourself, and the card says so.
+
+    Declines while the spell is already held on somebody, since the card can only
+    hold it on one creature at a time and re-casting would buy nothing.
+
+    A caster whose Spellcast trait is zero or less places no tokens and so has
+    nothing to hold the spell up, and declines rather than casting for nothing -
+    the same reading Unleash Chaos takes of a dice count drawn from a trait.
+    """
+    trait = getattr(caster, "spellcast_trait", "")
+    if not trait or trait not in caster.traits:
+        return None
+
+    duration = caster.traits[trait]
+    if duration <= 0:
+        return None
+    if not caster.can_spend_stress(1):
+        return None
+    if fight.token_count(caster, INVISIBILITY_HELD):
+        return None
+
+    subject = min(fight.conscious_party, key=lambda pc: pc.hp_unmarked)
+
+    helped = help_with_roll(caster, fight)
+    roll = roll_duality(
+        modifier=caster.traits[trait] + helped.bonus,
+        difficulty=INVISIBILITY_DIFFICULTY,
+        hope_die=hope_die_for(caster, fight),
+        help_dice=helped.dice,
+    )
+    if not roll.is_success:
+        return AttackResult(attack_roll=roll, damage_roll=None)
+
+    caster.spend_stress(1)
+    fight.set_token(caster, INVISIBILITY_HELD, 1)
+    # One extra when the caster hid *themselves*, because the loop announces
+    # `WHEN_THEY_ACT` for them immediately after this spotlight - the casting is
+    # an action they took, and without the spare token a Spellcast trait of 1
+    # would end the spell before the GM ever got a turn. Casting it on an ally
+    # needs no such allowance: the ally's own next action is the first to spend
+    # one.
+    spare = 1 if subject is caster else 0
+    fight.set_token(subject, INVISIBILITY_TOKENS, duration + spare)
+    fight.apply_condition(
+        subject,
+        Condition(name=INVISIBLE, end=_invisibility_runs_out, source=caster),
+    )
+    fight.note(
+        f"{caster.name} turns {subject.name} Invisible for {duration} action(s)"
+    )
+    return AttackResult(attack_roll=roll, damage_roll=None)
+
+
+def _invisibility_runs_out(holder, fight: Fight, moment: str) -> bool:
+    """One token per action the invisible creature takes; ends on the last.
+
+    "After the action that spends the last token is resolved, the effect ends" -
+    and `WHEN_THEY_ACT` is announced *after* the action resolves, so the action
+    that spends the last token is still made unseen. That is the same ordering
+    On Fire relies on for "at the end of their action".
+
+    The caster's hold is released here too, so the spell can be cast again.
+    """
+    if moment != WHEN_THEY_ACT:
+        return False
+
+    fight.spend_tokens(holder, INVISIBILITY_TOKENS, 1)
+    if fight.token_count(holder, INVISIBILITY_TOKENS) > 0:
+        return False
+
+    spell = fight.condition_on(holder, INVISIBLE)
+    if spell is not None and spell.source is not None:
+        fight.set_token(spell.source, INVISIBILITY_HELD, 0)
+    return True
 
 
 # --- Assessed rather than built ----------------------------------------------

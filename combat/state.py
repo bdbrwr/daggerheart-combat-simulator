@@ -13,7 +13,7 @@ from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.common import Side
 from combat.rest import Rest
-from content.conditions import HIDDEN, VULNERABLE, Condition
+from content.conditions import UNSEEN, VULNERABLE, Condition
 from content.names import canonical
 from content.registry import refuses_condition
 
@@ -91,6 +91,23 @@ class FightState:
     # half damage "while spotlighted this way", and nothing else can tell that
     # activation apart from the ally's own.
     acting_free: Adversary | None = None
+
+    # Whoever is taking a spotlight *right now*, free or paid, or None. Set by
+    # the GM turn around every activation, so it is None for the whole of a PC's
+    # spotlight and between activations.
+    #
+    # It exists because damage arrives at a PC with no idea who threw it -
+    # `take_damage` carries an amount and a type and nothing else - and content
+    # that responds to being hit sometimes has to know. Arcana's Counterspell
+    # rolls against the attacker's own Difficulty, and there is no other way to
+    # reach it: threading an attacker through `take_damage` would change that
+    # signature on both sides of the table and in every stand-in that implements
+    # the Target protocol.
+    #
+    # None is an answer, not a gap. Damage arriving while nothing is spotlighted
+    # is the party's own - On Fire burning whoever is carrying it - and content
+    # asking about an adversary should decline rather than guess at one.
+    spotlighted: Adversary | None = None
 
     # Spotlights content has *used up* on somebody other than whoever is acting,
     # during the current GM turn. The mirror of `granted`, cleared with it. A
@@ -449,11 +466,34 @@ class FightState:
         than on the combatants: a PC doesn't know which fight it is in, and an
         adversary knows nothing about conditions at all.
 
-        One source, unlike Vulnerable's two - nothing is Hidden by the rules the
-        way a PC with every Stress marked is Vulnerable, so this is only ever
-        content having applied it.
+        Nothing is Hidden by the rules the way a PC with every Stress marked is
+        Vulnerable, so this is only ever content having applied it.
+
+        **Two condition names, one effect.** The SRD prints Hidden and Invisible
+        separately and they come to the same thing here - Grace's *Invisibility*
+        says "attack rolls against them are made with disadvantage", which is
+        precisely what Hidden was ruled to be worth. They stay two names so a
+        report says which card fired, and `content/conditions.py`'s `UNSEEN`
+        holds the list, so this reader never grows a branch.
         """
-        return self.has_condition(combatant, HIDDEN)
+        return any(self.has_condition(combatant, name) for name in UNSEEN)
+
+    def cannot_act(self, combatant) -> bool:
+        """Whether a condition currently stops `combatant` acting at all.
+
+        Read off `Condition.prevents_action` rather than by name, so nothing here
+        or in the loop knows that Stunned is what answers - and a second such
+        condition would need no change.
+
+        The activation is still spent when this is true, and the Fear it cost is
+        still gone. That is deliberate and it is the whole weight of the thing:
+        the GM turn charges before an adversary is asked what it does, exactly as
+        it does for the Green Ooze's `Slow`.
+        """
+        return any(
+            holder_id == id(combatant) and condition.prevents_action
+            for (holder_id, _), condition in self.conditions.items()
+        )
 
     def searchable_condition(self, combatant):
         """The condition on `combatant` that somebody could spend a roll to end.

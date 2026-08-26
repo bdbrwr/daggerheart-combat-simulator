@@ -3,25 +3,37 @@
 Card text is paraphrased in each docstring rather than quoted in full. The
 verbatim text is in .reference/abilities.json, checked against the printed page
 (SRD p. 132).
+
+Splendor is the restoring domain, and at level 3 both cards give something back:
+one off a landed attack, one off having nothing left to give. Voice of Reason is
+the first card anywhere that turns **on** when its holder is out of Stress, which
+is also the moment they become Vulnerable.
 """
 
+import random
+from dataclasses import replace
+
 from combat.results import AttackResult
+from content.aoe import Range, targets_in_area
 from content.conditions import VULNERABLE, Condition, when_the_gm_pays
 from content.damage_types import DamageType
+from content.help import help_with_roll
 from content.registry import (
+    DamagePool,
     Fight,
     Holder,
     action,
+    damage_pool,
     hope_die_for,
     no_combat_effect,
+    on_hit,
     out_of_combat_ability,
-    remake_action_roll,
     reroll,
     total_extra_damage,
-    total_roll_bonus,
 )
+from content.spellcast import spellcast
 from dice.damage import DiceGroup, roll_damage
-from dice.duality import roll_duality
+from dice.duality import DualityOutcome, roll_duality
 
 HEALING_HANDS_DIFFICULTY = 13
 
@@ -29,6 +41,13 @@ BOLT_BEACON_DIE = 8
 BOLT_BEACON_MODIFIER = 2
 
 REASSURANCE = "Reassurance"
+
+SECOND_WIND = "Second Wind"
+VOICE_OF_REASON = "Voice of Reason"
+
+# Second Wind clears exactly this much Stress, and the clearing-in-full rule
+# means it takes the Hit Point instead when that many aren't marked.
+SECOND_WIND_STRESS = 3
 
 # Only worth a spotlight's roll once an ally is genuinely in trouble. Healing
 # somebody at full HP spends the party's tempo on nothing.
@@ -70,10 +89,14 @@ def healing_hands(caster: Holder, target, fight: Fight) -> AttackResult | None:
     if not fight.use_once_per_rest(caster, f"Healing Hands:{patient.name}", long=True):
         return None
 
+    # Asked only once every decline above has passed, so an ally never pays a
+    # Hope toward a heal that isn't happening.
+    helped = help_with_roll(caster, fight)
     roll = roll_duality(
-        modifier=caster.traits[trait],
+        modifier=caster.traits[trait] + helped.bonus,
         difficulty=HEALING_HANDS_DIFFICULTY,
         hope_die=hope_die_for(caster, fight),
+        help_dice=helped.dice,
     )
     caster.spend_stress(1)
     cleared = 2 if roll.is_success else 1
@@ -95,35 +118,6 @@ def _who_needs_it(caster: Holder, fight: Fight):
     if not allies:
         return None
     return min(allies, key=lambda pc: pc.hp_unmarked)
-
-
-def _spellcast(caster: Holder, target, fight: Fight):
-    """A Spellcast Roll against a target's Difficulty, or None if we can't make one.
-
-    The third copy of this helper - `domain_cards/codex.py` and
-    `domain_cards/sage.py` each have one, and they have already drifted apart
-    once. Worth pulling into one shared place; kept per-module for now because
-    that is the convention the other two set.
-
-    A sheet that names no `spellcast_trait` declines rather than guessing, so
-    unusable content shows up as content that never fires rather than as content
-    that quietly fires with the wrong number.
-    """
-    trait = getattr(caster, "spellcast_trait", "")
-    if not trait or trait not in caster.traits:
-        return None
-
-    # Worked out outside the closure: asking content for a roll bonus is the
-    # commitment, so a reroll re-makes the dice and not the decisions behind them.
-    modifier = caster.traits[trait] + total_roll_bonus(caster, target, fight)
-    hope_die = hope_die_for(caster, fight)
-
-    def roll():
-        return roll_duality(
-            modifier=modifier, difficulty=target.difficulty, hope_die=hope_die
-        )
-
-    return remake_action_roll(caster, roll(), roll, fight)
 
 
 @action(
@@ -158,7 +152,7 @@ def bolt_beacon(caster: Holder, target, fight: Fight) -> AttackResult | None:
     if not caster.can_spend_hope(1):
         return None
 
-    attack_roll = _spellcast(caster, target, fight)
+    attack_roll = spellcast(caster, target, fight)
     if attack_roll is None:
         return None
 
@@ -221,6 +215,134 @@ def reassurance(holder: Holder, roller, roll, remake, fight: Fight):
 
     fight.note(f"{holder.name} steadies {roller.name}, who tries again")
     return remake()
+
+
+# --- Second Wind -------------------------------------------------------------
+
+
+@on_hit(
+    SECOND_WIND,
+    unmodelled=[
+        "'an ally within Close range' - no positions are tracked, so the area "
+        "rule in SIMULATION-RULES.md decides who is close enough to catch the "
+        "second half",
+        "A success on an action roll that isn't an attack - the on-hit hook only "
+        "sees an attack that landed, and the card says 'succeed on an attack'",
+    ],
+)
+def second_wind(attacker: Holder, target, result, fight: Fight) -> None:
+    """Second Wind (Splendor, level 3).
+
+    SRD: "Once per rest, when you succeed on an attack against an adversary, you
+    can clear 3 Stress or a Hit Point. On a success with Hope, you also clear 3
+    Stress or a Hit Point on an ally within Close range of you."
+
+    SIMULATION RULE - policy, ruled. **3 Stress whenever 3 are marked, otherwise
+    the Hit Point.** The Stress is the bigger clear and the number the card is
+    priced around, and taking it only at 3 is the standing clearing-in-full rule:
+    a feature that clears a named quantity is used when it can clear all of it.
+
+    A PC with neither 3 Stress nor a marked HP gains nothing, so the per-rest use
+    is checked first and claimed only once somebody will actually be restored.
+
+    The second half rides `DualityOutcome.HOPE` specifically. A **critical is not
+    "with Hope"** - it is its own outcome with the two dice matched, which is the
+    reading Face Your Fear and Forceful Push's momentum die already take.
+
+    Which ally is random among those in range who would gain something, which is
+    the standing rule for a choice with none of its own. Picking the worst-off
+    would be scoring the party.
+    """
+    if fight is None or result.attack_roll is None:
+        return
+    if not result.attack_roll.is_success:
+        return
+    if not fight.can_use_once_per_rest(attacker, SECOND_WIND):
+        return
+
+    reached = []
+    if getattr(result.attack_roll, "outcome", None) is DualityOutcome.HOPE:
+        allies = [pc for pc in fight.conscious_party if pc is not attacker]
+        reached = [
+            ally for ally in targets_in_area(Range.CLOSE, allies) if _restorable(ally)
+        ]
+
+    if not _restorable(attacker) and not reached:
+        return
+
+    fight.use_once_per_rest(attacker, SECOND_WIND)
+    if _restorable(attacker):
+        _second_wind_restores(attacker, fight)
+    if reached:
+        _second_wind_restores(random.choice(reached), fight)
+
+
+def _restorable(pc: Holder) -> bool:
+    """Whether Second Wind would actually clear anything on this PC."""
+    return pc.stress_marked >= SECOND_WIND_STRESS or pc.hp_marked > 0
+
+
+def _second_wind_restores(pc: Holder, fight: Fight) -> None:
+    """Clear the 3 Stress if they are all there, otherwise a Hit Point."""
+    if pc.stress_marked >= SECOND_WIND_STRESS:
+        pc.clear_stress(SECOND_WIND_STRESS)
+        fight.note(f"{pc.name} catches their second wind, clearing "
+                   f"{SECOND_WIND_STRESS} Stress")
+    else:
+        pc.clear_hp(1)
+        fight.note(f"{pc.name} catches their second wind, clearing an HP")
+
+
+# --- Voice of Reason ---------------------------------------------------------
+
+
+@damage_pool(
+    VOICE_OF_REASON,
+    unmodelled=[
+        "'Advantage on action rolls to de-escalate violent situations or "
+        "convince someone to follow your lead' - the simulator makes attack "
+        "rolls, Spellcast Rolls and Reaction Rolls and never rolls to talk "
+        "anybody down, so there is no roll for the advantage to land on",
+        "Damage rolled by anything other than a weapon. Several cards roll "
+        "Proficiency dice of their own - Bolt Beacon's d8+2, Corrosive "
+        "Projectile's d6+4 - and none of them consults the damage-pool hook, so "
+        "the bonus reaches weapon swings only",
+    ],
+)
+def voice_of_reason(
+    holder: Holder, weapon, pool: DamagePool, fight: Fight = None
+) -> DamagePool:
+    """Voice of Reason (Splendor, level 3), second clause.
+
+    SRD: "You're emboldened in moments of duress. When all of your Stress slots
+    are marked, you gain a +1 bonus to your Proficiency for damage rolls."
+
+    Proficiency is the *count* of damage dice a weapon rolls, so +1 Proficiency
+    is one more of the weapon's own dice - which is why this reshapes the pool
+    rather than adding a die through `extra_damage`. The extra die is
+    **discardable**, unlike a die a feature lends to somebody else's roll: it is
+    one of the weapon's dice in every sense the SRD uses, so a Massive or
+    Powerful discard is entitled to throw it away.
+
+    No policy to rule on. The card has no cost and no limit and states its own
+    trigger exactly - every Stress slot marked - so it is on whenever that is
+    true and off whenever it isn't.
+
+    Worth noting what the trigger coincides with rather than what it is worth: a
+    PC with every Stress marked is **Vulnerable** by the rules, so every roll
+    against them has Advantage at the same moment this turns on. The two are
+    worth reading together when the numbers come in.
+    """
+    if holder.stress_marked < holder.stress_max:
+        return pool
+    if not pool.dice_groups:
+        return pool
+
+    groups = list(pool.dice_groups)
+    groups[0] = replace(groups[0], count=groups[0].count + 1)
+    if fight is not None:
+        fight.note(f"{holder.name} is emboldened; +1 Proficiency on the damage")
+    return pool._replace(dice_groups=groups)
 
 
 out_of_combat_ability(

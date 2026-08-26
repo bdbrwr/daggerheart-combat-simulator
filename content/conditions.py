@@ -39,8 +39,17 @@ they are still On Fire at the end of their action" - so unlike the conditions
 that arrive with only a name, this one came with its own mechanic and nothing had
 to be invented. The burn rides `Condition.effect` at `WHEN_THEY_ACT`.
 
-The rest of the SRD's conditions - Stunned - have no representation at all and
-nothing applies one yet.
+**Stunned**, which stops its holder acting at all, and **Invisible**, which is
+Hidden's effect under the SRD's own second name for it. Both arrived with Grace's
+level 3 cards, and both were modelled for On Fire's reason: the card applying
+each one prints what it does. *Hypnotic Shimmer* spells out "they can't use
+reactions and can't take any other actions", and *Invisibility* spells out
+"attack rolls against them are made with disadvantage".
+
+With those two in, **every condition the SRD names now has a representation
+here.** What is still declared as a gap is one clause of Stunned - "can't use
+reactions" - since an adversary's Reaction features fire from a dozen dispatch
+points rather than from the spotlight.
 
 ## Why `end` is a callable
 
@@ -100,6 +109,31 @@ ENRAPTURED = "Enraptured"
 # before an action roll. How much it burns for belongs to whoever lit the fire,
 # not here - Cinder Grasp's is 2d6 magic, and a future card's may not be.
 ON_FIRE = "On Fire"
+
+# **Invisible**, which the SRD prints as its own condition and which comes to
+# exactly what Hidden comes to here: "attack rolls against them are made with
+# disadvantage", which is Grace's *Invisibility* spelling out on its own card the
+# thing Hidden had to be ruled. Kept as a separate name rather than folded into
+# HIDDEN so a report says which one a combatant is under - a card called
+# Invisibility announcing "Hidden" reads as the wrong card having fired.
+INVISIBLE = "Invisible"
+
+# The conditions that make rolls against their holder Disadvantaged. Two names,
+# one effect, and the list lives here so `FightState.is_hidden` stays a single
+# generic reader rather than growing a branch per condition name.
+UNSEEN = (HIDDEN, INVISIBLE)
+
+# **Stunned**, which stops its holder acting at all. The last of the SRD's named
+# conditions to have no representation here, and it is modelled for exactly the
+# reason On Fire is: the card that applies it prints the whole rule. Grace's
+# *Hypnotic Shimmer* says "while Stunned, they can't use reactions and can't take
+# any other actions until they clear this condition", so nothing had to be
+# invented.
+#
+# Read through `Condition.prevents_action` rather than by name, so the fight loop
+# never learns this word - and so a future condition that also stops somebody
+# acting needs no new branch.
+STUNNED = "Stunned"
 
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to
@@ -163,6 +197,17 @@ class Condition:
     disadvantage_on: tuple[str, ...] = ()
     source: object | None = None
     found_by: tuple[str, int] | None = None
+
+    # Whether this condition stops its holder acting at all. Data rather than a
+    # callable, for `disadvantage_on`'s reason: it isn't something that *happens*
+    # at an announced moment but a standing fact about whether a spotlight can be
+    # spent, read where that is decided (`combat/policy.py`). Stunned is the
+    # first and only user.
+    #
+    # The activation is still spent and the Fear it cost is still gone - the GM
+    # turn charges before an adversary is asked what it does, which is the same
+    # weight the Green Ooze's `Slow` carries.
+    prevents_action: bool = False
 
 
 def when_they_act(holder, fight, moment: str) -> bool:

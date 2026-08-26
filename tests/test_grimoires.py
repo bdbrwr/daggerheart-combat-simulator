@@ -10,6 +10,14 @@ against a whole area at once (Wild Flame), and a spell one PC hangs on another
 that resolves when *they* attack (Parallela). The second is the reason
 `ally_on_hit` exists, so the cases here reach it through dispatch rather than
 calling the rider directly wherever they can.
+
+**A Spellcast Roll is patched through `content.spellcast`.** Every domain module
+used to carry its own `_spellcast` helper and its own `roll_duality` import; they
+now share `content/spellcast.py`, which is where the call lives. This is worth
+stating because Splendor is the case where getting it wrong is *quiet*: it still
+imports `roll_duality` for Healing Hands, so patching `domain_cards.splendor`
+succeeds, reaches nothing, and the test fails on an assertion about real dice
+rather than on a missing attribute.
 """
 
 import random
@@ -636,7 +644,10 @@ def test_a_missed_bolt_beacon_keeps_its_hope():
     target = _make_adversary()
     state = _state([caster], [target])
 
-    with patch("domain_cards.splendor.roll_duality", return_value=_roll_that(False)):
+    # Patched through `content.spellcast`, which is where a Spellcast Roll is now
+    # made. Splendor still imports `roll_duality` for Healing Hands, so patching
+    # it *there* would succeed and reach nothing - see the module docstring.
+    with patch("content.spellcast.roll_duality", return_value=_roll_that(False)):
         result = bolt_beacon(caster, target, state)
 
     assert result.damage_roll is None

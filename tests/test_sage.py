@@ -4,6 +4,14 @@ Both implemented cards make or respond to rolls, so the dice are patched and
 what's under test is the decision-making around them: when a card fires, what it
 costs, and what it drains from the GM.
 
+**The Spellcast Roll is patched through `content.spellcast`**, not through this
+module. Every domain module used to carry its own `_spellcast` helper and so its
+own `roll_duality` import; they now share `content/spellcast.py`, which is where
+the call lives. Patching `domain_cards.sage.roll_duality` raises, which is the
+good failure - Splendor kept a `roll_duality` import for Healing Hands, so the
+same mistake there patches a name nothing calls and the test fails on an
+assertion instead.
+
 Restraining isn't tracked, so Vicious Entangle's Restrains are Fear off the GM's
 pool per SIMULATION-RULES.md - which makes the Fear count the thing to assert on.
 """
@@ -112,7 +120,7 @@ def test_entangle_deals_damage_and_drains_a_fear_for_the_restrain():
     fight = _fight(ranger, [adversary], fear=3)
 
     with (
-        patch("domain_cards.sage.roll_duality", return_value=HIT),
+        patch("content.spellcast.roll_duality", return_value=HIT),
         patch("domain_cards.sage.roll_damage", return_value=_damage(6)),
     ):
         result = vicious_entangle(ranger, adversary, fight)
@@ -128,7 +136,7 @@ def test_a_missed_entangle_costs_the_gm_nothing():
     fight = _fight(ranger, [adversary], fear=3)
 
     with (
-        patch("domain_cards.sage.roll_duality", return_value=MISS),
+        patch("content.spellcast.roll_duality", return_value=MISS),
         patch("domain_cards.sage.roll_damage") as mock_roll_damage,
     ):
         result = vicious_entangle(ranger, adversary, fight)
@@ -145,7 +153,7 @@ def test_a_hope_buys_a_second_restrain_and_a_second_fear():
     fight = _fight(ranger, [first, second], fear=3)
 
     with (
-        patch("domain_cards.sage.roll_duality", return_value=HIT),
+        patch("content.spellcast.roll_duality", return_value=HIT),
         patch("domain_cards.sage.roll_damage", return_value=_damage(6)),
     ):
         vicious_entangle(ranger, first, fight)
@@ -160,7 +168,7 @@ def test_no_hope_is_spent_with_nobody_else_to_restrain():
     fight = _fight(ranger, [adversary], fear=3)
 
     with (
-        patch("domain_cards.sage.roll_duality", return_value=HIT),
+        patch("content.spellcast.roll_duality", return_value=HIT),
         patch("domain_cards.sage.roll_damage", return_value=_damage(6)),
     ):
         vicious_entangle(ranger, adversary, fight)
@@ -175,7 +183,7 @@ def test_no_hope_is_spent_when_the_gm_has_no_fear_left_to_take():
     fight = _fight(ranger, [first, second], fear=0)
 
     with (
-        patch("domain_cards.sage.roll_duality", return_value=HIT),
+        patch("content.spellcast.roll_duality", return_value=HIT),
         patch("domain_cards.sage.roll_damage", return_value=_damage(6)),
     ):
         vicious_entangle(ranger, first, fight)
@@ -296,7 +304,7 @@ def test_fire_flies_hits_everything_it_reaches_and_costs_one_hope():
     )
 
     with (
-        patch("domain_cards.sage.roll_duality", return_value=HIT),
+        patch("content.spellcast.roll_duality", return_value=HIT),
         patch("domain_cards.sage.roll_damage", return_value=damage) as mock_roll_damage,
     ):
         result = fire_flies(ranger, crowd[0], fight)
@@ -325,7 +333,7 @@ def test_fire_flies_is_rolled_against_the_area_and_resolved_per_target():
     )
 
     with (
-        patch("domain_cards.sage.roll_duality", return_value=HIT) as mock_roll_duality,
+        patch("content.spellcast.roll_duality", return_value=HIT) as mock_roll_duality,
         patch("domain_cards.sage.roll_damage", return_value=damage),
     ):
         result = fire_flies(ranger, hard, fight)
@@ -353,7 +361,7 @@ def test_fire_flies_spends_no_hope_when_the_roll_beat_nobody():
     fight = _fight(ranger, crowd)
 
     with (
-        patch("domain_cards.sage.roll_duality", return_value=MISS),
+        patch("content.spellcast.roll_duality", return_value=MISS),
         patch("domain_cards.sage.roll_damage") as mock_roll_damage,
     ):
         result = fire_flies(ranger, crowd[0], fight)

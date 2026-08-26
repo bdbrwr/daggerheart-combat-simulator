@@ -7,24 +7,35 @@ live here - nothing outside this package should ever need editing to add one.
 Card text is paraphrased in each docstring rather than quoted in full, so a
 mismatch between the code and the rule is easy to spot while debugging. The
 verbatim text is in .reference/abilities.json, checked against the printed page
-(SRD p. 122).
+(SRD pp. 122-123).
 
 Bone is the Evasion domain, and three of its five level 1-2 cards are about not
 being hit. That turned out to be the interesting thing: Evasion is a number a
 character sheet carries already resolved, and until *Ferocity* nothing could
 change it once a fight had started.
+
+Level 3 adds the two cards that reach *other* people's rolls and other people's
+armor: Tactician is the first content anywhere that belongs to a PC helping
+somebody else, and Brace is the first that spends more than the one free Armor
+Slot the damage rule already marks.
 """
 
 from content.registry import (
     Fight,
     Holder,
     evasion_bonus,
+    extra_armor_slot,
     extra_damage,
+    help_bonus,
     insignificant_combat_effect,
     no_combat_effect,
     on_hit,
 )
+from content.rolls import EXPERIENCE_HOPE_FLOOR
 from dice.damage import DiceGroup
+
+BRACE = "Brace"
+TACTICIAN = "Tactician"
 
 # --- Ferocity ----------------------------------------------------------------
 
@@ -186,6 +197,107 @@ def _prime(attacker: Holder, fight: Fight) -> None:
     if not fight.can_use_once_per_rest(attacker, STRATEGIC_APPROACH, long=True):
         return
     fight.set_token(attacker, STRATEGIC_TOKENS, max(attacker.traits["knowledge"], 1))
+
+
+# --- Brace -------------------------------------------------------------------
+
+
+@extra_armor_slot(BRACE)
+def brace(
+    holder: Holder, amount: int, hp_to_mark: int, fight: Fight = None, damage_type=None
+) -> int:
+    """Brace (Bone, level 3). Returns how many further Armor Slots to mark.
+
+    SRD: "When you mark an Armor Slot to reduce incoming damage, you can mark a
+    Stress to mark an additional Armor Slot."
+
+    Being asked at all means the first slot has already gone in - that is the
+    contract of the hook, and it is the card's trigger read literally. So this
+    never fires against direct damage, and never against a hit that arrived at a
+    PC with no slots left.
+
+    SIMULATION RULE - policy, ruled. The Stress is paid **only when the extra
+    slot would actually save an HP**, which is `hp_to_mark > 0`: the free slot
+    has already taken a band off, and if that left the hit marking nothing then
+    a second slot buys nothing either. That is the Rune Ward reading, and it
+    reads only what a player can see when they decide - the damage the GM
+    announced, and their own printed thresholds.
+
+    The `will_spend_stress` check is the shared last-slot rule, as every PC
+    Stress cost is: freely while a spare slot remains, and the last only once the
+    PC is at 2 or fewer unmarked HP.
+
+    `amount` and `damage_type` are unused - the card names neither a threshold
+    nor a type, so it answers for any hit that got past the first slot. They are
+    in the signature because the hook is generic and other content could key on
+    either.
+    """
+    if hp_to_mark <= 0:
+        return 0
+    if not holder.will_spend_stress(1):
+        return 0
+
+    holder.spend_stress(1)
+    if fight is not None:
+        fight.note(f"{holder.name} braces, marking a Stress for a second Armor Slot")
+    return 1
+
+
+# --- Tactician ---------------------------------------------------------------
+
+
+@help_bonus(
+    TACTICIAN,
+    unmodelled=[
+        "'When making a Tag Team Roll, you can roll a d20 as your Hope Die' - "
+        "Tag Team Rolls are not modelled. They cost 3 Hope, are limited to one "
+        "per player per session, and resolve *two* PCs' actions off one chosen "
+        "roll, which the spotlight loop has no shape for - a spotlight resolves "
+        "into exactly one action. A known gap rather than a dismissal",
+    ],
+)
+def tactician(helper: Holder, roller: Holder, fight: Fight = None) -> int:
+    """Tactician (Bone, level 3). Returns what the helper's Experience adds.
+
+    SRD: "When you Help an Ally, they can spend a Hope to add one of your
+    Experiences to their roll alongside your advantage die. When making a Tag
+    Team Roll, you can roll a d20 as your Hope Die."
+
+    The first clause only. Note whose Hope pays: the **roller's**, not the
+    helper's - the helper has already spent theirs on the advantage die by the
+    time this is asked, and the card charges the ally receiving the Experience.
+
+    Which Experience is the helper's best, on the same assumption
+    `combat/policy.py` makes when a PC buys their own: which Experience applies
+    to a given moment is a fiction call a simulator cannot make, so one always
+    does. That assumption is optimistic in both places, and the Hope floor below
+    is set high partly because of it.
+
+    SIMULATION RULE - policy. The roller pays only while their Hope is
+    plentiful - `EXPERIENCE_HOPE_FLOOR`, the same number that decides whether an
+    ally helps at all and whether a PC buys their own Experience. Extending the
+    user's Help an Ally ruling to the third Hope this move can cost, on their own
+    reasoning for it: one constant read everywhere rather than several that could
+    drift. Worth overruling if a Tactician should lend more freely than that.
+
+    Returns 0 rather than declining loudly when the helper has no Experiences at
+    all, which is a legal sheet.
+    """
+    if not helper.experiences:
+        return 0
+    if roller.hope_marked < EXPERIENCE_HOPE_FLOOR or not roller.can_spend_hope(1):
+        return 0
+
+    bonus = max(experience["modifier"] for experience in helper.experiences)
+    if bonus <= 0:
+        return 0
+
+    roller.spend_hope(1)
+    if fight is not None:
+        fight.note(
+            f"{roller.name} spends a Hope on {helper.name}'s Experience (+{bonus})"
+        )
+    return bonus
 
 
 # --- Assessed and dismissed --------------------------------------------------

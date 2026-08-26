@@ -6,24 +6,35 @@ live here - nothing outside this package should ever need editing to add one.
 
 Card text is paraphrased in each docstring rather than quoted in full, so a
 mismatch between the code and the rule is easy to spot while debugging. The
-verbatim text is in .reference/abilities.json.
+verbatim text is in .reference/abilities.json, checked against the printed page
+(SRD p. 134) - which also settled the level 1-2 cards below, ported before the
+printed-page check became part of the process.
 
 Cards from this domain that can't affect a fight are declared at the bottom, so
 "assessed and dismissed" never looks like "nobody has got to it yet".
+
+Valor is the one domain with no Spellcast Roll anywhere in its first three
+levels: everything here rides a weapon swing, an incoming hit, or somebody
+else's roll. That is why it needed no change when Help an Ally landed - Forceful
+Push attacks through `items/weapons.py`, which asks for help on the party's
+behalf.
 """
 
 from combat.results import AttackResult
+from content.aoe import Range, targets_in_area
 from content.conditions import VULNERABLE, Condition, when_the_gm_pays
 from content.registry import (
     Fight,
     Holder,
     action,
+    ally_on_roll,
     condition_refusal,
     damage_bonus,
     extra_damage,
     guard,
     hope_die_for,
     no_combat_effect,
+    on_hit,
     total_damage_bonus,
     total_roll_bonus,
 )
@@ -32,6 +43,14 @@ from dice.damage import DiceGroup
 from dice.duality import DualityOutcome
 
 FORCEFUL_PUSH = "Forceful Push"
+
+CRITICAL_INSPIRATION = "Critical Inspiration"
+
+LEAN_ON_ME = "Lean on Me"
+
+# Lean on Me clears exactly this much on each of the two PCs, and the
+# clearing-in-full rule means it only fires when both have that much marked.
+LEAN_ON_ME_STRESS = 2
 
 # Marks the swing Forceful Push is making, so the card's own conditional die
 # joins *that* damage roll and not an ordinary attack the same PC makes later.
@@ -277,6 +296,126 @@ def bold_presence(holder: Holder, condition, fight: Fight) -> bool:
     if fight is None:
         return False
     return fight.use_once_per_rest(holder, BOLD_PRESENCE)
+
+
+# --- Critical Inspiration ----------------------------------------------------
+
+
+@on_hit(
+    CRITICAL_INSPIRATION,
+    unmodelled=[
+        "'all allies within Very Close range' - no positions are tracked, so "
+        "the area rule in SIMULATION-RULES.md decides how many are reached. "
+        "Worth knowing what that comes to over a *party* rather than a field of "
+        "adversaries: Very Close reaches `n // 3` held to two, so in a four-PC "
+        "party one ally hears it",
+        "A critical on an action roll that isn't an attack - the on-hit hook "
+        "only sees an attack that landed, so a critical Troublemaker or "
+        "Shadowbind doesn't inspire anybody",
+    ],
+)
+def critical_inspiration(attacker: Holder, target, result, fight: Fight) -> None:
+    """Critical Inspiration (Valor, level 3).
+
+    SRD: "Once per rest, when you critically succeed on an attack, all allies
+    within Very Close range can clear a Stress or gain a Hope."
+
+    SIMULATION RULE - policy, ruled. Each ally **clears a Stress if any is
+    marked, and otherwise gains a Hope**. That is the ruling Strange Patterns
+    already got for the same choice, and for the same reason: Stress is the
+    scarcer resource here, since running out of it hands every adversary
+    Advantage for the rest of the fight, while a Hope handed to somebody with
+    nothing to clear is never wasted.
+
+    Nothing here weighs the two - each ally answers for themselves off what they
+    are carrying, which is a fact visible at the table rather than a comparison
+    anybody works out.
+
+    The per-rest use is **checked before the reach is rolled and claimed after**,
+    so a critical that reaches nobody costs nothing. It is also not claimed when
+    every ally reached would gain nothing at all - no Stress marked and Hope
+    already at its cap - since spending the one use of the fight on that would be
+    spending it on nothing.
+    """
+    if fight is None or result.attack_roll is None:
+        return
+    if not getattr(result.attack_roll, "is_critical", False):
+        return
+    if not fight.can_use_once_per_rest(attacker, CRITICAL_INSPIRATION):
+        return
+
+    allies = [pc for pc in fight.conscious_party if pc is not attacker]
+    reached = [ally for ally in targets_in_area(Range.VERY_CLOSE, allies) if _liftable(ally)]
+    if not reached:
+        return
+
+    fight.use_once_per_rest(attacker, CRITICAL_INSPIRATION)
+    for ally in reached:
+        if ally.stress_marked:
+            ally.clear_stress(1)
+            fight.note(f"{attacker.name}'s critical clears a Stress on {ally.name}")
+        else:
+            ally.gain_hope(1)
+            fight.note(f"{attacker.name}'s critical hands {ally.name} a Hope")
+
+
+def _liftable(ally: Holder) -> bool:
+    """Whether this ally would actually gain something from being inspired.
+
+    A PC with no Stress marked and their Hope already at the cap gains nothing
+    from either half of the choice. Reads only what is on their own sheet.
+    """
+    return bool(ally.stress_marked) or ally.hope_marked < ally.hope_max
+
+
+# --- Lean on Me --------------------------------------------------------------
+
+
+@ally_on_roll(
+    LEAN_ON_ME,
+    unmodelled=[
+        "The consoling itself - 'when you console or inspire an ally' is "
+        "fiction, and taken as always available. Nothing in the simulator "
+        "represents a PC choosing to speak to somebody",
+    ],
+)
+def lean_on_me(holder: Holder, roller: Holder, roll, fight: Fight) -> None:
+    """Lean on Me (Valor, level 3).
+
+    SRD: "Once per long rest, when you console or inspire an ally who failed an
+    action roll, you can both clear 2 Stress."
+
+    An **ally's** roll, never the holder's own - which is why this is registered
+    on the party-wide hook and checks `holder is not roller`. Registered
+    holder-scoped it would have fired only on the consoler's own failures, which
+    is precisely the roll the card is not about.
+
+    SIMULATION RULE - policy. The standing clearing-in-full rule applies: a
+    feature whose effect is clearing named quantities is used only when it can
+    clear **every one of them**. So both PCs need 2 Stress marked, and a card
+    with one use per long rest is never spent to clear one Stress off a pair who
+    have barely any.
+
+    `is_success is not False` rather than `not is_success`, because a roll made
+    with no Difficulty answers None - that is not a failure, and Reassurance
+    reads its trigger the same way.
+    """
+    if fight is None or holder is roller:
+        return
+    if roll is None or roll.is_success is not False:
+        return
+    if holder.stress_marked < LEAN_ON_ME_STRESS:
+        return
+    if roller.stress_marked < LEAN_ON_ME_STRESS:
+        return
+    if not fight.use_once_per_rest(holder, LEAN_ON_ME, long=True):
+        return
+
+    holder.clear_stress(LEAN_ON_ME_STRESS)
+    roller.clear_stress(LEAN_ON_ME_STRESS)
+    fight.note(
+        f"{holder.name} steadies {roller.name}; both clear {LEAN_ON_ME_STRESS} Stress"
+    )
 
 
 no_combat_effect(

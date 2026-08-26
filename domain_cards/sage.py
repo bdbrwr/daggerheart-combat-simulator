@@ -6,7 +6,13 @@ live here - nothing outside this package should ever need editing to add one.
 
 Card text is paraphrased in each docstring rather than quoted in full, so a
 mismatch between the code and the rule is easy to spot while debugging. The
-verbatim text is in .reference/abilities.json.
+verbatim text is in .reference/abilities.json, checked against the printed page
+(SRD p. 130).
+
+Corrosive Projectile at level 3 is the first card anywhere that changes an
+adversary's **Difficulty** mid-fight. It does it by writing the new number into
+the spawned stat block rather than carrying a condition, which is the same place
+`Flying (X)` resolves - see its docstring for why.
 """
 
 import random
@@ -27,44 +33,36 @@ from content.registry import (
     action,
     extra_damage,
     free,
-    hope_die_for,
     no_combat_effect,
-    remake_action_roll,
     severity_response,
     total_extra_damage,
-    total_roll_bonus,
 )
+from content.spellcast import spellcast
 from dice.damage import DiceGroup, roll_damage
-from dice.duality import roll_duality
 
+CORROSIVE_PROJECTILE = "Corrosive Projectile"
 
-def _spellcast(caster: Holder, target, fight: Fight, difficulty: int | None = None):
-    """A Spellcast Roll, or None if this caster can't make one.
+CORROSIVE_DIE = 6
+CORROSIVE_MODIFIER = 4
 
-    Rolled against `target`'s Difficulty unless one is given - an area spell is
-    rolled against the whole area at once and passes `area_difficulty` instead.
+# The SRD's minimum: "mark 2 or more Stress", worth -1 Difficulty per 2. Ruled to
+# the minimum, so one cast buys one point and the rest of the track stays for
+# everything else that wants it.
+CORRODE_STRESS = 2
+CORRODE_DIFFICULTY = 1
 
-    A sheet that names no `spellcast_trait` declines to cast rather than
-    guessing a trait, so unusable content shows up as content that never fires
-    rather than as content that quietly fires with the wrong number.
-    """
-    trait = getattr(caster, "spellcast_trait", "")
-    if not trait or trait not in caster.traits:
-        return None
+# However corroded a stat block gets, there has to be a number left to beat. A
+# Difficulty of zero would make every roll against it an automatic success, which
+# is not something the SRD ever prints.
+MINIMUM_DIFFICULTY = 1
 
-    # Both worked out outside the closure: asking for a roll bonus or a Hope Die
-    # is the commitment, and a reroll re-makes the dice rather than the decisions
-    # that fed them.
-    modifier = caster.traits[trait] + total_roll_bonus(caster, target, fight)
-    against = target.difficulty if difficulty is None else difficulty
-    hope_die = hope_die_for(caster, fight)
+TOWERING_STALK = "Towering Stalk"
 
-    def roll():
-        return roll_duality(modifier=modifier, difficulty=against, hope_die=hope_die)
+TOWERING_STALK_DIE = 8
 
-    # Offered to the reroll hook, so content that can re-make a resolved roll
-    # reaches a spell as readily as it reaches a weapon swing.
-    return remake_action_roll(caster, roll(), roll, fight)
+# The same floor Fire Flies uses, and for the same reason: an area spell aimed at
+# one adversary is a worse weapon swing bought with a resource.
+TOWERING_STALK_WORTH_IT = 2
 
 
 # --- Vicious Entangle --------------------------------------------------------
@@ -99,7 +97,7 @@ def vicious_entangle(caster: Holder, target, fight: Fight) -> AttackResult | Non
     Never declines. Unlike Slumber, this deals damage whatever the GM's pool
     looks like, so there's no state in which casting it is a wasted spotlight.
     """
-    attack_roll = _spellcast(caster, target, fight)
+    attack_roll = spellcast(caster, target, fight)
     if attack_roll is None:
         return None
 
@@ -265,7 +263,7 @@ def fire_flies(caster: Holder, target, fight: Fight) -> AttackResult | None:
     if len(area) < FIRE_FLIES_WORTH_IT:
         return None
 
-    attack_roll = _spellcast(caster, target, fight, difficulty=area_difficulty(area))
+    attack_roll = spellcast(caster, target, fight, difficulty=area_difficulty(area))
     if attack_roll is None:
         return None
 
@@ -381,6 +379,182 @@ def familiar_flanks(attacker: Holder, target, roll, fight: Fight = None) -> list
         return []
 
     return [DiceGroup(count=1, sides=FAMILIAR_DIE, discardable=False)]
+
+
+# --- Corrosive Projectile ----------------------------------------------------
+
+
+@action(
+    CORROSIVE_PROJECTILE,
+    unmodelled=[
+        "'within Far range' - no positions are tracked, so this always reaches",
+        "Stacking beyond one cast is real but arrives one point at a time: each "
+        "cast marks the printed minimum of 2 Stress for a single -1, rather "
+        "than emptying the track into one projectile",
+    ],
+)
+def corrosive_projectile(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Corrosive Projectile (Sage, level 3).
+
+    SRD: make a Spellcast Roll against a target within Far range. On a success,
+    deal d6+4 magic damage using your Proficiency. Additionally, mark 2 or more
+    Stress to make them permanently Corroded - a -1 penalty to their Difficulty
+    for every 2 Stress spent, and the condition stacks.
+
+    SIMULATION RULE - rules interpretation. **Corroded is written straight into
+    the adversary's Difficulty** rather than carried as a `Condition`. The card
+    says *permanently*, so there is nothing for an ender to do, and Difficulty is
+    read in four places that have no fight to dispatch with - `items/weapons.py`,
+    `content/aoe.py`'s `area_difficulty` and `targets_beaten`, and Hold Them Off.
+    This is the same place `Flying (X)` resolves and for the same reason: an
+    adversary in a fight is a spawned copy, so nothing leaks back into the
+    catalogue.
+
+    That also gives stacking for free - a second cast subtracts another point -
+    and it means every reader of the number is already correct without knowing
+    this card exists.
+
+    SIMULATION RULE - policy, ruled. The **printed minimum of 2 Stress**, for one
+    -1. Spending down in pairs while the shared rule allowed it was offered and
+    declined: a point of Difficulty is bought per cast and the rest of the track
+    stays available for everything else that wants a Stress.
+
+    Never declines. The spell deals its damage whether or not the Stress is
+    affordable, so there is no state in which casting it is a wasted spotlight -
+    the corrosion is an extra the caster pays for afterwards if they can.
+    """
+    attack_roll = spellcast(caster, target, fight)
+    if attack_roll is None:
+        return None
+
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=caster.proficiency, sides=CORROSIVE_DIE)]
+        + total_extra_damage(caster, target, attack_roll, fight),
+        modifier=CORROSIVE_MODIFIER,
+        is_critical=attack_roll.is_critical,
+    )
+    marked = target.take_damage(damage_roll.total, fight, damage_type=DamageType.MAGIC)
+    fight.note(
+        f"{caster.name} hits {target.name} with a corrosive projectile "
+        f"for {damage_roll.total}"
+    )
+
+    _corrode(caster, target, fight)
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
+def _corrode(caster: Holder, target, fight: Fight) -> None:
+    """Mark the Stress to take a point off the target's Difficulty, if worth it.
+
+    Skipped against a target the hit just defeated - it is off the field, so a
+    permanent penalty on it is permanently worth nothing. That is a state the
+    party can see rather than a statistic anyone works out, the same skip
+    Forceful Push makes for a target already Vulnerable.
+
+    Also skipped once the Difficulty has nowhere left to fall. Nothing in the SRD
+    prints a Difficulty a roll cannot fail against, so `MINIMUM_DIFFICULTY` is a
+    floor of ours - and a Stress spent below it would buy nothing.
+    """
+    if target.is_defeated or target.difficulty <= MINIMUM_DIFFICULTY:
+        return
+    if not caster.will_spend_stress(CORRODE_STRESS):
+        return
+
+    caster.spend_stress(CORRODE_STRESS)
+    target.difficulty = max(target.difficulty - CORRODE_DIFFICULTY, MINIMUM_DIFFICULTY)
+    fight.note(
+        f"{target.name} is Corroded - Difficulty now {target.difficulty}"
+    )
+
+
+# --- Towering Stalk ----------------------------------------------------------
+
+
+@action(
+    TOWERING_STALK,
+    unmodelled=[
+        "The climbable stalk itself - a thing to climb, up to Far range. "
+        "Movement and terrain, neither of which is represented",
+        "'within Close range' - no positions are tracked, so the area rule in "
+        "SIMULATION-RULES.md decides how many adversaries the stalk catches",
+        "Being lifted into the air and dropped - the damage is what is modelled; "
+        "where anybody lands is not",
+    ],
+)
+def towering_stalk(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Towering Stalk (Sage, level 3).
+
+    SRD: once per rest, conjure a thick twisting stalk within Close range that
+    can be easily climbed, growing up to Far range. Mark a Stress to use this
+    spell as an attack: make a Spellcast Roll against an adversary or group of
+    adversaries within Close range, lifting targets you succeed against into the
+    air and dropping them for d8 physical damage using your Proficiency.
+
+    SIMULATION RULE - rules interpretation, ruled. **The once-per-rest limit
+    covers the attack too.** The card prints "once per rest, you can conjure" and
+    then, in a separate paragraph, "mark a Stress to use this spell as an
+    attack" - and attacking with it *is* conjuring it, so the limit is on the
+    spell rather than on the climbing. Read the other way this would be a
+    repeatable area attack for a Stress apiece.
+
+    SIMULATION RULE - policy, ruled. Declines below two adversaries in the area,
+    the same floor Fire Flies and Rain of Blades use: one use per rest bought
+    with a Stress is a real cost, and aimed at a single target it is a worse
+    weapon swing.
+
+    The roll is made **against the whole area at once** - one roll, one damage
+    roll, each adversary checked against its own Difficulty - which is the Fire
+    Flies shape rather than Whirlwind's reuse of a single-target roll.
+
+    Physical damage, not magic. The stalk drops them; nothing burns.
+
+    The per-rest use and the Stress are both **checked before the roll and paid
+    after** it, so declining costs neither.
+    """
+    if not fight.can_use_once_per_rest(caster, TOWERING_STALK):
+        return None
+    if not caster.will_spend_stress(1):
+        return None
+
+    area = targets_in_area(Range.CLOSE, fight.living_adversaries)
+    if len(area) < TOWERING_STALK_WORTH_IT:
+        return None
+
+    attack_roll = spellcast(caster, target, fight, difficulty=area_difficulty(area))
+    if attack_roll is None:
+        return None
+
+    fight.use_once_per_rest(caster, TOWERING_STALK)
+    caster.spend_stress(1)
+
+    caught = targets_beaten(attack_roll, area)
+    if not caught:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=caster.proficiency, sides=TOWERING_STALK_DIE)]
+        + total_extra_damage(caster, target, attack_roll, fight),
+        is_critical=attack_roll.is_critical,
+    )
+    # Summed across everything caught, the way Fire Flies sums: the on-hit hooks
+    # that read this ask whether the damage roll marked HP, and it did if any
+    # target marked one.
+    marked = sum(
+        adversary.take_damage(damage_roll.total, fight, damage_type=DamageType.PHYSICAL)
+        for adversary in caught
+    )
+    fight.note(
+        f"{caster.name}'s stalk erupts, lifting {len(caught)} and dropping them "
+        f"for {damage_roll.total} each"
+    )
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
 
 
 # Dismissals are the user's call, not the assistant's.

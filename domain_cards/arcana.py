@@ -7,7 +7,7 @@ live here - nothing outside this package should ever need editing to add one.
 Card text is paraphrased in each docstring rather than quoted in full, so a
 mismatch between the code and the rule is easy to spot while debugging. The
 verbatim text is in .reference/abilities.json, checked against the printed page
-(SRD p. 119).
+(SRD p. 119), where the Domain Card Reference appendix begins.
 
 Cards from this domain that can't affect a fight are declared at the bottom.
 """
@@ -16,7 +16,7 @@ import random
 
 from combat.results import AttackResult
 from content.conditions import ON_FIRE, WHEN_THEY_ACT, Condition, when_the_gm_pays
-from content.damage_types import DamageType
+from content.damage_types import DamageType, types_in
 from content.registry import (
     Fight,
     Holder,
@@ -24,10 +24,9 @@ from content.registry import (
     ally_damage_reduction,
     hope_die_for,
     no_combat_effect,
-    remake_action_roll,
     total_extra_damage,
-    total_roll_bonus,
 )
+from content.spellcast import spellcast
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import roll_duality
 
@@ -226,7 +225,7 @@ def unleash_chaos(caster: Holder, target, fight: Fight) -> AttackResult | None:
         tokens = capacity
         fight.note(f"{caster.name} marks a Stress to refill Unleash Chaos")
 
-    attack_roll = _spellcast(caster, target, fight)
+    attack_roll = spellcast(caster, target, fight)
     if attack_roll is None:
         return None
 
@@ -306,7 +305,7 @@ def cinder_grasp(caster: Holder, target, fight: Fight) -> AttackResult | None:
     A flat 1d20+3 rather than Proficiency dice: the card doesn't say "using your
     Proficiency", so it doesn't scale.
     """
-    attack_roll = _spellcast(caster, target, fight)
+    attack_roll = spellcast(caster, target, fight)
     if attack_roll is None:
         return None
 
@@ -359,33 +358,135 @@ def _burns(holder, fight: Fight, moment: str) -> None:
     fight.note(f"{holder.name} burns for {burn.total}")
 
 
-# --- Shared ------------------------------------------------------------------
+# --- Counterspell ------------------------------------------------------------
+
+COUNTERSPELL = "Counterspell"
+
+# The card's own Recall Cost, printed on the page. What it costs in Stress to
+# pull back out of the vault after it has been used.
+COUNTERSPELL_RECALL = 2
+
+# Set on the caster once the card is in the vault, so a second interruption has
+# to buy it back first.
+COUNTERSPELL_VAULTED = "Counterspell vaulted"
 
 
-def _spellcast(caster: Holder, target, fight: Fight):
-    """A Spellcast Roll against a target's Difficulty, or None if we can't make one.
+@ally_damage_reduction(
+    COUNTERSPELL,
+    unmodelled=[
+        "'a magical effect taking place' in general - nothing marks an adversary "
+        "feature as magical, so the only magical effect the simulator can "
+        "recognise is an attack that deals **magic damage**. A Fear-fuelled "
+        "ritual with no damage on it is not something this can interrupt",
+        "The vault itself, beyond this one card. Domain cards have a Recall Cost "
+        "and could in principle be swapped mid-fight; nothing models a loadout "
+        "changing, and the ruling is that only Counterspell buys itself back",
+    ],
+)
+def counterspell(
+    caster: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """Counterspell (Arcana, level 3). Returns the damage this hit should lose.
 
-    The fourth copy of this helper - Codex, Sage and Splendor each carry one, and
-    they have already drifted apart. Worth pulling into one shared place; kept
-    per-module here because that is the convention the other three set.
+    SRD: "You can interrupt a magical effect taking place by making a reaction
+    roll using your Spellcast trait. On a success, the effect stops and any
+    consequences are avoided, and this card is placed in your vault."
+
+    SIMULATION RULE - rules interpretation, ruled. **A magical effect is an
+    incoming attack that deals magic damage.** That is the only kind of magic the
+    simulator represents: damage carries a type, and nothing else does. So the
+    card interrupts the hit, and "any consequences are avoided" means the whole
+    amount - it returns to nothing before thresholds, so no Armor Slot is spent
+    either.
+
+    The reaction roll is a real one: Duality Dice on the caster's Spellcast trait
+    against **the attacking adversary's own Difficulty**, which is the standing
+    rule wherever the SRD prints a roll and no number to beat (see the Giant
+    Scorpion's Poison). Who is attacking comes from `fight.spotlighted`, because
+    damage arrives without an attacker attached; if nothing is spotlighted the
+    magic is the party's own - On Fire burning its holder - and this declines.
+
+    **Party-wide, not just the caster.** The card says "a magical effect taking
+    place", not one aimed at you, and it registers on the hook that scans the
+    whole party for exactly that reason.
+
+    SIMULATION RULE - policy, ruled. Two decisions, both the user's:
+
+    * Spent on the first magic hit that would mark **2 or more HP**, or on any
+      magic hit against a PC already at 2 or fewer unmarked HP. Reads the damage
+      announced against that PC's printed thresholds, and nothing else.
+    * **The vault is modelled, for this card alone.** Once used the card is gone,
+      and the caster can mark its Recall Cost in Stress to pull it back. That is
+      the user's ruling: the Recall Cost is a real cost the party can pay
+      mid-fight, and for a card this size it is worth paying.
     """
+    if fight is None or DamageType.MAGIC not in types_in(damage_type):
+        return 0
+
+    attacker = fight.spotlighted
+    if attacker is None:
+        return 0
+
+    # "Would mark 2 or more HP" read off the announced damage and the target's
+    # printed thresholds, which is what a player can see when they decide. Not
+    # off the HP the hit finally costs: the free Armor Slot has not been marked
+    # yet when this is asked, and it is the PC's own later choice anyway. The
+    # same reading Get Back Up takes of "when you take Severe damage".
+    if amount < target.major_threshold and not target.is_near_death:
+        return 0
+
+    # Checked before anything is paid for: a caster with no Spellcast trait can
+    # never make the reaction roll, and must not burn Stress recalling a card
+    # they cannot then use.
     trait = getattr(caster, "spellcast_trait", "")
     if not trait or trait not in caster.traits:
-        return None
+        return 0
 
-    modifier = caster.traits[trait] + total_roll_bonus(caster, target, fight)
-    hope_die = hope_die_for(caster, fight)
-
-    def roll():
-        return roll_duality(
-            modifier=modifier, difficulty=target.difficulty, hope_die=hope_die
+    if fight.token_count(caster, COUNTERSPELL_VAULTED):
+        # Vaulted. The Stress is what pulls it back out, and is only marked once
+        # the interruption is definitely being attempted.
+        if not caster.will_spend_stress(COUNTERSPELL_RECALL):
+            return 0
+        caster.spend_stress(COUNTERSPELL_RECALL)
+        fight.set_token(caster, COUNTERSPELL_VAULTED, 0)
+        fight.note(
+            f"{caster.name} marks {COUNTERSPELL_RECALL} Stress to recall Counterspell"
         )
 
-    return remake_action_roll(caster, roll(), roll, fight)
+    # A Reaction Roll, so it is not offered to the reroll hook and generates
+    # neither Hope nor Fear - see SIMULATION-RULES.md. The card is vaulted on the
+    # attempt rather than on the success: "this card is placed in your vault" is
+    # what casting it costs, and a failed interruption still cast it.
+    reaction = roll_duality(
+        modifier=caster.traits[trait],
+        difficulty=attacker.difficulty,
+        hope_die=hope_die_for(caster, fight),
+    )
+    fight.set_token(caster, COUNTERSPELL_VAULTED, 1)
+
+    if not reaction.is_success:
+        fight.note(f"{caster.name}'s counterspell fails ({reaction})")
+        return 0
+
+    fight.note(
+        f"{caster.name} counterspells {attacker.name}, sparing {target.name} "
+        f"{amount} magic damage"
+    )
+    return amount
 
 
 # --- Assessed and dismissed --------------------------------------------------
 
+no_combat_effect(
+    "Flight",
+    "A Spellcast Roll (15) places tokens equal to the caster's Agility, one "
+    "spent per action roll while airborne, and the caster comes down when the "
+    "last is spent. Being off the ground has no representation here - no "
+    "positions are tracked, and nothing in a simulated fight reads altitude, so "
+    "there is no roll the state changes. Worth knowing that modelling it would "
+    "make a party *worse*, since the cast spends a whole action roll to buy "
+    "nothing, which is a second reason not to run it.",
+)
 no_combat_effect(
     "Wall Walk",
     "A Hope lets a creature climb walls and ceilings as easily as level ground. "

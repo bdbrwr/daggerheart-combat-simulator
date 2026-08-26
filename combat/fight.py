@@ -28,6 +28,7 @@ from combat.report import FightResult
 from combat.state import FightState
 from content import (
     activations_allowed,
+    apply_ally_on_roll,
     apply_on_party_attack_roll,
     apply_on_roll,
     converted_party_roll,
@@ -212,6 +213,11 @@ def _apply_duality_outcome(pc, roll, state: FightState) -> None:
     # are handed out.
     apply_on_roll(pc, roll, state)
 
+    # And content another PC carries that watches *this* one's roll, which the
+    # holder-scoped call above can't reach - Valor's Lean on Me consoles an ally
+    # who just failed. Asked party-wide; nothing here knows what any of it is.
+    apply_ally_on_roll(pc, roll, state)
+
     if roll.outcome is DualityOutcome.CRIT:
         pc.gain_hope(1)
         pc.clear_stress(1)
@@ -295,10 +301,17 @@ def _take_gm_turn(state: FightState) -> None:
         # the adversary would have had anyway. Cleared in a `finally` so a
         # feature that raises can't leave the field permanently flagged.
         state.acting_free = adversary if free else None
+        # And who is up at all, free or paid. Content on the receiving end of an
+        # attack has no other way to find out what is hitting it - see
+        # `FightState.spotlighted`. Cleared in the same `finally`, so a feature
+        # that raises can't leave the field pointing at an adversary that isn't
+        # acting.
+        state.spotlighted = adversary
         try:
             take_adversary_turn(adversary, state)
         finally:
             state.acting_free = None
+            state.spotlighted = None
 
         # The same moment the party side announces, on the GM's side of the
         # table. Until On Fire existed nothing needed it - every condition an

@@ -15,7 +15,7 @@ Priority order for a PC, most preferred first:
   1. Drink a consumable, if hurt or nearly out of Stress and carrying one.
   2. Use a Hope feature, if affordable and worth it.
   3. Use a class feature, if worth it.
-  4. Help an ally, or spend Hope on an Experience, if Hope is plentiful.
+  4. Spend Hope on an Experience, if Hope is plentiful.
   5. Look for something that has gone to ground, if anything has and nobody has
      looked yet - see `_search_for_hidden`. This is the one step that takes the
      action roll *ahead* of the shuffle rather than being one option among it.
@@ -23,10 +23,16 @@ Priority order for a PC, most preferred first:
 
 Steps (2) and (3) aren't a list of features here: anything that needs no roll -
 a Hope feature, a class feature, a domain card - is reached through the single
-`use_free_abilities` call, and decides for itself whether it's worth using.
-Helping an ally, the other half of (4), still doesn't exist. Each entry carries
-its own "does this make sense now?" test; the ordering here is the only global
-policy.
+`use_free_abilities` call, and decides for itself whether it's worth using. Each
+entry carries its own "does this make sense now?" test; the ordering here is the
+only global policy.
+
+**Help an Ally is deliberately not on that list.** It used to be, as the other
+half of (4), and it was wrong there: helping is a reaction to somebody *else's*
+roll, not something a PC spends their own spotlight on. It lives in
+`content/help.py` and is asked at every site that makes an action roll - which
+includes several domain cards, and is why it sits in `content/` rather than
+here.
 
 Note that domain cards are NOT absent from a fight just because they're absent
 from that list. The two implemented so far are damage responses rather than turn
@@ -65,8 +71,13 @@ from content import (
 )
 from content.aoe import targets_in_area
 from content.conditions import BEFORE_AN_ACTION_ROLL, VULNERABLE
+from content.help import help_with_roll
 from content.names import canonical
-from content.rolls import clear_experience_utilised, note_experience_utilised
+from content.rolls import (
+    EXPERIENCE_HOPE_FLOOR,
+    clear_experience_utilised,
+    note_experience_utilised,
+)
 from dice.common import AdvantageState, combined
 from dice.duality import roll_duality
 from items.registry import find_consumable, find_weapon
@@ -76,10 +87,11 @@ from items.weapons import attack_with
 # solid hit is plausibly the last one.
 LOW_HP_UNMARKED = 2
 
-# Spending Hope on an Experience is the cheapest use of a big Hope pool, but
-# Hope is also what the unimplemented features want, so the floor is set high
-# enough that spending it never starves them once they exist.
-EXPERIENCE_HOPE_FLOOR = 5
+# `EXPERIENCE_HOPE_FLOOR` now lives in `content/rolls.py` and is imported above.
+# It moved because **Help an Ally** reads the same number and is made from
+# `content/`, which may not import `combat/`. The rule it states is unchanged:
+# spending Hope on an Experience is the cheapest use of a big Hope pool, so the
+# floor is set high enough that doing it never starves the cards that want Hope.
 
 # Consumables the policy knows how to want, by what they clear, and by the name
 # a character sheet writes them under - held canonically, so a sheet's
@@ -316,10 +328,14 @@ def _search_for_hidden(pc: PlayerCharacter, state: FightState) -> AttackResult |
             continue
 
         trait, difficulty = condition.found_by
+        # An ally can spend a Hope to help with this the same as with any other
+        # action roll - the search is a real one, which is the whole reason it
+        # costs the party the spotlight when it comes up with Fear.
+        help_offered = help_with_roll(pc, state)
 
         def roll():
             return roll_duality(
-                modifier=pc.traits.get(trait, 0),
+                modifier=pc.traits.get(trait, 0) + help_offered.bonus,
                 difficulty=difficulty,
                 advantage_state=(
                     AdvantageState.DISADVANTAGE
@@ -327,6 +343,7 @@ def _search_for_hidden(pc: PlayerCharacter, state: FightState) -> AttackResult |
                     else AdvantageState.NONE
                 ),
                 hope_die=hope_die_for(pc, state),
+                help_dice=help_offered.dice,
             )
 
         made = remake_action_roll(pc, roll(), roll, state)
@@ -505,6 +522,18 @@ def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult
     # the activation cost has already been charged by the GM turn, which is the
     # whole weight of the feature.
     if skips_spotlight(adversary, state):
+        return None
+
+    # And a condition that stops them acting at all - Stunned, which Grace's
+    # Hypnotic Shimmer applies. Asked after the spotlight riders above for the
+    # same reason `skips_spotlight` is: the trigger for those is being *in* the
+    # spotlight, and a Stunned adversary is. It simply can't do anything once it
+    # is there, and the Fear the activation cost has already been charged.
+    #
+    # Read generically off `Condition.prevents_action`; nothing here knows the
+    # condition's name, or that any such condition exists.
+    if state.cannot_act(adversary):
+        state.note(f"{adversary.name} cannot act, and the spotlight is spent")
         return None
 
     target = choose_adversary_target(adversary, state)

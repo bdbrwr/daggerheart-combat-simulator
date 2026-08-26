@@ -144,6 +144,11 @@ class Holder(Protocol):
     stress_marked: int
     stress_max: int
     hope_marked: int
+    # Both halves of the Hope track, because content has to be able to tell a PC
+    # who would gain from a Hope from one already at their cap - Valor's Critical
+    # Inspiration hands out Hope and must not spend its one use of the fight on
+    # somebody who cannot bank it.
+    hope_max: int
     armor_marked: int
     armor_max: int
     armor_unmarked: int
@@ -208,6 +213,21 @@ class Fight(Protocol):
 
     fear: int
     gm_turns: int
+
+    # The adversary taking a spotlight at this very moment, or None - which is
+    # what it is for the whole of a PC's spotlight, and between activations on a
+    # GM turn. Set by the loop around the activation it is resolving, exactly as
+    # `acting_free` is.
+    #
+    # It exists because damage arrives at a PC without saying who threw it:
+    # `take_damage` carries an amount and a type and no attacker, and threading
+    # one through would change that signature on both sides of the table and in
+    # every stand-in. Content that needs to know *what is hitting me* reads this
+    # instead - Arcana's Counterspell needs the attacker's Difficulty to roll
+    # against. None is a meaningful answer rather than a gap: damage arriving
+    # outside a GM activation is the party's own (On Fire burning its holder),
+    # and content asking about an adversary should decline on it.
+    spotlighted: object | None
 
     def note(self, message: str) -> None: ...
     def acting_freely(self, combatant) -> bool: ...
@@ -300,6 +320,11 @@ _ally_on_hits: dict[str, Callable] = {}
 _ally_damage_reductions: dict[str, Callable] = {}
 _evasion_bonuses: dict[str, Callable] = {}
 _adversary_target_overrides: dict[str, Callable] = {}
+_help_bonuses: dict[str, Callable] = {}
+_damage_die_maximums: dict[str, Callable] = {}
+_extra_armor_slots: dict[str, Callable] = {}
+_ally_on_rolls: dict[str, Callable] = {}
+_ally_extra_damage: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -439,6 +464,105 @@ def condition_refusal(name: str, unmodelled: Iterable[str] = ()):
     return register
 
 
+def damage_die_maximum(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that replaces a rolled damage die with its top face.
+
+    Signature: `(holder, sides, result, fight) -> bool` - whether the die that
+    came up `result` on a d`sides` should instead be read as `sides`. The Blade
+    card Versatile Fighter ("mark a Stress to use the maximum result of one of
+    your damage dice instead of rolling it") is the reason it exists.
+
+    **Neighbour to `damage_die_reroll`, and deliberately not the same hook.**
+    That one throws the die again and takes whatever comes up, which is a
+    *gamble*; this one sets a known value, which is a *purchase*. Content paying
+    a Stress needs to know exactly what it bought, and a reroll cannot promise
+    that - a rerolled 1 can come up a 1 again, and the reroll hook's docstring
+    says so outright.
+
+    **Asked at most once per damage roll, and only while nothing has claimed
+    it.** The card maximises *one* die, so dispatch stops at the first die a
+    responder accepts. That makes the order dice are offered in load-bearing, and
+    `maximise_damage_dice` offers them worst-first - the die furthest from its own
+    top face - so content paying for this gets the most the card can give it.
+    Reading which die is furthest from its maximum is arithmetic on numbers the
+    player is looking at, not a statistic nobody computes.
+
+    Runs **after** `damage_die_reroll`, so a die Not Good Enough has already
+    rescued is judged on its new value. Two cards on one sheet then compose the
+    way a table would play them: throw the bad dice again, then buy the worst of
+    what is left. See SIMULATION-RULES.md on the ordering.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_damage_die_maximums, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def extra_armor_slot(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that marks further Armor Slots against an incoming hit.
+
+    Signature: `(holder, amount, hp_to_mark, fight, damage_type) -> int` - how
+    many *additional* slots to mark, or 0 to decline. The Bone card Brace ("when
+    you mark an Armor Slot to reduce incoming damage, you can mark a Stress to
+    mark an additional Armor Slot") is the reason it exists.
+
+    **Asked only when a slot has actually been marked**, which is the card's
+    trigger read literally. So it never fires against direct damage, and never
+    against a hit that arrived at a PC with no slots free - in both of those the
+    first slot was not marked, and there is nothing for an additional one to be
+    additional to.
+
+    `hp_to_mark` is what the hit costs *after* the free slot, so content can see
+    what another slot would buy. Zero means the free slot already took the whole
+    hit and a second one would buy nothing.
+
+    The caller marks the slots and takes the same number off `hp_to_mark`,
+    clamped to what is actually free and floored at nothing - so content asking
+    for more slots than the holder has left is not a way to mark negative HP.
+
+    **Not `severity_response`, which cannot say this.** That hook returns the HP
+    a hit should mark and has no way to spend an Armor Slot doing it, so a card
+    registered there would soften the hit for free and leave the PC's armor
+    untouched - which is most of what Brace costs.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_extra_armor_slots, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def help_bonus(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that adds to a roll its holder is *helping* with.
+
+    Signature: `(holder, roller, fight) -> int` - the bonus, or 0 to decline.
+    `holder` is the helper, `roller` is the ally taking the action. The Bone card
+    Tactician ("when you Help an Ally, they can spend a Hope to add one of your
+    Experiences to their roll alongside your advantage die") is the reason.
+
+    Holder-scoped on the **helper**, which is what makes it a hook of its own
+    rather than a use of `roll_bonus`. That one is scoped to whoever is rolling,
+    and the whole point of this content is that it belongs to somebody else - the
+    Experience being lent is the Tactician's, not the roller's.
+
+    Asked once, by `content/help.py`, at the moment a helper has been chosen and
+    their Hope spent - so being asked means the help is definitely happening and
+    content here may spend the roller's resources on it.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_help_bonuses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
 def immunity(name: str, unmodelled: Iterable[str] = ()):
     """Register content that makes its holder immune to a condition.
 
@@ -539,6 +663,40 @@ def extra_damage(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_extra_damage, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def ally_extra_damage(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that adds dice to *any* party member's damage roll.
+
+    Signature: `(holder, attacker, target, roll, fight) -> list[DiceGroup]` - the
+    extra dice, or an empty list to decline. Scanned across the conscious party
+    rather than across whoever swung, because `holder` and `attacker` are
+    generally different PCs. The Midnight card Chokehold is the reason: "when **a
+    creature** attacks a target who is Vulnerable in this way, they deal an extra
+    2d6 damage".
+
+    **Distinct from `extra_damage` next door, which is holder-scoped.** That one
+    fires only for its own holder's attacks, which is right for Forceful Push's
+    momentum die. This is for content that marks a *target* and then pays out on
+    whoever hits it, and holder-scoping it would mean a Chokehold only ever
+    helped the PC who applied it - which is precisely what the card does not say.
+    The same argument that gave Parallela `ally_on_hit`.
+
+    Content is expected to check for itself that this attack is one it has a
+    claim on - usually by a token placed on the *target*. Every registrant is
+    asked about every party attack.
+
+    Joins the same `roll_damage` call as the attack's own dice, so what it adds
+    is measured against the target's thresholds exactly once - the whole reason
+    `extra_damage` exists rather than dealing a second hit afterwards.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_extra_damage, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -1343,6 +1501,42 @@ def on_roll(name: str, unmodelled: Iterable[str] = ()):
     return register
 
 
+def ally_on_roll(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that responds to *any* party member's action roll.
+
+    Signature: `(holder, roller, roll, fight) -> None`. Scanned across the
+    conscious party rather than across whoever rolled, because `holder` and
+    `roller` are generally different PCs. The Valor card Lean on Me ("when you
+    console or inspire an ally who failed an action roll, you can both clear 2
+    Stress") is the reason it exists.
+
+    **Distinct from `on_roll` next door, which is holder-scoped.** That one fires
+    only for its own holder's rolls, which is right for a card keyed on how *your*
+    roll came out. This is for content whose trigger is somebody else's roll, and
+    holder-scoping it would mean the card only ever fired on the consoler's own
+    failures - which is precisely the roll the card is not about.
+
+    **Not `reroll`, either**, though that hook is also party-wide and also sees
+    another PC's roll. It exists to *replace* a roll and its contract is that the
+    first offer wins and the rest are never asked; content that only wants to
+    watch would have to decline in a way that still had side effects, which is the
+    one thing every hook here forbids. Watching and rewriting are kept apart for
+    the reason `on_party_attack_roll` and `convert_party_roll` are.
+
+    Fires once per action roll, from the same place `on_roll` does - after any
+    GM-side conversion, so every registrant reads the roll the fight actually
+    used. Content is expected to check `holder is not roller` itself if it means
+    an ally's roll rather than anybody's.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_on_rolls, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
 def reroll(name: str, unmodelled: Iterable[str] = ()):
     """Register content that can re-make a PC's action roll after it resolves.
 
@@ -1805,6 +1999,21 @@ def apply_on_roll(holder: Holder, roll, fight: Fight) -> None:
             respond(holder, roll, fight)
 
 
+def apply_ally_on_roll(roller: Holder, roll, fight: Fight = None) -> None:
+    """Let any PC's content respond to `roller`'s action roll. Everyone gets a say.
+
+    The party-wide twin of `apply_on_roll`, and no short-circuit: two PCs each
+    carrying something that fires off an ally's failure should both fire, since
+    neither is choosing between them.
+
+    Called from the same place its holder-scoped twin is, so both read the roll
+    the fight actually used - after any GM-side conversion.
+    """
+    _discover()
+    for holder, respond in _party_offers(fight, _ally_on_rolls):
+        respond(holder, roller, roll, fight)
+
+
 def _party_offers(fight: Fight, table: dict[str, Callable]) -> list[tuple[Holder, Callable]]:
     """Every (PC, content) pair in `table` the standing party can offer, shuffled.
 
@@ -2030,8 +2239,8 @@ def remake_action_roll(roller: Holder, roll, remake: Callable, fight: Fight = No
     Called immediately after the roll is made and before anything reads it, so a
     replacement is indistinguishable from having rolled that way first. Content
     that rolls its own attack is expected to offer it here, the same contract
-    that already applies to `total_roll_bonus` - each such module has a small
-    `_spellcast` helper that rolls and then hands the result straight to this.
+    that already applies to `total_roll_bonus` - and for a Spellcast Roll that is
+    free, since `content/spellcast.py` does it for every card in every domain.
     """
     _discover()
     for holder, offer in _party_offers(fight, _rerolls):
@@ -2096,6 +2305,24 @@ def total_extra_damage(holder: Holder, target, roll, fight=None) -> list:
     return groups
 
 
+def total_ally_extra_damage(attacker: Holder, target, roll, fight=None) -> list:
+    """Every extra die the *party's* content adds to this attack, from anybody.
+
+    The party-wide twin of `total_extra_damage`, and asked from the same place so
+    the dice join one roll and cross the target's thresholds once. Everything
+    registered gets its say and the answers accumulate - two PCs each marking the
+    same target would both pay out, which is what "when a creature attacks a
+    target who is Vulnerable in this way" says.
+
+    Empty without a fight, since there is no party to scan.
+    """
+    _discover()
+    groups: list = []
+    for holder, contribute in _party_offers(fight, _ally_extra_damage):
+        groups.extend(contribute(holder, attacker, target, roll, fight))
+    return groups
+
+
 def reroll_damage_dice(holder, roll, fight=None):
     """Let content re-throw individual dice of a damage roll that has just landed.
 
@@ -2133,6 +2360,98 @@ def reroll_damage_dice(holder, roll, fight=None):
                 rerolled = True
 
     return replace(roll, die_results=results) if rerolled else roll
+
+
+def maximise_damage_dice(holder, roll, fight=None):
+    """Let content buy the top face of **one** die of a damage roll just made.
+
+    Returns the roll to carry on with - a copy with that die read as its maximum
+    if anything claimed one, otherwise the roll it was given, so a caller can use
+    the result unconditionally. The same contract `reroll_damage_dice` keeps, and
+    called immediately after it.
+
+    **Dice are offered worst-first**, by how far each is from its own top face,
+    and the first one a responder accepts ends the scan. Versatile Fighter
+    maximises one die and does not say which, so offering them in the order they
+    were rolled would make a card's value depend on which die of a pool happened
+    to come up badly. A d12 showing 3 is offered before a d6 showing 4.
+
+    Ties keep the order the dice were rolled in, which is stable rather than
+    arbitrary: two dice equally far from their maximum are worth the same, so
+    there is nothing for a shuffle to decide between.
+    """
+    _discover()
+    responders = [
+        found
+        for name in holder.named_features
+        if (found := _registered(_damage_die_maximums, name)) is not None
+    ]
+    if not responders:
+        return roll
+
+    results = [list(group_results) for group_results in roll.die_results]
+
+    # (shortfall, group index, die index), worst first. `sorted` is stable, so
+    # equal shortfalls stay in rolled order.
+    offers = sorted(
+        (
+            (group.sides - value, group_index, die_index)
+            for group_index, (group, group_results) in enumerate(
+                zip(roll.dice_groups, results)
+            )
+            for die_index, value in enumerate(group_results)
+        ),
+        key=lambda offer: -offer[0],
+    )
+
+    for shortfall, group_index, die_index in offers:
+        if shortfall <= 0:
+            # Already showing its top face. Nothing to buy, and offering it would
+            # let content spend a Stress on no change at all.
+            break
+        group = roll.dice_groups[group_index]
+        value = results[group_index][die_index]
+        if any(claim(holder, group.sides, value, fight) for claim in responders):
+            results[group_index][die_index] = group.sides
+            return replace(roll, die_results=results)
+    return roll
+
+
+def extra_armor_slots(
+    holder, amount: int, hp_to_mark: int, fight=None, damage_type=None
+) -> int:
+    """How many *additional* Armor Slots this holder marks against the hit.
+
+    Zero unless something they carry says otherwise, and the answers sum - two
+    cards each buying a slot buy two. The caller is responsible for clamping to
+    the slots actually free; content here says what it wants, not what fits.
+
+    Asked only where a free Armor Slot has already been marked, which is the
+    trigger the SRD writes for the one registrant. See `extra_armor_slot`.
+    """
+    _discover()
+    total = 0
+    for name in holder.named_features:
+        contribute = _registered(_extra_armor_slots, name)
+        if contribute is not None:
+            total += contribute(holder, amount, hp_to_mark, fight, damage_type)
+    return total
+
+
+def total_help_bonus(helper: Holder, roller: Holder, fight: Fight = None) -> int:
+    """Everything `helper` carries that adds to the roll they are helping with.
+
+    Zero unless something answers, and the answers sum. Holder-scoped on the
+    helper rather than the roller - see `help_bonus` - and asked once, after the
+    helper has been chosen and has paid their Hope.
+    """
+    _discover()
+    total = 0
+    for name in helper.named_features:
+        contribute = _registered(_help_bonuses, name)
+        if contribute is not None:
+            total += contribute(helper, roller, fight)
+    return total
 
 
 # One spotlight per combatant per GM turn, unless content says otherwise.

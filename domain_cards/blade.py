@@ -6,7 +6,9 @@ live here - nothing outside this package should ever need editing to add one.
 
 Card text is paraphrased in each docstring rather than quoted in full, so a
 mismatch between the code and the rule is easy to spot while debugging. The
-verbatim text is in .reference/abilities.json.
+verbatim text is in .reference/abilities.json, checked against the printed page
+(SRD p. 121) - which also settled the batch 1 cards below, ported before the
+printed-page check became part of the process.
 
 Cards assessed as belonging outside a fight are declared at the bottom, so that
 "used between encounters" never looks like "nobody has got to it yet" - and, just
@@ -17,7 +19,9 @@ from content.aoe import Range, targets_reached
 from content.registry import (
     Fight,
     Holder,
+    ally_damage_reduction,
     attack_advantage,
+    damage_die_maximum,
     damage_die_reroll,
     on_hit,
     out_of_combat_ability,
@@ -27,6 +31,9 @@ from dice.common import AdvantageState
 
 # Not Good Enough rerolls any die showing this or less.
 NOT_GOOD_ENOUGH_CEILING = 2
+
+SCRAMBLE = "Scramble"
+VERSATILE_FIGHTER = "Versatile Fighter"
 
 
 @severity_response("Get Back Up")
@@ -190,6 +197,104 @@ def whirlwind(attacker: Holder, target, result, fight: Fight) -> None:
     for adversary in others[:reach]:
         adversary.take_damage(splash, fight, damage_type=damage_type)
         fight.note(f"Whirlwind catches {adversary.name} for {splash}")
+
+
+@ally_damage_reduction(
+    SCRAMBLE,
+    unmodelled=[
+        "'a creature within Melee range' - the hook that answers this is asked "
+        "by `take_damage`, which carries an amount and a type and no attacker, "
+        "so there is no reach to read. Every incoming hit counts as one that "
+        "could be scrambled away from",
+        "'safely move out of Melee range of the enemy' - movement, and no "
+        "positions are tracked. What is modelled is the attack being avoided",
+    ],
+)
+def scramble(
+    holder: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """Scramble (Blade, level 3). Returns the damage this hit should lose.
+
+    SRD: "Once per rest, when a creature within Melee range would deal damage to
+    you, you can avoid the attack and safely move out of Melee range of the
+    enemy."
+
+    **Avoided outright, not softened.** The whole amount is returned, so the hit
+    resolves to nothing: `take_damage` floors at zero and returns before the
+    thresholds, which also means no Armor Slot is spent on an attack that never
+    landed. That is what "avoid the attack" says, and no other hook can say it -
+    an Armor Slot and `severity_response` both work in threshold bands, and the
+    smallest thing either can do is take one HP off.
+
+    Registered on the party-wide hook and scoped back to its own holder by the
+    `holder is target` check, exactly as Splendor's Reassurance checks
+    `holder is not roller`. There is no holder-scoped twin of this hook yet, and
+    one card is not a reason to build one.
+
+    SIMULATION RULE - policy, ruled. Spent on the **first hit of the fight**,
+    whatever it would have cost. Holding it for a bigger hit was offered and
+    declined: a once-per-rest dodge kept back for the perfect moment is a
+    once-per-rest dodge that often goes unused, and the first hit is the one a
+    player at the table can see coming without knowing what follows.
+    """
+    if fight is None or holder is not target:
+        return 0
+    if not fight.use_once_per_rest(holder, SCRAMBLE):
+        return 0
+
+    fight.note(f"{holder.name} scrambles clear, avoiding the attack entirely")
+    return amount
+
+
+@damage_die_maximum(
+    VERSATILE_FIGHTER,
+    unmodelled=[
+        "'You can use a different character trait for an equipped weapon' - a "
+        "weapon's trait is authored on its catalogue record in items/weapons.json "
+        "and is already the trait this character swings it with, the same way a "
+        "sheet carries its Evasion resolved. Applying the swap here as well "
+        "would count it twice",
+        "Damage rolled by anything other than a weapon - a card or a subclass "
+        "feature that rolls its own dice doesn't consult this hook, the same gap "
+        "Not Good Enough declares",
+    ],
+)
+def versatile_fighter(holder: Holder, sides: int, result: int, fight: Fight) -> bool:
+    """Versatile Fighter (Blade, level 3). Whether to buy this die's top face.
+
+    SRD: "You can use a different character trait for an equipped weapon, rather
+    than the trait the weapon calls for. When you deal damage, you can mark a
+    Stress to use the maximum result of one of your damage dice instead of
+    rolling it."
+
+    Only the second clause runs; the first is declared above as already resolved
+    in the weapon's catalogue entry.
+
+    **Which die this is has already been decided.** `maximise_damage_dice` offers
+    the dice worst-first - furthest from its own top face - and stops at the first
+    one claimed, so saying yes here always buys the largest gain the roll has to
+    give. A die already showing its maximum is never offered, so the Stress can
+    never be spent on no change at all.
+
+    SIMULATION RULE - policy, ruled. Paid whenever the shared last-slot rule
+    allows it (`PlayerCharacter.will_spend_stress`): freely while a spare slot
+    remains, and the last slot only once the PC is at 2 or fewer unmarked HP.
+    That is the general rule for every PC Stress cost, and the same one Reckless
+    and Unleash Chaos follow - holding out for a die that would cross a threshold
+    band was offered and declined.
+
+    So a Versatile Fighter spends Stress on nearly every landed hit until one
+    slot is left, which is fast, and is what the card is for.
+    """
+    if not holder.will_spend_stress(1):
+        return False
+
+    holder.spend_stress(1)
+    if fight is not None:
+        fight.note(
+            f"{holder.name} marks a Stress to force a d{sides} from {result} to {sides}"
+        )
+    return True
 
 
 out_of_combat_ability(
