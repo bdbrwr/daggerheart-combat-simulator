@@ -22,6 +22,7 @@ from pathlib import Path
 
 from content import (
     apply_on_damaged,
+    death_move_prevented,
     extra_armor_slots,
     harden_damage,
     party_damage_reduction,
@@ -542,20 +543,33 @@ class PlayerCharacter:
         hp_to_mark = soften_damage(self, amount, hp_to_mark, fight, kind)
         hp_to_mark = harden_damage(self, amount, hp_to_mark, fight, kind)
 
-        self.mark_hp_and_check_death(hp_to_mark)
+        self.mark_hp_and_check_death(hp_to_mark, fight)
         apply_on_damaged(self, amount, hp_to_mark, fight)
         return hp_to_mark
 
-    def mark_hp_and_check_death(self, amount: int) -> None:
+    def mark_hp_and_check_death(self, amount: int, fight=None) -> None:
         """Mark HP and take the death move if that was the last of it.
 
         Public because HP gets marked by things that aren't damage: Stress that
         won't fit, and features that say "mark an additional HP" outright, like
         the Acid Burrower's Spit Acid. All of them have to be able to be the last
         HP, so none of them may use the raw `mark_hp`.
+
+        `fight` is how party content that can **stop** a death move is reached -
+        Splendor's *Life Ward*, whose target "clears a Hit Point instead". It is
+        optional because the callers above genuinely don't all have one: damage
+        does, Stress that wouldn't fit does not. A ward is simply not offered on
+        the paths that carry no fight, which is declared as a gap where such
+        content registers rather than being papered over here.
+
+        The check is asked before the death move rather than inside
+        `avoid_death`, so a prevented death move leaves nothing behind - no
+        unconsciousness, no `death_moves` tally, no scar roll.
         """
         self.mark_hp(amount)
         if self.hp_marked >= self.hp_max and not self.unconscious:
+            if death_move_prevented(self, fight):
+                return
             self.avoid_death()
 
     def avoid_death(self) -> bool:

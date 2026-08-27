@@ -52,7 +52,9 @@ from dataclasses import replace
 
 from content import (
     action_options,
+    adversary_attack_is_hobbled,
     apply_ally_on_hit,
+    apply_attack_missed,
     apply_on_hit,
     apply_on_spotlight,
     attacks_on_are_aided,
@@ -363,7 +365,7 @@ def _search_for_hidden(pc: PlayerCharacter, state: FightState) -> AttackResult |
 
 def _make_the_roll(
     pc: PlayerCharacter, target: Adversary, state: FightState
-) -> AttackResult:
+) -> AttackResult | None:
     """The one roll that can pass the spotlight, with its aftermath applied.
 
     A weapon attack is not privileged here - it's the fallback. Content that
@@ -414,7 +416,16 @@ def _make_the_roll(
 
     # The weapon is shuffled in among the cards rather than being a fallback:
     # a loadout is unordered, and swinging is a real choice, not a last resort.
-    options = action_options(pc) + [swing_the_weapon]
+    #
+    # A combatant carrying no weapon simply isn't offered one. Every sheet in
+    # characters/ names a primary weapon, so this changes nothing for a PC; what
+    # it makes possible is a party member who is not one, which the Book of
+    # Exota's construct is. Without the guard `find_weapon("")` would raise about
+    # half the time, on the spotlights where the shuffle happened to reach the
+    # swing first.
+    options = action_options(pc)
+    if pc.primary_weapon:
+        options = options + [swing_the_weapon]
     random.shuffle(options)
 
     # Recorded *before* the attack resolves rather than after it. Nothing that
@@ -433,6 +444,14 @@ def _make_the_roll(
         result = option(pc, target, state)
         if result is not None:
             break
+
+    if result is None:
+        # Only reachable for a combatant carrying no weapon whose every option
+        # declined - the swing never declines, so a PC can never get here. None
+        # is what the caller already understands as "this spotlight resolved into
+        # nothing", and the combatant is marked as having acted either way, so
+        # the pass moves on rather than coming back to them.
+        return None
 
     if result.damage_roll is not None:
         apply_on_hit(pc, target, result, state)
@@ -459,7 +478,7 @@ def adversary_attack_advantage(
 ) -> AdvantageState:
     """The state an adversary's attack on `target` is rolled in.
 
-    Four sources, folded together rather than any one winning outright. A
+    Five sources, folded together rather than any one winning outright. A
     Vulnerable PC hands every roll against them Advantage per the SRD - unless
     something they carry turns the condition off, which is asked generically
     rather than by name. Being Hidden is its mirror. On top of those, content the
@@ -467,6 +486,11 @@ def adversary_attack_advantage(
     so can content belonging to a **third** adversary that has the target
     surrounded (the Shambling Zombie's Too Many to Handle) - which is the exact
     counterpart of the hobble `items/weapons.py` folds in on the party's side.
+
+    The fifth is the **party** hobbling this attack, which is the mirror of that
+    same counterpart pointed back across the table: Valor's *Goad Them On* makes a
+    goaded adversary swing at the taunter with disadvantage. Asked generically;
+    nothing here knows what any of it is.
 
     One function because two callers have to agree. The standard attack rolls in
     whatever this returns, and a feature that needs to know whether the attack
@@ -489,6 +513,10 @@ def adversary_attack_advantage(
         # items/weapons.py) very much does fire.
         AdvantageState.DISADVANTAGE if state.is_hidden(target) else AdvantageState.NONE,
         granted_attack_advantage(adversary, target, state),
+        # And party content hobbling this adversary's swing - Goad Them On.
+        AdvantageState.DISADVANTAGE
+        if adversary_attack_is_hobbled(adversary, target, state)
+        else AdvantageState.NONE,
     )
 
 
@@ -587,6 +615,15 @@ def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult
     # none is unaffected.
     if result.damage_roll is not None:
         apply_on_hit(adversary, target, result, state)
+
+    # And the other half of that: content the *target* carries that responds to
+    # an attack failing - the Bone card Redirect, which sends it into an
+    # adversary instead. The one moment in an incoming attack nothing announced
+    # until now; `before_attacked` and `on_attacked` cover the other two, and
+    # both of those are asked from `items/weapons.py`, which only ever sees the
+    # party swinging. Nothing here knows what any of it is.
+    if result.made_an_attack and result.damage_roll is None:
+        apply_attack_missed(target, adversary, result.attack_roll, state)
 
     if not result.made_an_attack:
         pass  # the feature narrated itself; there is no roll to report

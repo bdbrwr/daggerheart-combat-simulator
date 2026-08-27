@@ -23,17 +23,28 @@ from content.registry import (
     attack_advantage,
     damage_die_maximum,
     damage_die_reroll,
+    extra_damage,
+    no_combat_effect,
     on_hit,
     out_of_combat_ability,
     severity_response,
 )
 from dice.common import AdvantageState
+from dice.damage import DiceGroup
+from items.registry import find_weapon
 
 # Not Good Enough rerolls any die showing this or less.
 NOT_GOOD_ENOUGH_CEILING = 2
 
 SCRAMBLE = "Scramble"
 VERSATILE_FIGHTER = "Versatile Fighter"
+DEADLY_FOCUS = "Deadly Focus"
+
+# Which adversary the focus is fixed on, held as that adversary's `id()` - the
+# same way Ranger's Focus remembers its mark. Zero means the focus is over, which
+# a bare "is there a token?" could not tell apart from never having declared one;
+# the per-rest use is what stops it being declared twice.
+FOCUSED_ON = "Deadly Focus target"
 
 
 @severity_response("Get Back Up")
@@ -296,6 +307,85 @@ def versatile_fighter(holder: Holder, sides: int, result: int, fight: Fight) -> 
         )
     return True
 
+
+@extra_damage(
+    DEADLY_FOCUS,
+    unmodelled=[
+        "'+1 bonus to your Proficiency' reaches the **weapon** only. A card that "
+        "rolls its own Proficiency dice - a Grimoire spell, Forceful Push - reads "
+        "`holder.proficiency` directly and never sees this, so the bonus does not "
+        "scale a spell. Modelling it properly would mean moving the number on the "
+        "sheet, which every reader of a resolved value would then be seeing "
+        "changed mid-fight",
+        "The extra die sits **outside a weapon's own discard**, since it is added "
+        "where `extra_damage` is asked rather than where the pool is shaped. So a "
+        "Greatsword's Massive takes the lowest of the weapon's dice and not of "
+        "this one - a real Proficiency bonus would be inside that discard",
+        "'until the battle ends' - a fight ending is not announced to content, so "
+        "the focus simply stops mattering. Nothing carries between fights: a PC "
+        "is spawned fresh from their sheet each time",
+    ],
+)
+def deadly_focus(holder: Holder, target, roll, fight: Fight = None) -> list:
+    """Deadly Focus (Blade, level 4). One more weapon die, for one adversary.
+
+    SRD: "Once per rest, you can apply all your focus toward a target of your
+    choice. Until you attack another creature, you defeat the target, or the
+    battle ends, gain a +1 bonus to your Proficiency."
+
+    SIMULATION RULE - policy, ruled. **Declared on the first attack of the
+    fight**, against whoever the party is already focusing - which is the most
+    wounded adversary, since that is the party's targeting rule. Being a
+    once-per-rest bonus that costs nothing, holding it back for a better moment
+    would mostly mean not using it; and the party focus-fires anyway, so the
+    creature it lands on is the one the fight is being spent on.
+
+    "Until you attack another creature" ends it, and it does not come back: the
+    per-rest use has been claimed. Defeating the target is the same clause
+    arriving by another route - the party's focus moves to whatever is left, so
+    the next attack is against another creature and the focus lapses there.
+
+    SIMULATION RULE - rules interpretation. Both the declaration and the ending
+    are read off an attack that **lands**, because that is where this hook is
+    asked. A swing that missed neither claims the focus nor breaks it - the same
+    reading Parallela and Strategic Approach already get, and the generous half
+    of it (a miss against somebody else not costing the focus) is the same shape
+    as the forgiving half.
+    """
+    if fight is None:
+        return []
+
+    carried = getattr(holder, "primary_weapon", "")
+    if not carried:
+        return []
+
+    focused = fight.token_count(holder, FOCUSED_ON)
+    if not focused:
+        # Never declared, or declared and finished - `use_once_per_rest` is what
+        # tells those apart, and it refuses the second time.
+        if not fight.use_once_per_rest(holder, DEADLY_FOCUS):
+            return []
+        fight.set_token(holder, FOCUSED_ON, id(target))
+        fight.note(f"{holder.name} fixes all their focus on {target.name}")
+    elif focused != id(target):
+        fight.set_token(holder, FOCUSED_ON, 0)
+        fight.note(f"{holder.name} turns on {target.name}, and their focus breaks")
+        return []
+
+    # `discardable=False`, like every die a feature adds to somebody else's roll.
+    return [DiceGroup(count=1, sides=find_weapon(carried).damage_die, discardable=False)]
+
+
+no_combat_effect(
+    "Fortified Armor",
+    "A +2 bonus to damage thresholds while wearing armor. A character sheet "
+    "carries its thresholds already resolved, exactly as it carries Evasion and "
+    "Armor Score, so the bonus is in the numbers before a fight starts and "
+    "applying it here would count it twice. The same reason the Stalwart's "
+    "Unwavering and Bone's Untouchable are declared rather than run. The "
+    "condition attached to it - *while you are wearing armor* - is not a "
+    "qualifier this party ever fails: every sheet in characters/ names an armor.",
+)
 
 out_of_combat_ability(
     "A Soldier's Bond",

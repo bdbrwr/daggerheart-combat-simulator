@@ -20,19 +20,31 @@ somebody else, and Brace is the first that spends more than the one free Armor
 Slot the damage rule already marks.
 """
 
+import random
+
+from combat.results import AttackResult
+from content.aoe import Range, chance_within, targets_in_area
 from content.registry import (
     Fight,
     Holder,
+    action,
+    attack_missed,
     evasion_bonus,
     extra_armor_slot,
     extra_damage,
     help_bonus,
+    hope_die_for,
     insignificant_combat_effect,
     no_combat_effect,
     on_hit,
+    total_damage_bonus,
+    total_roll_bonus,
 )
 from content.rolls import EXPERIENCE_HOPE_FLOOR
-from dice.damage import DiceGroup
+from dice.common import AdvantageState
+from dice.damage import DiceGroup, roll_damage
+from items.registry import find_weapon
+from items.weapons import attack_with
 
 BRACE = "Brace"
 TACTICIAN = "Tactician"
@@ -298,6 +310,194 @@ def tactician(helper: Holder, roller: Holder, fight: Fight = None) -> int:
             f"{roller.name} spends a Hope on {helper.name}'s Experience (+{bonus})"
         )
     return bonus
+
+
+# --- Boost -------------------------------------------------------------------
+
+BOOST = "Boost"
+
+BOOST_DIE = 10
+
+# Set for the length of the one attack the card buys, so the d10 joins that
+# damage roll and no other. A token rather than a flag on the holder because
+# everything content remembers about a fight lives on the fight.
+BOOST_AERIAL = "Boost aerial attack"
+
+
+@action(
+    BOOST,
+    unmodelled=[
+        "'end your move within Melee range of the target' - the card lands the "
+        "holder in melee, which at a table is most of what it costs. No positions "
+        "are tracked, so nothing here changes about where they are afterwards",
+        "'against a target within Far range' - no positions are tracked, so the "
+        "boost always reaches whoever the party is focusing",
+    ],
+)
+def boost(holder: Holder, target, fight: Fight) -> AttackResult | None:
+    """Boost (Bone, level 4). Mark a Stress, vault off an ally, come down hard.
+
+    SRD: "Mark a Stress to boost off a willing ally within Close range, fling
+    yourself into the air, and perform an aerial attack against a target within
+    Far range. You have advantage on the attack, add a d10 to the damage roll,
+    and end your move within Melee range of the target."
+
+    A weapon swing with two things bolted on, so it *is* the weapon swing -
+    `attack_with`, with Advantage passed in and a d10 riding along. Everything a
+    normal swing consults still applies, which is the point of routing it through
+    the shared attack shape rather than rolling something of its own.
+
+    **The ally is answered by the area rule.** "A willing ally within Close
+    range" is a question about where somebody is standing, and the standing
+    answer for those is `chance_within` over the rest of the party rather than
+    "is there another PC at all". So a Bone character in a party of four finds
+    somebody to vault off most of the time and not every time, and alone they
+    never do.
+
+    SIMULATION RULE - policy. Nothing to rule on beyond the standing default:
+    taken whenever the Stress can be paid, by the shared last-slot rule that
+    every PC Stress cost uses. The card asks for no judgement - Advantage and an
+    extra d10 are better than a plain swing on any roll - so what limits it is
+    the Stress track and nothing else.
+
+    The Experience is deliberately not bought here. `combat/policy.py` spends that
+    Hope inside the weapon option only, so a card taking the roll instead never
+    charges for one; this card is no different.
+    """
+    if fight is None:
+        return None
+
+    carried = getattr(holder, "primary_weapon", "")
+    if not carried:
+        return None
+
+    allies = [pc for pc in fight.conscious_party if pc is not holder]
+    if not allies:
+        return None
+    if random.random() >= chance_within(Range.CLOSE, len(allies)):
+        return None
+
+    if not holder.will_spend_stress(1):
+        return None
+    holder.spend_stress(1)
+    fight.note(f"{holder.name} boosts off an ally and comes down on {target.name}")
+
+    fight.set_token(holder, BOOST_AERIAL, 1)
+    try:
+        return attack_with(
+            holder,
+            find_weapon(carried),
+            target,
+            AdvantageState.ADVANTAGE,
+            total_roll_bonus(holder, target, fight),
+            total_damage_bonus(holder, target, fight),
+            hope_die_for(holder, fight),
+            fight,
+        )
+    finally:
+        # Cleared whether the attack hit, missed or raised: the d10 belongs to
+        # this one swing, and a miss must not leave it waiting for the next.
+        fight.set_token(holder, BOOST_AERIAL, 0)
+
+
+@extra_damage(BOOST)
+def boost_from_above(holder: Holder, target, roll, fight: Fight = None) -> list:
+    """The d10 the aerial attack adds, and only on that attack.
+
+    Registered on the same name as the action above, which is how one card
+    reaches two hooks - the arrangement Ferocity already uses for its on-hit and
+    its Evasion halves. `boost` sets the token immediately before calling
+    `attack_with`, and `attack_with` asks this from inside the damage roll, so
+    the die joins that roll and crosses the target's thresholds once.
+
+    `discardable=False`, like every die a feature adds to somebody else's roll.
+    """
+    if fight is None or not fight.token_count(holder, BOOST_AERIAL):
+        return []
+    return [DiceGroup(count=1, sides=BOOST_DIE, discardable=False)]
+
+
+# --- Redirect ----------------------------------------------------------------
+
+REDIRECT = "Redirect"
+
+REDIRECT_DIE = 6
+REDIRECT_FACE = 6
+
+
+@attack_missed(
+    REDIRECT,
+    unmodelled=[
+        "An adversary's **area** attack. Only the PC the attack was aimed at is "
+        "announced as having been missed, so a swept attack that failed against "
+        "several can be redirected by at most one of them",
+    ],
+)
+def redirect(holder: Holder, attacker, roll, fight: Fight = None) -> None:
+    """Redirect (Bone, level 4). Send a failed attack into somebody else.
+
+    SRD: "When an attack made against you from beyond Melee range fails, roll a
+    number of d6s equal to your Proficiency. If any roll a 6, you can mark a
+    Stress to redirect the attack to damage an adversary within Very Close range
+    instead."
+
+    **"From beyond Melee range" is read off the attacker's printed band**, which
+    is a number on the stat block rather than a position - `Adversary.range` is
+    "Claws: Melee" or "Warp Blast: Close", and the card is asking which. So this
+    answers a positional clause without any positions, and a Melee adversary is
+    correctly never redirected.
+
+    SIMULATION RULE - rules interpretation. The attacker is **excluded** from the
+    adversaries the attack can be turned onto. The card's own setup is that the
+    attack came from beyond Melee range while the new victim is within Very
+    Close, and the alternative reading - a shot bouncing straight back at whoever
+    fired it - would make the card better against exactly the adversaries it is
+    written to punish. Which of the rest is the most wounded one, following the
+    party's focus-fire rule.
+
+    The redirected attack deals the attacker's **printed** damage, typed as the
+    stat block types it. There is no roll to make: the attack already resolved,
+    and what this card changes is who it lands on rather than whether it lands.
+
+    SIMULATION RULE - policy. A Reaction, so the standing rule applies - it fires
+    whenever its trigger happens and the cost can be paid, with no desperation
+    gate. The Stress is the shared last-slot rule, as every PC Stress cost is.
+
+    The d6s are rolled **after** the cheap checks rather than before, which the
+    card's own order does not require and which changes nothing: a 6 that nobody
+    could pay for and no adversary could receive buys the same nothing either
+    way.
+    """
+    if fight is None or holder.proficiency <= 0:
+        return
+    if attacker.attack_band is Range.MELEE:
+        return
+    if not holder.will_spend_stress(1):
+        return
+
+    others = [
+        adversary for adversary in fight.living_adversaries if adversary is not attacker
+    ]
+    nearby = targets_in_area(Range.VERY_CLOSE, others)
+    if not nearby:
+        return
+
+    rolled = [random.randint(1, REDIRECT_DIE) for _ in range(holder.proficiency)]
+    if REDIRECT_FACE not in rolled:
+        return
+
+    holder.spend_stress(1)
+    victim = nearby[0]
+    damage = roll_damage(
+        dice_groups=attacker.damage_dice, modifier=attacker.damage_modifier
+    )
+    victim.take_damage(
+        damage.total, fight, damage_type=attacker.type_of_damage()
+    )
+    fight.note(
+        f"{holder.name} redirects {attacker.name}'s attack into {victim.name} "
+        f"for {damage.total}"
+    )
 
 
 # --- Assessed and dismissed --------------------------------------------------

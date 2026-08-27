@@ -8,6 +8,11 @@ Splendor is the restoring domain, and at level 3 both cards give something back:
 one off a landed attack, one off having nothing left to give. Voice of Reason is
 the first card anywhere that turns **on** when its holder is out of Stress, which
 is also the moment they become Vulnerable.
+
+Level 4 takes that as far as it goes. **Life Ward** is the first thing anywhere
+that reaches a **death move** - three Hope buys an ally one that never happens -
+and it is worth reading its numbers knowing what it costs: three Hope is most of
+a pool, and the ward does nothing at all until the moment it does everything.
 """
 
 import random
@@ -24,6 +29,8 @@ from content.registry import (
     Holder,
     action,
     damage_pool,
+    death_move_ward,
+    free,
     hope_die_for,
     no_combat_effect,
     on_hit,
@@ -345,6 +352,113 @@ def voice_of_reason(
     return pool._replace(dice_groups=groups)
 
 
+# --- Life Ward ---------------------------------------------------------------
+
+LIFE_WARD = "Life Ward"
+
+LIFE_WARD_HOPE = 3
+
+# Set on whoever is wearing the sigil. A token on the *target* rather than on the
+# caster, because the dispatch that reads it is asked about whoever is about to
+# go down - the same arrangement Rune Ward uses for the same reason.
+SIGILLED = "Life Ward sigil"
+
+
+@free(
+    LIFE_WARD,
+    unmodelled=[
+        "'an ally within Close range' - no positions are tracked, so any "
+        "conscious ally can be marked",
+        "Moving the sigil. The card ends the ward when you cast Life Ward on "
+        "another target, so re-casting is how it moves; here it is placed once "
+        "and stays until it is spent",
+        "HP marked by anything other than **damage** doesn't reach the ward. "
+        "`mark_hp_and_check_death` is handed a fight by `take_damage` and by "
+        "nothing else, so a PC whose last HP is marked by Stress that wouldn't "
+        "fit, or by a feature saying 'mark an additional HP' outright, makes "
+        "their death move with the sigil still on them",
+    ],
+)
+def life_ward(caster: Holder, fight: Fight) -> bool:
+    """Life Ward (Splendor, level 4). Three Hope buys somebody one death move.
+
+    SRD: "Spend 3 Hope and choose an ally within Close range. They are marked
+    with a glowing sigil of protection. When this ally would make a death move,
+    they clear a Hit Point instead. This effect ends when it saves the target
+    from a death move, you cast Life Ward on another target, or you take a long
+    rest."
+
+    **No roll**, so it is a free ability: 3 Hope and nothing else, and the caster
+    can raise the ward *and* take their action roll in the same spotlight.
+
+    SIMULATION RULE - policy, ruled. Two decisions:
+
+    * The sigil goes on the **frailest ally** - whoever has the least unmarked HP
+      - and never on the caster, since the card says "an ally". Rune Ward's holder
+      rule exactly.
+    * It is cast **only once that ally is near death**, at
+      `NEAR_DEATH_HP_UNMARKED` unmarked HP or fewer. Casting as soon as the Hope
+      allowed was offered and declined: three Hope is most of a pool and the ward
+      does nothing at all until a death move is actually coming, so the party
+      holds it until one plausibly is.
+
+    Read together, the two halves say the same thing twice on purpose: the ward
+    goes to the ally who is about to need it, and it goes up at the moment they
+    start needing it. A caster whose *own* HP is low doesn't trigger it - the
+    sigil cannot go on them, so nothing would be bought.
+
+    Declines while a sigil already stands, since the card holds on one creature at
+    a time and re-casting is how the page moves it rather than a second ward.
+    """
+    if fight is None or not caster.can_spend_hope(LIFE_WARD_HOPE):
+        return False
+
+    party = fight.conscious_party
+    if any(fight.token_count(pc, SIGILLED) for pc in party):
+        return False
+
+    allies = [pc for pc in party if pc is not caster]
+    if not allies:
+        return False
+
+    warded = min(allies, key=lambda pc: pc.hp_unmarked)
+    if not warded.is_near_death:
+        return False
+
+    caster.spend_hope(LIFE_WARD_HOPE)
+    fight.set_token(warded, SIGILLED, 1)
+    fight.note(f"{caster.name} marks {warded.name} with a sigil of protection")
+    return True
+
+
+@death_move_ward(LIFE_WARD)
+def life_ward_saves(caster: Holder, target, fight: Fight) -> bool:
+    """The sigil spends itself, and the death move never happens.
+
+    "They clear a Hit Point instead" - so the HP that was just marked comes back
+    off and the PC stays up with one unmarked. Nothing else of the death move
+    happens: no unconsciousness, no scar roll, and no entry in the `death_moves`
+    tally, because being asked here is *before* the move rather than instead of
+    part of it.
+
+    Party-wide, since the sigil is worn by somebody other than the caster - the
+    same reason Rune Ward is on the party-wide hook. The token says who is
+    wearing it, so every other PC's copy of this card correctly declines.
+
+    "This effect ends when it saves the target from a death move" is the token
+    being cleared here: one death move, once, and the 3 Hope is gone with it.
+    """
+    if fight is None or not fight.token_count(target, SIGILLED):
+        return False
+
+    fight.set_token(target, SIGILLED, 0)
+    target.clear_hp(1)
+    fight.note(
+        f"{target.name}'s sigil flares and takes the blow - they stay standing"
+    )
+    return True
+
+
 out_of_combat_ability(
     "Mending Touch",
     "Spend 2 Hope to clear a Hit Point or a Stress on somebody, and once per "
@@ -352,6 +466,17 @@ out_of_combat_ability(
     "gates it on taking 'a few minutes to focus on the target', which is not "
     "something that happens while a fight is on. It belongs to the party's time "
     "between encounters, and runs when sequenced encounters do.",
+)
+
+no_combat_effect(
+    "Divination",
+    "Once per long rest, 3 Hope asks the forces beyond one yes-or-no question "
+    "about an event, person, place or situation in the near future. The answer is "
+    "GM narrative: it touches nobody's numbers, grants no roll and makes no "
+    "attack, which is the Floating Eye case - information about things nobody is "
+    "swinging at. Worth being plain that the dismissal is about *this* "
+    "simulation: at a table, knowing the answer to one yes-or-no question can "
+    "decide whether a fight happens at all.",
 )
 
 no_combat_effect(

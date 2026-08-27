@@ -13,6 +13,12 @@ Corrosive Projectile at level 3 is the first card anywhere that changes an
 adversary's **Difficulty** mid-fight. It does it by writing the new number into
 the spawned stat block rather than carrying a condition, which is the same place
 `Flying (X)` resolves - see its docstring for why.
+
+Level 4 brings the first card that offers a *menu*. **Death Grip** prints three
+effects and lets the caster pick one, and one of the three is pure repositioning
+- so the ruling is which of them a simulated caster chooses between, and the cost
+of that ruling is declared as a gap where the card registers. **Healing Field**
+is the first party-wide heal here that is not a domain card's rider.
 """
 
 import random
@@ -25,6 +31,7 @@ from content.aoe import (
     targets_beaten,
     targets_in_area,
 )
+from content.conditions import RESTRAINED, Condition, when_the_gm_pays
 from content.damage_types import DamageType
 from content.grimoire import Grimoire
 from content.registry import (
@@ -38,6 +45,7 @@ from content.registry import (
     total_extra_damage,
 )
 from content.spellcast import spellcast
+from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
 
 CORROSIVE_PROJECTILE = "Corrosive Projectile"
@@ -555,6 +563,228 @@ def towering_stalk(caster: Holder, target, fight: Fight) -> AttackResult | None:
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
     )
+
+
+# --- Death Grip --------------------------------------------------------------
+
+DEATH_GRIP = "Death Grip"
+
+# The Reaction Roll the vines force, printed on the card.
+DEATH_GRIP_DIFFICULTY = 13
+
+DEATH_GRIP_DICE = 3
+DEATH_GRIP_DIE = 6
+DEATH_GRIP_MODIFIER = 2
+
+# "Force them to mark 2 Stress" - the constricting option.
+DEATH_GRIP_STRESS = 2
+
+# The card's three options, by what they do here. The pull is not among them -
+# see the docstring.
+CONSTRICT = "constrict"
+VINES = "vines"
+
+
+@action(
+    DEATH_GRIP,
+    unmodelled=[
+        "The **pull** option - 'you pull the target into Melee range or pull "
+        "yourself into Melee range of them'. Pure repositioning, and no positions "
+        "are tracked, so it is not one of the options a simulated caster chooses "
+        "between. Worth knowing which way that errs: at a table the pull is a "
+        "real choice, so this card comes out somewhat better here than it plays",
+        "'within Close range' and 'all adversaries between you and the target' - "
+        "no positions are tracked, so the area rule in SIMULATION-RULES.md "
+        "decides how much of the field the vines cross",
+        "Being Restrained itself, which is ruled to have no effect of its own "
+        "here because no movement is modelled - so what the Restrain comes to is "
+        "the Fear the GM must spend to clear it, exactly as Shadowbind's does",
+    ],
+)
+def death_grip(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Death Grip (Sage, level 4).
+
+    SRD: make a Spellcast Roll against a target within Close range and choose one
+    of - pulling the target into Melee range (or yourself into theirs);
+    constricting them to force 2 Stress; or vines catching all adversaries
+    between you and the target, who must succeed on a Reaction Roll (13) or take
+    3d6+2 physical damage. On a success, the chosen effect happens and the target
+    is temporarily Restrained.
+
+    SIMULATION RULE - policy, ruled. **The choice is random between the two
+    options that bite here**, and the pull is not one of them: its whole effect is
+    where somebody is standing, so it is not an option whose cost can be paid in
+    the sense the standing random-among-viable rule means. That is Strategic
+    Approach's precedent, where the token always buys the d8 because the other two
+    options cannot be evaluated. The honest cost of the ruling is stated as a gap
+    above - a table would sometimes take the pull, and this caster never does.
+
+    The **vines are only a candidate when they reach somebody**, since a sweep
+    that catches nobody is not an option that reaches anybody. So against a lone
+    adversary the card always constricts, which is the same shape every area card
+    here has.
+
+    SIMULATION RULE - rules interpretation, ruled. **"Between you and the target"
+    is the Close band with the target taken out.** The target is at Close range,
+    so anything between is inside that band; and the target is not hit by the
+    vines - it gets the Restrain instead - so it comes out of the count.
+
+    The save is a **clean escape, not a save for half**: the card says "succeed on
+    a Reaction Roll (13) **or** be hit", where Scorched Earth and Hellfire print
+    "targets who succeed take half damage" and this one prints nothing of the
+    kind. An adversary rolls a flat d20 with no modifier, having no traits, and a
+    critical takes nothing at all - both standing readings.
+
+    Never declines. It costs nothing but the roll the caster was making anyway.
+    """
+    if fight is None:
+        return None
+
+    attack_roll = spellcast(caster, target, fight)
+    if attack_roll is None:
+        return None
+
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    # Rolled once and reused: the band's reach is a random draw, so asking twice
+    # would give the choice one field and the resolution another.
+    between = [
+        adversary
+        for adversary in targets_in_area(Range.CLOSE, fight.living_adversaries)
+        if adversary is not target
+    ]
+
+    options = [CONSTRICT] + ([VINES] if between else [])
+    # Only drawn from when there is a choice to make - the same reason
+    # `_party_offers` skips its shuffle, since a draw nobody needed would shift
+    # every later roll in the fight.
+    chosen = random.choice(options) if len(options) > 1 else options[0]
+
+    damage_roll = None
+    marked = 0
+    if chosen == VINES:
+        damage_roll = roll_damage(
+            dice_groups=[DiceGroup(count=DEATH_GRIP_DICE, sides=DEATH_GRIP_DIE)]
+            + total_extra_damage(caster, target, attack_roll, fight),
+            modifier=DEATH_GRIP_MODIFIER,
+            is_critical=attack_roll.is_critical,
+        )
+        for adversary in between:
+            save = roll_d20(evasion=DEATH_GRIP_DIFFICULTY)
+            if save.is_success or save.is_critical:
+                continue
+            marked += adversary.take_damage(
+                damage_roll.total, fight, damage_type=DamageType.PHYSICAL
+            )
+        fight.note(
+            f"{caster.name}'s vines lash out at {len(between)} between them "
+            f"and {target.name} for {damage_roll.total}"
+        )
+    else:
+        # Forced rather than spent: an adversary with a full Stress track simply
+        # loses nothing, since the SRD's overflow-into-HP rule is a PC rule.
+        target.mark_stress(DEATH_GRIP_STRESS)
+        fight.note(
+            f"{caster.name} constricts {target.name}, forcing "
+            f"{DEATH_GRIP_STRESS} Stress"
+        )
+
+    if not target.is_defeated and not fight.has_condition(target, RESTRAINED):
+        fight.apply_condition(
+            target, Condition(name=RESTRAINED, end=when_the_gm_pays, source=caster)
+        )
+
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
+# --- Healing Field -----------------------------------------------------------
+
+HEALING_FIELD = "Healing Field"
+
+HEALING_FIELD_HOPE = 2
+
+# What the 2 Hope upgrades the clear to, and also the number of marked HP
+# somebody has to be carrying before it is worth paying for.
+HEALING_FIELD_GREATER = 2
+
+# How many people the field has to actually restore before it is worth the one
+# use a long rest gives.
+HEALING_FIELD_WORTH_IT = 2
+
+
+@free(
+    HEALING_FIELD,
+    unmodelled=[
+        "'everywhere within Close range of you bursts to life' - no positions are "
+        "tracked, so the area rule decides which allies are standing in the "
+        "field. The caster is always in it, since it is centred on them",
+    ],
+)
+def healing_field(caster: Holder, fight: Fight) -> bool:
+    """Healing Field (Sage, level 4). Once per long rest, the party clears HP.
+
+    SRD: "Once per long rest, you can conjure a field of healing plants around
+    you. Everywhere within Close range of you bursts to life with vibrant nature,
+    allowing you and all allies in the area to clear a Hit Point. Spend 2 Hope to
+    allow you and all allies to clear 2 Hit Points instead."
+
+    **No roll**, which makes it a free ability: it costs a use and possibly some
+    Hope, so it never spends the spotlight's action roll and the caster can raise
+    the field *and* attack in the same spotlight.
+
+    **Once per *long* rest**, which a short rest does not give back - the printed
+    granularity rather than the per-rest limit most cards carry.
+
+    SIMULATION RULE - policy, ruled. Two decisions:
+
+    * The field waits until it would restore **two or more people**. One use a
+      long rest is a real cost, and spending it to take a single HP off a single
+      PC is the shape of thing that leaves a party wishing they had it later.
+    * The 2 Hope is spent only when somebody in the field actually has **2 HP
+      marked** to clear. That is the standing clearing-in-full rule: paying for a
+      2 HP clear that everybody only takes 1 of is two Hope for one HP.
+
+    Both read only what a player can see - their allies' marked HP and their own
+    Hope - and the caster counts as one of the people restored, since the card
+    says "you and all allies".
+
+    An unconscious PC is not reached. `clear_hp` deliberately does not wake one,
+    and the party the field is measured over is the conscious one, so this is
+    consistent with every other heal here rather than a rule of its own.
+    """
+    if fight is None:
+        return False
+    if not fight.can_use_once_per_rest(caster, HEALING_FIELD, long=True):
+        return False
+
+    # The caster is in their own field by definition, so only the allies are put
+    # to the band.
+    allies = [pc for pc in fight.conscious_party if pc is not caster]
+    reached = [caster] + targets_in_area(Range.CLOSE, allies)
+
+    restored = [pc for pc in reached if pc.hp_marked > 0]
+    if len(restored) < HEALING_FIELD_WORTH_IT:
+        return False
+
+    greater = caster.can_spend_hope(HEALING_FIELD_HOPE) and any(
+        pc.hp_marked >= HEALING_FIELD_GREATER for pc in restored
+    )
+
+    fight.use_once_per_rest(caster, HEALING_FIELD, long=True)
+    if greater:
+        caster.spend_hope(HEALING_FIELD_HOPE)
+
+    cleared = HEALING_FIELD_GREATER if greater else 1
+    for pc in restored:
+        pc.clear_hp(cleared)
+    fight.note(
+        f"{caster.name} raises a healing field, clearing {cleared} HP "
+        f"on {len(restored)}"
+    )
+    return True
 
 
 # Dismissals are the user's call, not the assistant's.

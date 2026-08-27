@@ -20,6 +20,12 @@ named conditions with no representation here at all - and like Cinder Grasp's On
 Fire, the card prints the whole rule, so nothing had to be invented.
 **Invisibility** applies *Invisible*, which the page spells out as the thing
 Hidden had to be ruled to be worth.
+
+Level 4 turns the domain straight back again: **neither** of its cards reaches a
+fight. That is worth recording rather than looking like an omission - Grace is
+the only domain so far whose whole level contributes nothing, and the two cards
+land in *different* states, which is most of why the states exist. Soothing
+Speech is a real heal that happens during a rest; Through Your Eyes is scouting.
 """
 
 from combat.results import AttackResult
@@ -439,4 +445,25 @@ no_combat_effect(
     "Both halves are about a conversation - and the Stress is contingent on one, "
     "so it cannot be salvaged as the modelled part. Nothing in a fight turns on "
     "whether an adversary is telling the truth.",
+)
+no_combat_effect(
+    "Through Your Eyes",
+    "See through a creature's eyes and hear through their ears anywhere within "
+    "Very Far range, switching back to your own senses freely until the caster "
+    "casts another spell. It produces information about places nobody is fighting "
+    "in, which is the Floating Eye case exactly - and it makes no attack, grants "
+    "no roll and touches nobody's numbers. At a table it is a scouting spell, and "
+    "scouting is what happens before blades are out.",
+)
+
+out_of_combat_ability(
+    "Soothing Speech",
+    "During a rest, comforting another character while using the Tend to Wounds "
+    "downtime move clears an additional Hit Point on them, and 2 Hit Points on "
+    "the speaker. Not a dismissal: three Hit Points across two PCs is a large "
+    "effect, and HP is the resource this simulator is built to measure. What the "
+    "card is not is a combat move - it is gated on a downtime move taken during a "
+    "rest, which is the one place a fight never is. So it belongs to the "
+    "sequenced-encounter machinery that doesn't exist yet, and joins Inspirational "
+    "Words above, Mending Touch and A Soldier's Bond on that list.",
 )

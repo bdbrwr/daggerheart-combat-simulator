@@ -298,6 +298,30 @@ class FightState:
         """
         self.adversaries.append(adversary)
 
+    def summon_ally(self, combatant: PlayerCharacter) -> None:
+        """Add a temporary combatant to the **party** already under way.
+
+        The party-side mirror of `summon`, and the Book of Exota's *Create
+        Construct* is the first thing that needs it: the user's ruling is that
+        the construct "becomes a temporary party member with 1 HP" - so it can be
+        swung at, it draws attacks away from the PCs, and it falls apart to any
+        damage that reaches it, which is what the card says happens.
+
+        **Rebinds `party` rather than appending to it**, and that is the whole
+        trick. `combat/fight.py` holds the list the encounter spawned and hands
+        that same list to the `FightResult`, so an append would put the construct
+        into every per-member statistic the report prints - unmarked HP, near
+        death, Hope - as though it were one of the party. Rebinding means the
+        fight sees it and the report does not.
+
+        Two consequences that follow from it being a party member, both real and
+        both intended by the ruling. It counts toward `party_is_down`, so a fight
+        is not lost while the construct still stands; and
+        `max_activations_per_gm_turn` is party size + 1, so summoning one also
+        buys the GM an extra activation each turn. See SIMULATION-RULES.md.
+        """
+        self.party = [*self.party, combatant]
+
     def remove(self, adversary: Adversary) -> None:
         """Take an adversary out of the fight **without** defeating it.
 

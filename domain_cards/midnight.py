@@ -20,6 +20,12 @@ Level 3 adds the two cards that mark somebody rather than hurting them.
 rather than its holder's, and **Veil of Night** is the first thing that makes a
 PC Hidden - a condition the simulator has modelled since Cloaked, on a side of
 the table nothing had ever applied it to.
+
+Level 4 brings **Glyph of Nightfall**, which is Sage's Corrosive Projectile with
+the opposite duration - and that difference is the whole of what it costs to
+write. A permanent reduction is simply a smaller number on the stat block; a
+temporary one has to be given back, so the card carries a condition whose only
+job is to time it.
 """
 
 from combat.results import AttackResult
@@ -494,8 +500,144 @@ def veil_hides_the_blade(attacker: Holder, target, fight: Fight):
     return AdvantageState.ADVANTAGE
 
 
+# --- Glyph of Nightfall ------------------------------------------------------
+
+GLYPH_OF_NIGHTFALL = "Glyph of Nightfall"
+
+# The card gives the state no name of its own - it just says "temporarily" - so
+# one is taken here. The condition carries no effect: what it does is already
+# written into the stat block's Difficulty, and this record exists purely to say
+# how long that lasts and to hand the points back when it ends.
+GLYPHED = "Glyphed"
+
+# How many points this particular glyph took off, kept so exactly that much is
+# restored. A number rather than a count, which is what `set_token` is for.
+GLYPH_REDUCTION = "Glyph of Nightfall reduction"
+
+# The lowest a Difficulty may be driven. `domain_cards/sage.py` carries its own
+# constant of the same name for Corrosive Projectile, deliberately duplicated
+# rather than shared: one card must never import another card's module.
+MINIMUM_DIFFICULTY = 1
+
+
+@action(
+    GLYPH_OF_NIGHTFALL,
+    unmodelled=[
+        "'within Very Close range' - no positions are tracked, so the glyph "
+        "always reaches whoever the party is focusing",
+    ],
+)
+def glyph_of_nightfall(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Glyph of Nightfall (Midnight, level 4).
+
+    SRD: "Make a Spellcast Roll against a target within Very Close range. On a
+    success, spend a Hope to conjure a dark glyph upon their body that exposes
+    their weak points, temporarily reducing the target's Difficulty by a value
+    equal to your Knowledge (minimum 1)."
+
+    **Corrosive Projectile's effect with the opposite duration**, and the
+    difference is the whole of what is interesting about it. That card says
+    *permanently*, so it writes the new number into the spawned stat block and
+    nothing has to remember anything. This one says *temporarily*, which for a
+    condition the party puts on an adversary is the standing reading: it lifts
+    when the GM spends a Fear on their turn. So the points have to be given back,
+    and `_glyph_fades` is what does it.
+
+    The Difficulty is still moved by writing to the stat block rather than by
+    being consulted per roll, for the reason `difficulty_bonus` gives: Difficulty
+    is read in four places that have no fight to dispatch with. The condition is
+    the timer, not the effect.
+
+    **"Minimum 1" is on the reduction, not on the result** - it is the Knowledge
+    value that floors at one, which matters for a caster with a Knowledge of 0 or
+    less. A separate floor stops the Difficulty itself being driven below
+    `MINIMUM_DIFFICULTY`, and the card declines when there is nothing left to
+    take.
+
+    SIMULATION RULE - policy. The Hope is what conjures the glyph rather than an
+    upgrade to it - "on a success, **spend a Hope** to conjure" puts the whole
+    effect inside the payment - so a caster with none declines before rolling
+    rather than rolling and then failing to pay. That is the Bolt Beacon reading.
+    Skips a target already glyphed, per the standing rule that a feature whose
+    point is a condition is not used on somebody who has it; the consequence here
+    is that the reduction does not stack, where Corrosive Projectile's does.
+
+    Deals no damage at all, which makes it the second Midnight card whose whole
+    output is what it does to the other side's numbers.
+    """
+    if fight is None or not caster.can_spend_hope(1):
+        return None
+    if fight.has_condition(target, GLYPHED):
+        return None
+
+    reduction = min(
+        max(caster.traits.get("knowledge", 0), 1),
+        target.difficulty - MINIMUM_DIFFICULTY,
+    )
+    if reduction <= 0:
+        return None
+
+    attack_roll = spellcast(caster, target, fight)
+    if attack_roll is None:
+        return None
+
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    caster.spend_hope(1)
+
+    # Applied *before* the Difficulty moves, and then checked. The condition is
+    # what gives the points back, so anything that refused it would otherwise
+    # leave the reduction permanent - which is the one outcome the card does not
+    # allow. `apply_condition` narrates a refusal itself.
+    fight.apply_condition(
+        target, Condition(name=GLYPHED, end=_glyph_fades, source=caster)
+    )
+    if not fight.has_condition(target, GLYPHED):
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    target.difficulty -= reduction
+    fight.set_token(target, GLYPH_REDUCTION, reduction)
+    fight.note(
+        f"{caster.name} marks {target.name} with a glyph of nightfall "
+        f"(Difficulty {target.difficulty + reduction} to {target.difficulty})"
+    )
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+def _glyph_fades(holder, fight: Fight, moment: str) -> bool:
+    """The GM pays a Fear to scrub the glyph off, and the Difficulty comes back.
+
+    Wraps the standing `when_the_gm_pays` rather than replacing it, exactly as
+    `_chokehold_breaks` does, so the duration is the one every condition the party
+    applies gets. What this adds is restoring the stat block: the reduction was
+    written into `difficulty`, and only the number recorded when it landed can put
+    it back - a glyph that took 2 must not hand back 3 because the caster's
+    Knowledge changed, and two sources moving the same Difficulty must each undo
+    their own.
+    """
+    if not when_the_gm_pays(holder, fight, moment):
+        return False
+
+    given_back = fight.token_count(holder, GLYPH_REDUCTION)
+    fight.set_token(holder, GLYPH_REDUCTION, 0)
+    holder.difficulty += given_back
+    return True
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
+no_combat_effect(
+    "Stealth Expertise",
+    "A Stress turns a roll with Fear into a roll with Hope while attempting to "
+    "move unnoticed through a dangerous area, for the holder or for an ally "
+    "within Close range doing the same. The *effect* is one of the largest a card "
+    "could have - a roll's Hope or Fear decides who gains what and whether the "
+    "party keeps the spotlight - but the **trigger** has no representation here: "
+    "the simulator makes attack rolls, Spellcast Rolls and Reaction Rolls, and "
+    "never rolls to move unnoticed through anywhere. Dismissed on the trigger, "
+    "the way Gifted Tracker was, and not on the size of the effect.",
+)
 no_combat_effect(
     "Pick and Pull",
     "Advantage on action rolls to pick nonmagical locks, disarm nonmagical "

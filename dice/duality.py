@@ -35,6 +35,21 @@ class DualityRollResult:
     help_dice_results: list[int] | None
     difficulty: int | None = None
 
+    # The sizes the two dice were rolled at. Raw inputs, not derived values - the
+    # class records "every raw die roll", and until now it recorded the results
+    # without recording what they were rolled on.
+    #
+    # They are here because content can re-roll **one** die of a resolved roll:
+    # the Valor card Support Tank lets an ally reroll either their Hope or their
+    # Fear Die, which means building a replacement result with one field changed,
+    # and that needs the size of the die being thrown again. The Hope Die is not
+    # always a d12 - `hope_die_for` swaps it - so it cannot be assumed.
+    #
+    # Defaulted, so every existing construction of this class (tests build them
+    # directly with fixed values) keeps working unchanged.
+    hope_die_sides: int = 12
+    fear_die_sides: int = 12
+
     @property
     def outcome(self) -> DualityOutcome:
         """HOPE, FEAR, or CRIT depending on which die is higher (or tied)."""
@@ -140,5 +155,7 @@ def roll_duality(
         advantage_state=advantage_state,
         advantage_die_result=advantage_die_result,
         help_dice_results=help_dice_results,
-        difficulty=difficulty
+        difficulty=difficulty,
+        hope_die_sides=hope_die,
+        fear_die_sides=fear_die,
     )

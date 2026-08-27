@@ -15,6 +15,7 @@ Cards from this domain that can't affect a fight are declared at the bottom.
 import random
 
 from combat.results import AttackResult
+from content.aoe import Range, area_difficulty, targets_beaten, targets_in_area
 from content.conditions import ON_FIRE, WHEN_THEY_ACT, Condition, when_the_gm_pays
 from content.damage_types import DamageType, types_in
 from content.registry import (
@@ -475,8 +476,101 @@ def counterspell(
     return amount
 
 
+# --- Preservation Blast ------------------------------------------------------
+
+PRESERVATION_BLAST = "Preservation Blast"
+
+PRESERVATION_BLAST_DIE = 8
+PRESERVATION_BLAST_MODIFIER = 3
+
+
+@action(
+    PRESERVATION_BLAST,
+    unmodelled=[
+        "'forced back to Far range' - the knockback is half of what the card is "
+        "named for and no positions are tracked, so nothing here moves. At a "
+        "table this is what buys a caster their next turn",
+        "'within Melee range' - the area rule in SIMULATION-RULES.md decides how "
+        "many adversaries the blast catches, and nothing stops a Wizard casting "
+        "it from a place the card would put them out of reach of",
+    ],
+)
+def preservation_blast(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Preservation Blast (Arcana, level 4).
+
+    SRD: "Make a Spellcast Roll against all targets within Melee range. Targets
+    you succeed against are forced back to Far range and take d8+3 magic damage
+    using your Spellcast trait."
+
+    One roll against the whole area, each adversary then checked against its own
+    Difficulty - the Wild Flame shape rather than the Whirlwind one, which is
+    what "all targets within Melee range" asks for.
+
+    **"Using your Spellcast trait" counts the dice**, exactly as "using your
+    Proficiency" does elsewhere: the trait is how many d8s are rolled, not
+    something added to the total. So a Wizard with a Spellcast trait of 3 throws
+    3d8+3. A caster whose trait is zero or less rolls nothing and declines, the
+    same reading Unleash Chaos takes of a dice count drawn from a trait.
+
+    Never declines otherwise. The spell costs nothing but the roll the caster was
+    making anyway, so there is no state in which casting it is worse than not -
+    the Wild Flame reading, not the Fire Flies one, and no minimum number of
+    targets is required for it to be worth casting.
+    """
+    trait = getattr(caster, "spellcast_trait", "")
+    if not trait or trait not in caster.traits:
+        return None
+
+    dice = caster.traits[trait]
+    if dice <= 0:
+        return None
+
+    area = targets_in_area(Range.MELEE, fight.living_adversaries)
+    if not area:
+        return None
+
+    attack_roll = spellcast(caster, target, fight, difficulty=area_difficulty(area))
+    if attack_roll is None:
+        return None
+
+    caught = targets_beaten(attack_roll, area)
+    if not caught:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=dice, sides=PRESERVATION_BLAST_DIE)]
+        + total_extra_damage(caster, target, attack_roll, fight),
+        modifier=PRESERVATION_BLAST_MODIFIER,
+        is_critical=attack_roll.is_critical,
+    )
+
+    marked = 0
+    for adversary in caught:
+        marked += adversary.take_damage(
+            damage_roll.total, fight, damage_type=DamageType.MAGIC
+        )
+
+    fight.note(
+        f"{caster.name} looses a preservation blast, catching {len(caught)} "
+        f"for {damage_roll.total} each"
+    )
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
+no_combat_effect(
+    "Blink Out",
+    "A Spellcast Roll (12), then a Hope teleports the caster to a point within "
+    "Close range - and an additional Hope per willing creature brought along. Its "
+    "whole effect is where somebody is standing, and no positions are tracked, "
+    "which is the standing answer for repositioning content. Worth knowing that "
+    "modelling it would make a party *worse*: the cast spends a whole action roll "
+    "and up to several Hope to buy nothing here. At a table it is an escape, and "
+    "taking the whole party with you is most of the point.",
+)
 no_combat_effect(
     "Flight",
     "A Spellcast Roll (15) places tokens equal to the caster's Agility, one "

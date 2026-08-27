@@ -239,6 +239,7 @@ class Fight(Protocol):
     def condition_on(self, holder, name: str): ...
     def clear_condition(self, holder, name: str) -> None: ...
     def summon(self, adversary) -> None: ...
+    def summon_ally(self, combatant) -> None: ...
     def remove(self, adversary) -> None: ...
     def release_conditions_from(self, source) -> list: ...
     def is_vulnerable(self, combatant) -> bool: ...
@@ -325,6 +326,9 @@ _damage_die_maximums: dict[str, Callable] = {}
 _extra_armor_slots: dict[str, Callable] = {}
 _ally_on_rolls: dict[str, Callable] = {}
 _ally_extra_damage: dict[str, Callable] = {}
+_attack_misses: dict[str, Callable] = {}
+_death_move_wards: dict[str, Callable] = {}
+_adversary_attack_disadvantages: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -845,6 +849,98 @@ def before_attacked(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_before_attacked, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def death_move_ward(name: str, unmodelled: Iterable[str] = ()):
+    """Register party content that can stop a PC's death move happening at all.
+
+    Signature: `(holder, target, fight) -> bool` - True if the death move is
+    averted, in which case the PC stays conscious and nothing else happens to
+    them here. Scanned across the conscious party, since `holder` and `target`
+    are generally different PCs: Splendor's *Life Ward* is cast on somebody else.
+    The **first** answer wins - a death move is averted once, not twice.
+
+    **Content that averts it is responsible for what happens instead.** Life Ward
+    says the target "clears a Hit Point instead", so the card does the clearing
+    before returning True. This hook only decides whether `avoid_death` runs.
+
+    Asked at the moment the last HP is marked and before the death move is taken,
+    which makes **being asked the commitment** - a card here has a trigger that
+    has genuinely happened, so it may spend its ward on the spot.
+
+    `fight` may be None, and content should decline on it. That is not a
+    formality: HP is marked from several places and only some of them carry a
+    fight (see `PlayerCharacter.mark_hp_and_check_death`), so a ward that assumed
+    one would raise on the paths that don't.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_death_move_wards, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def adversary_attack_disadvantage(name: str, unmodelled: Iterable[str] = ()):
+    """Register party content that hobbles an **adversary's** attack.
+
+    Signature: `(holder, attacker, target, fight) -> bool` - whether this attack
+    is made at Disadvantage. Scanned across the conscious party, since the content
+    belongs to a PC rather than to either combatant in the attack. The Valor card
+    *Goad Them On* is the reason: a goaded adversary must attack the taunter next
+    spotlight, "which they make with disadvantage".
+
+    **The mirror of `party_attack_disadvantage`, pointed the other way across the
+    table.** That one is GM-side content hobbling a PC's swing; this is party-side
+    content hobbling an adversary's. Neither can be written as the other, and
+    `attack_advantage` next door can't say it either - that hook is holder-scoped
+    on whoever is attacking, and the whole point here is that the content belongs
+    to the other side.
+
+    Folded into the roll with `combined`, so it cancels against a Vulnerable
+    target's Advantage rather than overriding it - which is what the SRD does with
+    two opposed sources.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_adversary_attack_disadvantages, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def attack_missed(name: str, unmodelled: Iterable[str] = ()):
+    """Register content on a *target* that responds to an incoming attack failing.
+
+    Signature: `(holder, attacker, roll, fight) -> None`. Holder-scoped on
+    whoever was swung at, because that is how the SRD writes it: the Bone card
+    Redirect is "when an attack made against **you** from beyond Melee range
+    fails". Nothing is returned - the attack has already missed, and there is
+    nothing left to change about it.
+
+    **The third moment in an incoming attack, and the only one that was missing.**
+    `before_attacked` fires before the dice, `on_attacked` fires once the attack
+    has succeeded, and between them they had no way to say "and if it doesn't".
+    A miss is a real trigger in Daggerheart - it is what a Reaction like this one
+    is paid for - and until this hook existed it simply went unannounced.
+
+    `roll` is the attack roll that failed, so content can read how it came out.
+    `attacker` is the adversary that swung, which is what carries the printed
+    range band a card like Redirect has to read.
+
+    Asked once per activation, of the PC the attack was aimed at. An **area**
+    attack that catches several PCs announces only that one, which is declared as
+    a gap where content registers.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_attack_misses, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -2476,6 +2572,54 @@ def activations_allowed(holder, fight=None) -> int:
         if limit is not None:
             allowed = max(allowed, limit(holder, fight) or DEFAULT_ACTIVATIONS)
     return allowed
+
+
+def death_move_prevented(target, fight: Fight = None) -> bool:
+    """Whether party content stops `target` taking their death move right now.
+
+    False unless something answers, and the first answer wins - see
+    `death_move_ward`. Content that averts the death move has already done
+    whatever it does instead by the time this returns.
+
+    False without a fight, since there is no party to scan.
+    """
+    _discover()
+    for holder, ward in _party_offers(fight, _death_move_wards):
+        if ward(holder, target, fight):
+            return True
+    return False
+
+
+def adversary_attack_is_hobbled(attacker, target, fight: Fight = None) -> bool:
+    """Whether party content makes this adversary's attack Disadvantaged.
+
+    False unless something says otherwise. The mirror of
+    `party_attack_is_hobbled`, and asked the same way: everything registered gets
+    its say and there is no short-circuit, because Disadvantage doesn't stack and
+    a second answer costs nothing.
+
+    One call site, in `combat/policy.py`'s `adversary_attack_advantage`, where it
+    is folded together with the other three sources rather than overriding them.
+    """
+    _discover()
+    for holder, hobbles in _party_offers(fight, _adversary_attack_disadvantages):
+        if hobbles(holder, attacker, target, fight):
+            return True
+    return False
+
+
+def apply_attack_missed(target, attacker, roll, fight: Fight = None) -> None:
+    """Let the target's own content respond to an attack that just failed.
+
+    Holder-scoped on `target`, which is who the SRD writes such a Reaction for -
+    see `attack_missed`. Everything registered is asked and nothing
+    short-circuits: a miss is not a resource anybody is competing for.
+    """
+    _discover()
+    for name in target.named_features:
+        respond = _registered(_attack_misses, name)
+        if respond is not None:
+            respond(target, attacker, roll, fight)
 
 
 def apply_on_hit(holder: Holder, target, result, fight: Fight) -> None:

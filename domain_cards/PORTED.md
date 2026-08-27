@@ -13,14 +13,14 @@ visible.
 
 ## Scope
 
-**Levels 1 to 3, all nine domains** - 63 cards. That is every card a level 3
+**Levels 1 to 4, all nine domains** - 81 cards. That is every card a level 4
 party of any class combination could hold, so a new party composition can be
-simulated without writing code first. Levels 4+ wait until a party reaches them.
+simulated without writing code first. Levels 5+ wait until a party reaches them.
 
-The scope grew from levels 1-2 once those were finished. Cards are ported **by
-level** rather than by domain now: a level is the slice a party actually
-occupies, and finishing one means no loadout at that level can name a card
-nobody has written.
+The scope grew from levels 1-2, then to 3, then to 4, each time the previous one
+was finished. Cards are ported **by level** rather than by domain: a level is the
+slice a party actually occupies, and finishing one means no loadout at that level
+can name a card nobody has written.
 
 ## How porting works
 
@@ -108,6 +108,34 @@ Bone), 8 (Valor, Splendor, Sage) and 9 (Codex, Grace, Midnight) between them
 cover eighteen cards - twenty-one things, since the two level 3 Codex entries are
 Grimoires holding five spells between them.
 
+## Level 4
+
+| Domain | Level 4 |
+|---|---|
+| **Arcana** | 🚫 Blink Out · ✅ Preservation Blast |
+| **Blade** | ✅ Deadly Focus · 🚫 Fortified Armor |
+| **Bone** | ✅ Boost · ✅ Redirect |
+| **Codex** | ✅ Book of Grynn · ✅ Book of Exota |
+| **Grace** | ⏸ Soothing Speech · 🚫 Through Your Eyes |
+| **Midnight** | ✅ Glyph of Nightfall · 🚫 Stealth Expertise |
+| **Sage** | ✅ Death Grip · ✅ Healing Field |
+| **Splendor** | 🚫 Divination · ✅ Life Ward |
+| **Valor** | ✅ Goad Them On · ✅ Support Tank |
+
+**12 modelled, 5 no effect, 1 out of combat, 0 outstanding.**
+
+**Levels 1 to 4 are complete across all nine domains** - 81 cards. Every card a
+level 4 party of any class combination could hold is either running or assessed,
+and nothing in the slice is in the *unimplemented* state. Batches 10 (Arcana,
+Blade, Bone, Codex), 11 (Grace, Midnight), 12 (Sage) and 13 (Splendor, Valor)
+cover the eighteen, and the batch size shrank as it went because the rulings per
+card grew.
+
+**Grace is the first domain whose whole level reaches no fight**, and the two
+cards land in different states, which is most of why the states exist: Soothing
+Speech is a real heal that happens during a rest, and Through Your Eyes is
+scouting. Filing the first as *no combat effect* would have lost the difference.
+
 ### Order it was done in
 
 The five domains the Immareth sheets already draw from first - **Blade, Codex,
@@ -117,11 +145,15 @@ current party could actually swap to. Then the four that had no module at all:
 
 ### What's next
 
-**Level 3 is complete** - see the table below and batches 7 to 9. **Level 4** is
-the natural next slice: two cards per domain, eighteen more, and nothing needs
-them until a party reaches level 4. The batch process above applies unchanged,
-and every domain's page has now been read once, so the printed-page check is a
-re-read rather than a hunt.
+**Levels 1 to 4 are complete.** **Level 5** is the next slice - two cards per
+domain, eighteen more, and nothing needs them until a party reaches level 5.
+Every domain's page has been read at least once, so the printed-page check is a
+re-read rather than a hunt, and levels 5 to 10 all sit on the pages already used.
+
+Worth knowing before starting it: the level 4 batches got *smaller* as they went
+- four domains, then two, then one, then two - because the cards stopped being
+variations on shapes that already existed. Level 5 should be planned as one or
+two domains at a time rather than half a level.
 
 ### What the modelled ones cover
 
@@ -474,6 +506,186 @@ that no roll can turn away.
 `_spellcast` drifted further in this batch - the Grace copy grew a `difficulty`
 parameter on top of the `trait` it already had - and was consolidated straight
 afterwards. See below.
+
+### Batch 10 — Arcana, Blade, Bone and Codex at level 4 (8 cards, 5 spells)
+
+The first half of level 4, and **four domains rather than three** at the user's
+request. **Verified against the printed page** (SRD pp. 119, 121, 123 and 125),
+which is a re-read of pages every earlier batch has already used.
+
+| Card | Disposition |
+|---|---|
+| **Preservation Blast** (Ar 4) | Modelled. One Spellcast Roll against the Melee band, Spellcast-trait d8s + 3 magic to everything it beats. Never declines - the Wild Flame side of that split, since it costs nothing but the roll |
+| **Deadly Focus** (Bl 4) | Modelled. Once per rest, one more weapon die against a single adversary until the holder attacks somebody else |
+| **Boost** (Bo 4) | Modelled. A Stress vaults off an ally for a weapon swing with Advantage and a d10 riding on it |
+| **Redirect** (Bo 4) | Modelled. A failed attack from beyond Melee range is turned into another adversary, on Proficiency d6s finding a 6 and a Stress |
+| **Book of Grynn** (Cx 4) | Modelled, partial. *Arcane Deflection* negates a hit outright once per **long** rest; *Wall of Flame* burns the Far band for 4d10+3. *Time Lock* is dismissed |
+| **Book of Exota** (Cx 4) | Modelled. *Repudiate* is Counterspell without the vault; *Create Construct* puts a 1 HP combatant into the party |
+| **Blink Out** (Ar 4) | No combat effect - a teleport, and no positions are tracked |
+| **Fortified Armor** (Bl 4) | No combat effect - a sheet carries its thresholds resolved, so running it would count the +2 twice |
+
+**Create Construct is the largest thing in the batch, and it is not a spell so
+much as a combatant.** The user's ruling is that the construct becomes a
+temporary party member with 1 HP and thresholds nothing can reach: it takes its
+own spotlights, attacks for 2d10+3 on a Spellcast Roll made with its caster's
+traits, draws attacks that would otherwise land on a PC, and falls apart to the
+first hit that connects. Two consequences follow from being a party member and
+both are worth watching in the numbers - a fight is not lost while it stands, and
+a GM turn is party size + 1 activations, so summoning one hands the GM an extra
+activation each turn. It is deliberately kept **out of the report**, since a 1 HP
+combatant in the per-member figures would say something untrue about the party.
+
+Two pieces of shared machinery, and one small change to the turn policy:
+
+- **`attack_missed`** - content on a *target* that responds to an incoming attack
+  **failing**. The third moment in an incoming attack and the only one nothing
+  announced: `before_attacked` fires before the dice and `on_attacked` once the
+  attack has succeeded, and between them they had no way to say "and if it
+  doesn't". Both of those are asked from `items/weapons.py`, which only ever sees
+  the party swinging; this one is asked from the GM turn. Redirect needs it, and
+  a miss is a real trigger in Daggerheart.
+- **`FightState.summon_ally`** - the party-side mirror of `summon`. It **rebinds**
+  the party list rather than appending to it, which is the whole trick: the loop
+  holds the new list and the `FightResult` holds the old one, so the fight sees
+  the construct and the report does not.
+- **A PC with no weapon is not offered a weapon swing** (`combat/policy.py`).
+  Every sheet in `characters/` names one, so nothing changes for a PC; what it
+  makes possible is a party member who is not one.
+
+**Deadly Focus is the one card whose hook is a compromise.** "+1 bonus to your
+Proficiency" wants both the weapon (for the die's size) and the target (for
+"until you attack another creature"), and no hook carries both - `damage_pool`
+has the weapon, `extra_damage` has the target. It is registered on
+`extra_damage`, reading the die off the holder's equipped weapon, and the two
+things that costs are declared as gaps where it registers: the extra die sits
+outside a Massive discard, and a card that rolls its own Proficiency dice does
+not see the bonus at all.
+
+**Arcane Deflection is the first content limited once per *long* rest by the
+user's own instruction** rather than by the page being read that way. Nothing
+carries between encounters yet, so today it behaves like any per-rest card; the
+distinction is banked for when they run in sequence, which is exactly the case
+the ruling was made for.
+
+### Batch 11 — Grace and Midnight at level 4 (4 cards)
+
+**Verified against the printed page** (SRD pp. 126-127 and 128). Grace's level 4
+sits on p. 127 rather than p. 126, which is the first time a domain's slice has
+crossed the sheet.
+
+| Card | Disposition |
+|---|---|
+| **Glyph of Nightfall** (Mid 4) | Modelled. A Hope conjures a glyph that takes the caster's Knowledge off the target's Difficulty until the GM pays a Fear |
+| **Soothing Speech** (Gr 4) | Out of combat - a Tend to Wounds downtime move, so it runs when sequenced encounters do. The fourth card in that state |
+| **Through Your Eyes** (Gr 4) | No combat effect - remote sensing, the Floating Eye case |
+| **Stealth Expertise** (Mid 4) | No combat effect - dismissed on its **trigger**, a stealth roll the simulator never makes, and not on the size of its effect |
+
+**No new machinery**, which is the notable thing about the batch: everything
+Glyph of Nightfall needed already existed, and it is the first card in a while
+that could be written entirely out of parts.
+
+**A temporary Difficulty reduction cost more to write than a permanent one.**
+Sage's *Corrosive Projectile* says *permanently*, so it writes the smaller number
+into the spawned stat block and nothing has to remember anything - which is where
+`Flying (X)` already resolves, and for the reason `difficulty_bonus` gives:
+Difficulty is read in four places with no fight to dispatch with. This card says
+*temporarily*, so the points have to come back. The answer is a condition whose
+**only job is to time it**: it carries no effect at all, the reduction is still
+written into the stat block, and the ender restores exactly the number recorded
+when the glyph landed. Two consequences worth knowing - the card does not stack
+where Corrosive Projectile does, since the standing don't-re-apply rule skips a
+target already glyphed; and the condition is applied *before* the Difficulty
+moves, so content that refused it can never leave the reduction permanent.
+
+**Stealth Expertise is worth reading the dismissal of carefully**, because the
+effect is enormous and the dismissal is not about that. Turning a roll with Fear
+into a roll with Hope decides who gains what *and* whether the party keeps the
+spotlight; if the trigger were a combat roll this would be one of the biggest
+cards in the domain. It is dismissed the way Gifted Tracker was - on the trigger
+having no representation, not on the effect being small.
+
+### Batch 12 — Sage at level 4 (2 cards)
+
+One domain, which is where the batches have ended up: level 4's remaining
+domains are two cards each and each one carries a real ruling. **Verified against
+the printed page** (SRD p. 130).
+
+| Card | Disposition |
+|---|---|
+| **Death Grip** (Sage 4) | Modelled, partial. A Spellcast Roll, then one of three printed effects, and the target is Restrained either way |
+| **Healing Field** (Sage 4) | Modelled. Once per long rest, no roll, everyone in the Close band clears an HP - or 2 for 2 Hope |
+
+**No new machinery.** Both cards are built out of parts that already existed,
+which is the second batch running that has been true of.
+
+**Death Grip is the first card that offers a menu**, and that is the whole of what
+it cost to rule. Three printed effects, one chosen: a pull, a forced 2 Stress, and
+vines catching everything between the caster and the target. The pull is pure
+repositioning, so the user's ruling is that **the shuffle picks between the other
+two** - Strategic Approach's precedent, where the token always buys the d8
+because the other two options cannot be evaluated. The cost of that is declared
+as a gap on the card and is worth restating here: a table would sometimes take
+the pull, so this card comes out somewhat better in the simulator than it plays.
+The vines are only a candidate when they reach somebody, so against a lone
+adversary the card always constricts.
+
+"Between you and the target" is ruled to the **Close band with the target taken
+out** - the target is at Close, so anything between is inside that band, and the
+target takes the Restrain rather than the vines. The save is a clean escape
+rather than a save for half, because the card prints "succeed **or** be hit"
+where Scorched Earth and Hellfire print "targets who succeed take half damage".
+
+**Healing Field waits for two people.** One use a long rest spent to take a
+single HP off a single PC is the shape of thing a party wishes they still had
+later, so the field goes up when it would restore two or more - and the 2 Hope
+upgrade is bought only when somebody in it actually has 2 HP marked, which is the
+standing clearing-in-full rule.
+
+### Batch 13 — Splendor and Valor at level 4 (4 cards)
+
+The last of level 4. **Verified against the printed page** (SRD pp. 132 and 134).
+
+| Card | Disposition |
+|---|---|
+| **Life Ward** (Spl 4) | Modelled. 3 Hope marks an ally; the next death move they would make becomes clearing a Hit Point, and the ward is spent doing it |
+| **Goad Them On** (Val 4) | Modelled. A Presence Roll forces a Stress, then the adversary's next spotlight is spent attacking the taunter at Disadvantage |
+| **Support Tank** (Val 4) | Modelled. 2 Hope rethrows **one** die of an ally's failed roll |
+| **Divination** (Spl 4) | No combat effect - one yes-or-no question about the near future |
+
+Three pieces of shared machinery, and this is the batch that cost the most since
+batch 7:
+
+- **`death_move_ward`** - party content that can stop a PC's death move
+  happening at all. Nothing could reach that moment before: every damage hook
+  fires while a hit is being worked out, and a death move is what happens once it
+  has been. Asked from `mark_hp_and_check_death` before `avoid_death`, so a
+  prevented death move leaves nothing behind - no unconsciousness, no tally, no
+  scar roll. The reach is limited by what carries a `fight`, and that limit is
+  declared as a gap on the card rather than hidden.
+- **`adversary_attack_disadvantage`** - party content that hobbles an
+  *adversary's* attack roll, which is the last empty corner of that four-way
+  table. GM-side content could already hobble a PC's swing and aid an attack on
+  one; the party could aid its own. Folded into `adversary_attack_advantage` with
+  `combined`, so it cancels rather than overriding.
+- **`DualityRollResult` now records the die sizes**, which is a `dice/` change
+  and the reason is worth stating plainly: Support Tank re-rolls **one** die, so
+  the replacement is built by changing a single field of the resolved roll, and
+  that needs to know what the die was rolled on. The Hope Die is not always a d12.
+  Both fields are defaulted, so every existing construction is unchanged.
+
+**Support Tank is the first content anywhere that re-rolls a single die.** Every
+other registrant on the `reroll` hook re-makes the whole roll, which
+SIMULATION-RULES.md records as a reading of "reroll your Duality Dice"; this card
+names one die, so it ignores `remake` entirely. The consequence is that it
+re-rolls *less* and can therefore do more - the untouched die keeps its value, so
+a rethrow landing equal to it is a critical.
+
+**Life Ward is the first thing that reaches a death move**, and it is worth
+reading its numbers knowing what it costs: 3 Hope is most of a pool, and the
+ward does nothing at all until the moment it does everything. The user's ruling
+holds it back until the frailest ally is near death, which is a real bet - a
+party that never gets there has spent nothing, and one that gets there twice has
+only the one ward.
 
 ## Consolidating `_spellcast`
 

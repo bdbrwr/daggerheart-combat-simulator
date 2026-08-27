@@ -7,13 +7,18 @@ writes.
 
 Card text is paraphrased in each docstring rather than quoted in full. The
 verbatim text is in .reference/abilities.json, and was checked against the
-printed page (SRD pp. 124-125) for all seven books.
+printed page (SRD pp. 124-125) for all nine books.
 
 A Codex book is mostly utility, and that is a fact about the domain rather than
-a gap: of the twenty spells in the seven books, nine change a fight. The rest are
-declared `no_combat_effect` at the bottom under their own names *and* noted as
-gaps on their book, so a reader of the coverage report sees both which book is
-partly implemented and which spell inside it was dismissed.
+a gap: of the twenty-five spells in the nine books, thirteen change a fight. The
+rest are declared `no_combat_effect` at the bottom under their own names *and*
+noted as gaps on their book, so a reader of the coverage report sees both which
+book is partly implemented and which spell inside it was dismissed.
+
+Level 4 is where a Codex book stops being a spell list and starts being other
+machinery. The **Book of Grynn** carries the first party-wide negation that isn't
+a counterspell, and the **Book of Exota** carries *Create Construct*, which is
+the first thing in the simulator to add a combatant to the **party** mid-fight.
 
 Level 3 brings the two most dangerous spells in the domain, and neither is a
 plain attack. **Rune Circle** is the first thing in the simulator that deals
@@ -35,12 +40,15 @@ from content.aoe import (
     targets_in_area,
 )
 from content.conditions import RESTRAINED, Condition, when_the_gm_pays
-from content.damage_types import DamageType
+from content.damage_types import DamageType, types_in
 from content.grimoire import Grimoire
 from content.registry import (
     Fight,
     Holder,
+    action,
+    ally_damage_reduction,
     ally_on_hit,
+    hope_die_for,
     no_combat_effect,
     total_extra_damage,
 )
@@ -768,3 +776,427 @@ def _fireball_lands_on(creature, damage: int, fight: Fight) -> int:
     if save.is_success:
         fight.note(f"{creature.name} shields against the blast, taking {taken}")
     return marked
+
+
+# --- Book of Grynn -----------------------------------------------------------
+
+GRYNN = Grimoire("Book of Grynn")
+
+ARCANE_DEFLECTION = "Arcane Deflection"
+
+WALL_OF_FLAME_DICE = 4
+WALL_OF_FLAME_DIE = 10
+WALL_OF_FLAME_MODIFIER = 3
+WALL_OF_FLAME_DIFFICULTY = 15
+
+
+@ally_damage_reduction(
+    "Book of Grynn",
+    unmodelled=[
+        "'the damage of an attack' is read as **any** incoming damage, since "
+        "this hook is asked wherever a PC takes some. On Fire burning its holder "
+        "would be negated the same way a sword would, which is generous - but "
+        "narrowing it would need an attacker, and damage arrives without one",
+    ],
+)
+def arcane_deflection(
+    caster: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """Arcane Deflection (Book of Grynn). Returns the damage this hit should lose.
+
+    SRD: "Once per long rest, spend a Hope to negate the damage of an attack
+    targeting you or an ally within Very Close range."
+
+    **Negated outright, not softened.** The whole amount is returned, so the hit
+    resolves to nothing - and because `take_damage` floors at zero before the
+    thresholds are read, no Armor Slot is spent on an attack that never landed.
+    The same shape as Blade's Scramble, and the same reason no other hook can say
+    it: an Armor Slot and `severity_response` both work in threshold bands.
+
+    **Once per *long* rest**, which is the user's ruling and is not the same as
+    the once-per-rest that most cards carry. A short rest does not give it back,
+    so a party pushed through several encounters between long rests has this once
+    and no more - which is what will matter when encounters run in sequence.
+
+    **"You or an ally within Very Close range"** is a question about where
+    somebody is standing, so the standing answer applies: the caster is always in
+    range of themselves, and an ally is reached on the area rule's odds. Asked
+    only after everything cheaper has agreed, so the positional roll is not made
+    on hits the spell was never going to touch.
+
+    SIMULATION RULE - policy, ruled. Spent on the first hit that would mark **2
+    or more HP**, or on any hit against a PC already at 2 or fewer unmarked HP.
+    The same rule Counterspell follows, and it reads only what a player can see
+    when they decide: the damage the GM announced, against that PC's printed
+    thresholds.
+    """
+    if fight is None:
+        return 0
+
+    if amount < target.major_threshold and not target.is_near_death:
+        return 0
+    if not caster.can_spend_hope(1):
+        return 0
+    if not fight.can_use_once_per_rest(caster, ARCANE_DEFLECTION, long=True):
+        return 0
+
+    if target is not caster:
+        allies = [pc for pc in fight.conscious_party if pc is not caster]
+        if not allies or random.random() >= chance_within(Range.VERY_CLOSE, len(allies)):
+            return 0
+
+    fight.use_once_per_rest(caster, ARCANE_DEFLECTION, long=True)
+    caster.spend_hope(1)
+    fight.note(
+        f"{caster.name} deflects the attack on {target.name}, negating {amount}"
+    )
+    return amount
+
+
+@GRYNN.action(
+    "Wall of Flame",
+    unmodelled=[
+        "'All creatures in its path must choose a side to be on' - the choice is "
+        "positional and no positions are tracked, so nobody chooses. What is "
+        "modelled is the burning",
+        "The wall **lasting**. It is a temporary hazard between two points and "
+        "the damage is collected by anything that later passes through it; here "
+        "it burns once, as it goes up. Ruled the same way Rune Circle's recurring "
+        "half was, and for the same reason - a GM who can see a wall of fire "
+        "keeps their adversaries off it",
+        "'between two points within Far range' - the area rule in "
+        "SIMULATION-RULES.md decides how much of the field the wall crosses",
+    ],
+)
+def wall_of_flame(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Wall of Flame (Book of Grynn).
+
+    SRD: "Make a Spellcast Roll (15). On a success, create a temporary wall of
+    magical flame between two points within Far range. All creatures in its path
+    must choose a side to be on, and anything that subsequently passes through the
+    wall takes 4d10+3 magic damage."
+
+    SIMULATION RULE - rules interpretation, ruled. **The wall's reach is the area
+    rule's Far band**, which is the user's ruling on how a wall drawn across the
+    field is answered here. Far is everything on the field a quarter of the time
+    short by one, so a wall of flame is the widest thing the party can cast and
+    still not reliably everything.
+
+    Rolled against the printed Difficulty of 15 rather than against any target's,
+    which is what the card prints - so this is one of the few Spellcast Rolls in
+    the simulator whose number to beat has nothing to do with what it is aimed at.
+
+    Never declines. It costs nothing but the roll the caster was making anyway.
+
+    Everything caught takes the same 4d10+3 and is measured against its own
+    thresholds, which is how every area effect here resolves.
+    """
+    attack_roll = spellcast(
+        caster, target, fight, difficulty=WALL_OF_FLAME_DIFFICULTY
+    )
+    if attack_roll is None:
+        return None
+
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    caught = targets_in_area(Range.FAR, fight.living_adversaries)
+    if not caught:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=WALL_OF_FLAME_DICE, sides=WALL_OF_FLAME_DIE)]
+        + total_extra_damage(caster, target, attack_roll, fight),
+        modifier=WALL_OF_FLAME_MODIFIER,
+        is_critical=attack_roll.is_critical,
+    )
+
+    marked = 0
+    for adversary in caught:
+        marked += adversary.take_damage(
+            damage_roll.total, fight, damage_type=DamageType.MAGIC
+        )
+
+    fight.note(
+        f"{caster.name} raises a wall of flame across {len(caught)} "
+        f"for {damage_roll.total} each"
+    )
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
+GRYNN.note_gap("Time Lock", "no combat effect - freezing an object in place")
+
+no_combat_effect(
+    "Time Lock",
+    "Stops an object in time and space where it is until the caster's next rest, "
+    "with a Spellcast Roll to hold it there if a creature tries to move it. There "
+    "are no objects in a simulated fight, and the spell says outright that it "
+    "targets one - so there is nothing here for it to hold.",
+)
+
+
+# --- Book of Exota -----------------------------------------------------------
+
+EXOTA = Grimoire("Book of Exota")
+
+REPUDIATE = "Repudiate"
+
+CREATE_CONSTRUCT = "Create Construct"
+CONSTRUCT_HOPE = 1
+
+# The construct's own action, registered under a name **only the construct
+# carries**. It is not a card anybody's sheet names, which is exactly why it can
+# have one: dispatch finds an ability by the names its holder lists, and the
+# construct is spawned with this one in its loadout.
+ANIMATED_CONSTRUCT = "Animated Construct"
+
+CONSTRUCT_DICE = 2
+CONSTRUCT_DIE = 10
+CONSTRUCT_MODIFIER = 3
+
+# "They fall apart when they take any amount of damage", read as the user ruled
+# it: one HP and thresholds nothing can reach, so every hit that lands is Minor,
+# marks the single HP, and takes the construct off the field.
+CONSTRUCT_HP = 1
+CONSTRUCT_THRESHOLD = 999
+
+# Placed on the construct itself, so "you can only maintain one construct at a
+# time" is answered by looking at the party rather than by remembering on the
+# caster - a construct that has fallen apart is no longer conscious and no longer
+# found, which is what lets the next one be built.
+CONSTRUCT_MARK = "Animated construct"
+
+
+@ally_damage_reduction(
+    "Book of Exota",
+    unmodelled=[
+        "'a magical effect taking place' in general - nothing marks an adversary "
+        "feature as magical, so the only magical effect the simulator can "
+        "recognise is an attack that deals **magic damage**. The same gap "
+        "Arcana's Counterspell declares, and for the same reason",
+    ],
+)
+def repudiate(
+    caster: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """Repudiate (Book of Exota). Returns the damage this hit should lose.
+
+    SRD: "You can interrupt a magical effect taking place. Make a reaction roll
+    using your Spellcast trait. Once per rest on a success, the effect stops and
+    any consequences are avoided."
+
+    **Counterspell's card, in a book.** Everything the Arcana card settled applies
+    here unchanged: a magical effect is an incoming attack that deals magic
+    damage, the reaction roll is Duality Dice on the caster's Spellcast trait
+    against the **attacking adversary's** own Difficulty, and "any consequences
+    are avoided" means the whole amount, returned before the thresholds so no
+    Armor Slot is spent either. Who is attacking comes from `fight.spotlighted`;
+    a `None` there means the magic is the party's own and this declines.
+
+    Two differences from Counterspell, both printed on the page. This one does
+    **not** vault itself, so there is nothing to buy back - and its limit is
+    "once per rest **on a success**", so a failed interruption costs nothing and
+    the caster may try again. The per-rest use is claimed after the roll for
+    exactly that reason.
+
+    SIMULATION RULE - policy. The same rule Counterspell was ruled to, extended
+    to the card that does the same thing: attempted on the first magic hit that
+    would mark **2 or more HP**, or on any magic hit against a PC already at 2 or
+    fewer unmarked HP. Read off the damage announced and the target's printed
+    thresholds, and nothing else.
+
+    **Party-wide, not just the caster**, like Counterspell: the card says "a
+    magical effect taking place", not one aimed at you.
+    """
+    if fight is None or DamageType.MAGIC not in types_in(damage_type):
+        return 0
+
+    attacker = fight.spotlighted
+    if attacker is None:
+        return 0
+
+    if amount < target.major_threshold and not target.is_near_death:
+        return 0
+
+    trait = getattr(caster, "spellcast_trait", "")
+    if not trait or trait not in caster.traits:
+        return 0
+    if not fight.can_use_once_per_rest(caster, REPUDIATE):
+        return 0
+
+    # A Reaction Roll, so it is not offered to the reroll hook and generates
+    # neither Hope nor Fear - see SIMULATION-RULES.md.
+    reaction = roll_duality(
+        modifier=caster.traits[trait],
+        difficulty=attacker.difficulty,
+        hope_die=hope_die_for(caster, fight),
+    )
+    if not reaction.is_success:
+        fight.note(f"{caster.name}'s repudiation fails ({reaction})")
+        return 0
+
+    fight.use_once_per_rest(caster, REPUDIATE)
+    fight.note(
+        f"{caster.name} repudiates {attacker.name}, sparing {target.name} "
+        f"{amount} magic damage"
+    )
+    return amount
+
+
+@EXOTA.free(
+    CREATE_CONSTRUCT,
+    unmodelled=[
+        "'a group of objects around you' - nothing represents the scenery, so "
+        "there is always something to animate",
+        "'Make a Spellcast Roll to command them to take action' - the roll is "
+        "made by the construct on its own spotlight rather than by the caster on "
+        "theirs, which follows from it being a party member. The consequence is "
+        "that commanding it costs the caster nothing after the Hope",
+        "'they share your Evasion and traits' is read as a **copy** taken when "
+        "the construct is built. A caster whose Evasion changes mid-fight - "
+        "Ferocity - does not change the construct's",
+    ],
+)
+def create_construct(caster: Holder, fight: Fight) -> bool:
+    """Create Construct (Book of Exota). A Hope animates something that fights.
+
+    SRD: "Spend a Hope to choose a group of objects around you and create an
+    animated construct from them that obeys basic commands. Make a Spellcast Roll
+    to command them to take action. When necessary, they share your Evasion and
+    traits and their attacks deal 2d10+3 physical damage. You can only maintain
+    one construct at a time, and they fall apart when they take any amount of
+    damage."
+
+    SIMULATION RULE - policy, ruled. **The construct joins the party.** The
+    user's ruling is that it becomes a temporary party member with 1 HP and
+    thresholds nothing can reach, so it takes its own spotlights, adversaries can
+    swing at it, and any hit that lands takes it off the field. One Hope builds
+    it and it fights for as long as it lasts; commanding it costs nothing more.
+
+    Two things follow from that and are worth reading numbers with in mind: a
+    fight is not lost while the construct is still standing, and a GM turn is
+    party size + 1 activations, so summoning one also hands the GM an extra
+    activation each turn. See `FightState.summon_ally` and SIMULATION-RULES.md.
+
+    Declines without a Spellcast trait to give it. The construct rolls the
+    caster's traits, and one that could never make its Spellcast Roll would be a
+    Hope spent on something that stands there.
+
+    "Only one construct at a time" is read off the party rather than remembered
+    on the caster, so a construct that has fallen apart is not one that is still
+    being maintained.
+    """
+    if fight is None:
+        return False
+
+    trait = getattr(caster, "spellcast_trait", "")
+    if not trait or trait not in caster.traits:
+        return False
+    if not caster.can_spend_hope(CONSTRUCT_HOPE):
+        return False
+    if any(fight.token_count(pc, CONSTRUCT_MARK) for pc in fight.conscious_party):
+        return False
+
+    caster.spend_hope(CONSTRUCT_HOPE)
+    construct = _construct_for(caster)
+    fight.set_token(construct, CONSTRUCT_MARK, 1)
+    fight.summon_ally(construct)
+    fight.note(f"{caster.name} spends a Hope and animates {construct.name}")
+    return True
+
+
+def _construct_for(caster: Holder):
+    """The construct as a combatant, built from the caster it belongs to.
+
+    A `PlayerCharacter` because that is what the party is a list of, and because
+    everything the fight loop does to a party member - spotlighting it, targeting
+    it, marking its HP - is written against that class. Imported here rather than
+    at module scope for the reason `domain_cards/` imports anything from outside
+    itself: this is the one card that needs it.
+
+    Every number on it is either copied from the caster (Evasion, traits, the
+    Spellcast trait it rolls) or is the ruling (`CONSTRUCT_HP`,
+    `CONSTRUCT_THRESHOLD`). It carries no ancestry, community, class or subclass:
+    a construct has none, and leaving them blank means dispatch finds nothing
+    under them rather than finding somebody else's features.
+
+    One Stress slot rather than none, and it is not a resource anything spends. A
+    combatant with a Stress track of zero has every slot marked by definition,
+    which would make it Vulnerable by the SRD's own rule and hand every attack
+    against it Advantage - an artefact of the arithmetic rather than anything the
+    card says.
+
+    Level zero, so the death move that fires when its single HP is marked can
+    never leave a scar: `avoid_death` scars on a d12 at or below the PC's level.
+    """
+    from characters.player_character import PlayerCharacter
+
+    return PlayerCharacter(
+        name=f"{caster.name}'s construct",
+        level=0,
+        character_class="",
+        subclass="",
+        ancestry="",
+        community="",
+        traits=dict(caster.traits),
+        evasion=getattr(caster, "evasion", 0),
+        proficiency=caster.proficiency,
+        major_threshold=CONSTRUCT_THRESHOLD,
+        severe_threshold=CONSTRUCT_THRESHOLD,
+        hp_max=CONSTRUCT_HP,
+        stress_max=1,
+        hope_max=0,
+        armor_max=0,
+        primary_weapon="",
+        secondary_weapon=None,
+        armor_item="",
+        domain_cards_loadout=[ANIMATED_CONSTRUCT],
+        domain_cards_vault=[],
+        experiences=[],
+        consumables=[],
+        spellcast_trait=getattr(caster, "spellcast_trait", ""),
+    )
+
+
+@action(
+    ANIMATED_CONSTRUCT,
+    unmodelled=[
+        "The construct is **not** reported. `combat/fight.py` hands the report "
+        "the party the encounter spawned, and `summon_ally` rebinds rather than "
+        "appends, so nothing the construct did shows up in the per-member "
+        "figures - which is deliberate: a 1 HP combatant in the near-death rate "
+        "would say something untrue about the party",
+    ],
+)
+def construct_strike(construct: Holder, target, fight: Fight):
+    """What the animated construct does with a spotlight.
+
+    A Spellcast Roll on the traits it copied from its caster, and 2d10+3 physical
+    on a success - the card's own numbers. Physical rather than magic: the card
+    says so, and it is the one place a magic-resistant adversary would find the
+    construct easier to deal with than the Wizard who built it.
+
+    Never declines. The construct carries nothing else and has no weapon, so this
+    is the whole of what its spotlight can resolve into.
+    """
+    attack_roll = spellcast(construct, target, fight)
+    if attack_roll is None:
+        return None
+
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=CONSTRUCT_DICE, sides=CONSTRUCT_DIE)],
+        modifier=CONSTRUCT_MODIFIER,
+        is_critical=attack_roll.is_critical,
+    )
+    marked = target.take_damage(
+        damage_roll.total, fight, damage_type=DamageType.PHYSICAL
+    )
+    fight.note(f"{construct.name} strikes {target.name} for {damage_roll.total}")
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )

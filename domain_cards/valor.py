@@ -18,15 +18,36 @@ levels: everything here rides a weapon swing, an incoming hit, or somebody
 else's roll. That is why it needed no change when Help an Ally landed - Forceful
 Push attacks through `items/weapons.py`, which asks for help on the party's
 behalf.
+
+**Level 4 does not break that**, which is worth saying because it looks like it
+does: *Goad Them On* rolls its own action, but it is a **Presence** Roll rather
+than a Spellcast one, and it reaches the shared helper the way Grace's
+Troublemaker does - by naming the trait. Valor still casts nothing.
+
+The two level 4 cards are both firsts of a different kind. *Goad Them On* is the
+first party content to hobble an **adversary's** attack roll, and *Support Tank*
+is the first content anywhere that re-rolls a **single die** of a duality roll
+rather than the whole thing.
 """
 
+import random
+from dataclasses import replace
+
 from combat.results import AttackResult
-from content.aoe import Range, targets_in_area
-from content.conditions import VULNERABLE, Condition, when_the_gm_pays
+from content.aoe import Range, chance_within, targets_in_area
+from content.conditions import (
+    TAUNTED,
+    VULNERABLE,
+    Condition,
+    when_the_gm_pays,
+    when_they_act,
+)
 from content.registry import (
     Fight,
     Holder,
     action,
+    adversary_attack_disadvantage,
+    adversary_target_override,
     ally_on_roll,
     condition_refusal,
     damage_bonus,
@@ -35,9 +56,11 @@ from content.registry import (
     hope_die_for,
     no_combat_effect,
     on_hit,
+    reroll,
     total_damage_bonus,
     total_roll_bonus,
 )
+from content.spellcast import spellcast
 from dice.common import AdvantageState
 from dice.damage import DiceGroup
 from dice.duality import DualityOutcome
@@ -416,6 +439,207 @@ def lean_on_me(holder: Holder, roller: Holder, roll, fight: Fight) -> None:
     fight.note(
         f"{holder.name} steadies {roller.name}; both clear {LEAN_ON_ME_STRESS} Stress"
     )
+
+
+# --- Goad Them On ------------------------------------------------------------
+
+GOAD_THEM_ON = "Goad Them On"
+
+# A Presence Roll, not a Spellcast Roll - the second card in the project to roll
+# a named trait through the shared helper, after Grace's Troublemaker.
+GOAD_TRAIT = "presence"
+
+
+@action(
+    GOAD_THEM_ON,
+    unmodelled=[
+        "'a target within Close range' - no positions are tracked, so the goad "
+        "always reaches whoever the party is focusing",
+    ],
+)
+def goad_them_on(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Goad Them On (Valor, level 4). Make it come for you, badly.
+
+    SRD: "Describe how you taunt a target within Close range, then make a
+    Presence Roll against them. On a success, the target must mark a Stress, and
+    the next time the GM spotlights them, they must target you with an attack,
+    which they make with disadvantage."
+
+    Three effects on one roll, and all three are modelled. The Stress is the half
+    that lands immediately - an adversary's Stress is what pays for its Action
+    features and what its desperation rule reads. The compulsion is *Taunted*,
+    which the simulator already has from the other side of the table: the
+    Weaponmaster's Goading Strike puts it on a PC, and this is the same condition
+    put on an adversary. The Disadvantage is the third, and it needed the one new
+    hook this card cost.
+
+    **The duration is exactly one activation.** "The next time the GM spotlights
+    them" is `WHEN_THEY_ACT`, which the loop announces *after* an adversary has
+    acted - so the goad holds through their next spotlight and lifts behind it.
+    That is the plainest reading of the printed text and needed no ruling, which
+    is unusual for a condition here: most arrive with a name and nothing else.
+
+    A **Presence Roll**, so it goes through the shared helper with the trait
+    named, exactly as Grace's Troublemaker does. Rolled against the target's own
+    Difficulty, which is the standing rule wherever the SRD prints a roll against
+    a creature and no number to beat.
+
+    Never declines except against a target already goaded, per the standing rule
+    that a feature whose point is a condition is not used on somebody who has it.
+    It costs nothing but the roll the caster was making anyway.
+
+    **Worth reading the numbers of carefully.** Like Grace's Enrapture, this is a
+    card whose point is *being attacked*: it takes an attack off whoever the GM
+    would have chosen and puts it on the taunter. Unlike Enrapture it hands back
+    a Disadvantage on that attack, and unlike Enrapture it ends on its own rather
+    than costing the GM a Fear.
+    """
+    if fight is None or fight.has_condition(target, TAUNTED):
+        return None
+
+    attack_roll = spellcast(caster, target, fight, trait=GOAD_TRAIT)
+    if attack_roll is None:
+        return None
+
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    # Forced rather than spent, so an adversary with a full Stress track simply
+    # loses nothing - the SRD's overflow-into-HP rule is a PC rule.
+    target.mark_stress(1)
+    fight.apply_condition(
+        target, Condition(name=TAUNTED, end=when_they_act, source=caster)
+    )
+    fight.note(f"{caster.name} goads {target.name}, who marks a Stress")
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+@adversary_target_override(GOAD_THEM_ON)
+def goad_them_on_compels(holder: Holder, adversary, fight: Fight):
+    """A goaded adversary swings at whoever goaded it.
+
+    Read off the condition's **source** rather than off its presence, so a
+    Weaponmaster that also carries a Taunt cannot pick this up, and so two Valor
+    PCs each goading something send it at the right one.
+
+    The exact mirror of the Weaponmaster's `goading_strike_compels`, which is the
+    same condition read by the party's targeting rule instead of the GM's.
+    """
+    if fight is None:
+        return None
+    goad = fight.condition_on(adversary, TAUNTED)
+    if goad is None or goad.source is not holder:
+        return None
+    return holder
+
+
+@adversary_attack_disadvantage(GOAD_THEM_ON)
+def goad_them_on_hobbles(holder: Holder, attacker, target, fight: Fight) -> bool:
+    """The goaded attack is made at Disadvantage.
+
+    Scoped to the attack the goad actually compelled - this adversary, swinging
+    at this holder - rather than to every swing a goaded adversary makes. The card
+    attaches the Disadvantage to the compulsion ("they must target you with an
+    attack, **which** they make with disadvantage"), so an attack that ended up
+    aimed elsewhere is not the one being described.
+
+    Folded into the roll with `combined`, so a goaded adversary swinging at a
+    Vulnerable taunter comes out even rather than hobbled outright.
+    """
+    if fight is None or target is not holder:
+        return False
+    goad = fight.condition_on(attacker, TAUNTED)
+    return goad is not None and goad.source is holder
+
+
+# --- Support Tank ------------------------------------------------------------
+
+SUPPORT_TANK = "Support Tank"
+
+SUPPORT_TANK_HOPE = 2
+
+# The same floor Luckbender uses, and for the same shape of card: a Hope-priced
+# reroll of an ally's failed roll with no per-rest limit. Duplicated rather than
+# shared, because one card must never import another's module.
+SUPPORT_TANK_HOPE_FLOOR = 6
+
+
+@reroll(
+    SUPPORT_TANK,
+    unmodelled=[
+        "'an ally within Close range' is answered by the area rule rather than "
+        "by position, rolled per offer - so a Valor PC in a big party reaches "
+        "their ally most of the time and not always",
+        "**Which** die the ally would rather rethrow. The card lets them choose "
+        "between the Hope and the Fear Die; this always throws the one showing "
+        "the lower result, which is the die with the most room to improve. Where "
+        "the two dice are different sizes - a Hope Die swapped to a d20 - the "
+        "lower *result* is not necessarily the better rethrow, and no comparison "
+        "of the two is made",
+    ],
+)
+def support_tank(holder: Holder, roller: Holder, roll, remake, fight: Fight = None):
+    """Support Tank (Valor, level 4). Two Hope rethrows **one** of an ally's dice.
+
+    SRD: "When an ally within Close range fails a roll, you can spend 2 Hope to
+    allow them to reroll either their Hope or Fear Die."
+
+    **The first content anywhere that re-rolls a single die of a duality roll.**
+    Every other registrant on this hook re-makes the whole thing - Luckbender and
+    Adaptability both say "reroll your Duality Dice", and the simulator's reading
+    of that is recorded in SIMULATION-RULES.md. This card is explicit that it is
+    one die, so `remake` is deliberately unused and the replacement is built by
+    changing one field of the resolved roll. That is what put the die *sizes* on
+    `DualityRollResult`: the Hope Die is not always a d12.
+
+    The consequence worth knowing is that it re-rolls **less** than the others
+    and can therefore do more: the untouched die keeps its value, so a roll
+    already carrying a good Fear die keeps it, and a rethrow that comes up equal
+    to the other die is a **critical**.
+
+    SIMULATION RULE - policy, ruled. Fires on an ally's **failed** roll, at
+    `SUPPORT_TANK_HOPE_FLOOR` Hope or above - Luckbender's floor, for the same
+    shape of card, so one number is read in two places rather than two that could
+    drift. Rerolling a success buys nothing measurable, and without a floor a
+    Valor PC would empty their Hope into other people's rolls.
+
+    SIMULATION RULE - policy. The die thrown again is the one **showing the lower
+    result**, which is what anybody at a table does and is arithmetic on two
+    numbers already face-up - not a comparison of anything nobody computes. A
+    failed roll can never be a tie, since equal dice are a critical and a critical
+    always succeeds.
+    """
+    if fight is None or holder is roller:
+        return None
+    if roll is None or roll.is_success is not False:
+        return None
+    if holder.hope_marked < SUPPORT_TANK_HOPE_FLOOR:
+        return None
+    if not holder.can_spend_hope(SUPPORT_TANK_HOPE):
+        return None
+
+    allies = [pc for pc in fight.conscious_party if pc is not holder]
+    if not allies or random.random() >= chance_within(Range.CLOSE, len(allies)):
+        return None
+
+    holder.spend_hope(SUPPORT_TANK_HOPE)
+
+    if roll.hope_die_result <= roll.fear_die_result:
+        thrown, which = (
+            replace(roll, hope_die_result=random.randint(1, roll.hope_die_sides)),
+            "Hope",
+        )
+    else:
+        thrown, which = (
+            replace(roll, fear_die_result=random.randint(1, roll.fear_die_sides)),
+            "Fear",
+        )
+
+    fight.note(
+        f"{holder.name} spends {SUPPORT_TANK_HOPE} Hope; {roller.name} rethrows "
+        f"their {which} Die ({thrown})"
+    )
+    return thrown
 
 
 no_combat_effect(
