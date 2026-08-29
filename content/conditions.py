@@ -51,6 +51,15 @@ here.** What is still declared as a gap is one clause of Stunned - "can't use
 reactions" - since an adversary's Reaction features fire from a dozen dispatch
 points rather than from the spotlight.
 
+**Silenced**, from Midnight's *Hush*, is the first condition whose effect is
+decided **per holder, at the moment it lands**. "They can't cast spells" has
+exactly one handle here - magic damage, the only magic this simulator recognises -
+so the card asks each target whether its printed attack is magic and sets
+`prevents_action` accordingly. A Silenced magic adversary loses its activation
+like a Stunned one; a Silenced physical adversary is recorded and inert like a
+Restrained one. That is why `prevents_action` is a field on the record rather than
+a property of the name.
+
 ## Why `end` is a callable
 
 Because the answer isn't always about time. A condition may end when its holder
@@ -134,6 +143,29 @@ UNSEEN = (HIDDEN, INVISIBLE)
 # never learns this word - and so a future condition that also stops somebody
 # acting needs no new branch.
 STUNNED = "Stunned"
+
+# **Silenced**, from Midnight's *Hush*: "while Silenced, they can't make noise and
+# can't cast spells". The noise has no representation, and casting spells has
+# exactly one - the Counterspell ruling, that **magic damage is the only magic
+# this simulator recognises**. So the silence is worth something against an
+# adversary whose printed attack deals magic damage and nothing against one whose
+# doesn't, and *which* it is has to be decided per holder.
+#
+# That decision is made by whoever applies it, when it lands, and carried on
+# `Condition.prevents_action` - the same field Stunned uses, and the reason it is
+# a field rather than a property of the name. A Silenced physical adversary is
+# recorded and inert, exactly as Restrained is, so other content can still key on
+# it and the coverage report still says the card fired.
+SILENCED = "Silenced"
+
+# **Sheltered**, from Sage's *Wild Fortress*: a creature inside the dome "can't be
+# targeted by attacks and can't make attacks". The second half is
+# `prevents_action`, which makes this the first condition ever applied to a **PC**
+# that stops them acting - and the reason `combat/fight.py` now skips a PC who
+# cannot act rather than spotlighting them. The first half is the dome soaking
+# what would have hit them, which is the card's own damage-reduction hook rather
+# than anything this name carries.
+SHELTERED = "Sheltered"
 
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to

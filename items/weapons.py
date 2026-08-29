@@ -32,6 +32,8 @@ from combat.results import AttackResult
 from content import (
     DamagePool,
     adjust_damage_pool,
+    dealt_damage_scaling,
+    dealt_damage_type,
     remake_action_roll,
     total_ally_extra_damage,
     total_extra_damage,
@@ -230,6 +232,13 @@ def attack_with(
         modifier=pool.modifier + damage_bonus,
         is_critical=attack_roll.is_critical,
         drop_lowest=pool.drop_lowest,
+        # Content the attacker carries that scales the whole roll - Splendor's
+        # Smite, which doubles it. Passed into the roll rather than applied to the
+        # total afterwards, so everything that later reads `damage_roll.total` -
+        # the report, Whirlwind's splash, the target's on-attacked content - sees
+        # the number that actually landed. Asked generically; nothing here knows
+        # what any of it is.
+        multiplier=dealt_damage_scaling(attacker, target, fight),
     )
 
     # Content that re-throws individual dice of the roll just made - the Blade
@@ -254,8 +263,14 @@ def attack_with(
     # the target's own damage responses reach state that only lives for the
     # length of a fight. It was missing here, which left every hook downstream of
     # a PC weapon hit - the resistance, the two severity hooks - seeing None.
+    # ...unless content the attacker carries retypes the swing, which Smite does:
+    # "this attack deals magic damage regardless of the weapon's damage type".
+    # Asked generically, and the weapon's own type is what comes back when nothing
+    # answers.
     marked = target.take_damage(
-        damage_roll.total, fight, damage_type=weapon.damage_type
+        damage_roll.total,
+        fight,
+        damage_type=dealt_damage_type(attacker, target, weapon.damage_type, fight),
     )
 
     # Content the *target* carries that punishes being hit - the Glass Snake's

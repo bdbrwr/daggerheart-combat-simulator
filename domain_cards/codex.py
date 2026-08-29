@@ -1,9 +1,10 @@
 """Codex domain cards.
 
-Every Codex card through level 3 is a Grimoire - one card holding two or three
+Every Codex card through level 4 is a Grimoire - one card holding two or three
 spells - so they're built with content/grimoire.py: each spell is its own
 function, and the book registers a dispatcher under the name a character sheet
-writes.
+writes. **Level 5 is where that stops**: the SRD prints plain Spells from there
+on, so those cards are declared directly rather than inside a book.
 
 Card text is paraphrased in each docstring rather than quoted in full. The
 verbatim text is in .reference/abilities.json, and was checked against the
@@ -1200,3 +1201,33 @@ def construct_strike(construct: Holder, target, fight: Fight):
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
     )
+
+
+# --- Level 5: assessed and dismissed ------------------------------------------
+#
+# Codex stops printing Grimoires at level 5 and prints plain Spells instead, so
+# these two are cards in their own right rather than entries inside a book -
+# which is why they are declared here rather than beside one.
+
+no_combat_effect(
+    "Manifest Wall",
+    "A Spellcast Roll (15), then once per rest a Hope raises a temporary magical "
+    "wall between two points within Far range at any angle; creatures and objects "
+    "in its path are shunted to a side of the caster's choice, and it stands until "
+    "the next rest. Terrain and a shunt, and no positions are tracked - the "
+    "standing answer for content whose whole effect is where somebody is standing. "
+    "Deliberately **not** the Wall of Flame case: that one was ruled to the area "
+    "rule's Far band because anything passing through it takes 4d10+3, and there "
+    "was damage to place. This wall deals nothing, so there is nothing to place.",
+)
+
+no_combat_effect(
+    "Teleport",
+    "Once per long rest, a Spellcast Roll (16) puts the caster and any number of "
+    "willing targets within Close range at a place they have been before, with the "
+    "roll modified by how well they know it and a scattered arrival on a failure. "
+    "Travel - the Blink Out case at a much longer range, and no positions are "
+    "tracked. Worth knowing that modelling it would make a party *worse*: the cast "
+    "spends a whole action roll to buy nothing here, where at a table it is how a "
+    "party leaves a fight it cannot win.",
+)

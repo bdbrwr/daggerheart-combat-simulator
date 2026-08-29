@@ -28,6 +28,11 @@ The two level 4 cards are both firsts of a different kind. *Goad Them On* is the
 first party content to hobble an **adversary's** attack roll, and *Support Tank*
 is the first content anywhere that re-rolls a **single die** of a duality roll
 rather than the whole thing.
+
+Level 5 keeps the domain's shape: **Rousing Strike** rides a critical weapon
+attack and lifts the whole party off it, and **Armorer** is filed *out of combat*
+- its Armor Score bonus is already in the sheet, and what remains is a downtime
+move that restores an Armor Slot on every ally.
 """
 
 import random
@@ -56,6 +61,7 @@ from content.registry import (
     hope_die_for,
     no_combat_effect,
     on_hit,
+    out_of_combat_ability,
     reroll,
     total_damage_bonus,
     total_roll_bonus,
@@ -641,6 +647,83 @@ def support_tank(holder: Holder, roller: Holder, roll, remake, fight: Fight = No
     )
     return thrown
 
+
+# --- Rousing Strike ------------------------------------------------------------
+
+ROUSING_STRIKE = "Rousing Strike"
+
+# "Clear a Hit Point or 1d4 Stress" - the Stress option's die.
+ROUSING_STRIKE_DIE = 4
+
+
+@on_hit(
+    ROUSING_STRIKE,
+    unmodelled=[
+        "'all allies who can see or hear you' - no positions are tracked, so "
+        "every conscious PC is reached. Unlike Critical Inspiration, which prints "
+        "a Very Close band, this card names a sense rather than a range, and "
+        "nothing here represents line of sight either way",
+        "A critical that deals **no damage** never reaches this hook, the same "
+        "gap Champion's Edge declares - `on_hit` is asked where a landed attack "
+        "has rolled damage",
+    ],
+)
+def rousing_strike(attacker: Holder, target, result, fight: Fight) -> None:
+    """Rousing Strike (Valor, level 5). A critical lifts the whole party.
+
+    SRD: "Once per rest, when you critically succeed on an attack, you and all
+    allies who can see or hear you can clear a Hit Point or 1d4 Stress."
+
+    SIMULATION RULE - policy. **Each PC takes the Hit Point if they have one
+    marked, and otherwise rolls the 1d4 Stress.** That is the Healing Hands
+    ruling - HP is taken over Stress because a downed PC is what ends a fight -
+    and each ally answers off their own sheet, exactly as Critical Inspiration's
+    allies do. The 1d4 is rolled per PC rather than once and shared, since the
+    card gives each of them the choice.
+
+    The per-rest use is **not** spent when nobody would gain from it: a party at
+    full HP and no Stress marked keeps the card for later, which is the same
+    guard Critical Inspiration and Second Wind carry.
+    """
+    if fight is None or result.attack_roll is None:
+        return
+    if not result.attack_roll.is_critical:
+        return
+
+    lifted = [
+        pc
+        for pc in fight.conscious_party
+        if pc.hp_marked > 0 or pc.stress_marked > 0
+    ]
+    if not lifted:
+        return
+    if not fight.use_once_per_rest(attacker, ROUSING_STRIKE):
+        return
+
+    for pc in lifted:
+        if pc.hp_marked > 0:
+            pc.clear_hp(1)
+            fight.note(f"{pc.name} is roused, clearing a Hit Point")
+        else:
+            cleared = random.randint(1, ROUSING_STRIKE_DIE)
+            pc.clear_stress(cleared)
+            fight.note(f"{pc.name} is roused, clearing {cleared} Stress")
+
+
+out_of_combat_ability(
+    "Armorer",
+    "Two clauses in two states, and the card can only be in one. The +1 Armor "
+    "Score is a value a character sheet carries **already resolved**, exactly as "
+    "it carries Evasion and thresholds, so running it here would count the bonus "
+    "twice - the same reason Bare Bones and Bone's Untouchable are declared. What "
+    "is left is real and fully representable: during a rest, repairing your own "
+    "armor as a downtime move clears an Armor Slot on **every ally** too. That is "
+    "a party-wide restore of the resource this simulator spends on almost every "
+    "incoming hit, and it happens between fights rather than during one - so it "
+    "belongs to the sequenced-encounter machinery with A Soldier's Bond, Mending "
+    "Touch, Inspirational Words and Soothing Speech, and is filed here rather than "
+    "dismissed. The user ruled it into this state for exactly that reason.",
+)
 
 no_combat_effect(
     "Bare Bones",

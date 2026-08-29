@@ -13,6 +13,12 @@ Level 4 takes that as far as it goes. **Life Ward** is the first thing anywhere
 that reaches a **death move** - three Hope buys an ally one that never happens -
 and it is worth reading its numbers knowing what it costs: three Hope is most of
 a pool, and the ward does nothing at all until the moment it does everything.
+
+Level 5's **Smite** is the first content anywhere that scales a PC's *own* damage.
+The GM side has multiplied damage since the Kneebreaker; the party had no way to,
+because every damage hook here adds to a roll or reshapes it rather than scaling
+the finished number. Doubling has to reach the dice, the modifier and the critical
+bonus at once, which is what put a `multiplier` on `DamageRollResult`.
 """
 
 import random
@@ -29,6 +35,8 @@ from content.registry import (
     Holder,
     action,
     damage_pool,
+    damage_scaling,
+    damage_typing,
     death_move_ward,
     free,
     hope_die_for,
@@ -459,6 +467,115 @@ def life_ward_saves(caster: Holder, target, fight: Fight) -> bool:
     return True
 
 
+# --- Smite ---------------------------------------------------------------------
+
+SMITE = "Smite"
+
+SMITE_HOPE = 3
+
+# The Hope a PC has to be holding before three of it goes on a charge. Luckbender's
+# floor, read here for the reason it is read there: a card this expensive must not
+# starve the class features that also want Hope.
+SMITE_HOPE_FLOOR = 6
+
+# Set on the caster while the smite is charged and waiting for a weapon to land.
+SMITE_CHARGED = "Smite charged"
+
+# Set for the moment between the two hooks this card registers on. The doubling is
+# asked before the damage is rolled and the retyping after it, so the second one
+# cannot read the charge - it has already been spent - and needs its own mark to
+# know that this particular hit is the smite.
+SMITE_STRUCK = "Smite striking"
+
+
+@free(SMITE)
+def smite(caster: Holder, fight: Fight) -> bool:
+    """Smite (Splendor, level 5). Charge the blow, once per rest.
+
+    SRD: "Once per rest, spend 3 Hope to charge your powerful smite. When you next
+    successfully attack with a weapon, double the result of your damage roll. This
+    attack deals magic damage regardless of the weapon's damage type."
+
+    **No roll**, so charging is a free ability and the caster still swings in the
+    same spotlight - which means the charge can be spent on the very attack it was
+    bought for.
+
+    SIMULATION RULE - policy, ruled. Charged at **6 Hope or above**, which is
+    Luckbender's floor read in a third place. The charge itself never expires
+    inside a fight, so there is no moment worth waiting for; what the floor buys is
+    that three Hope does not disappear out of a pool the party's other cards are
+    drawing on. Charging as soon as the 3 Hope could be paid was offered and
+    declined.
+
+    Declines while a charge is already standing - the card holds one.
+    """
+    if fight is None or fight.token_count(caster, SMITE_CHARGED):
+        return False
+    if caster.hope_marked < SMITE_HOPE_FLOOR:
+        return False
+    if not caster.can_spend_hope(SMITE_HOPE):
+        return False
+    if not fight.use_once_per_rest(caster, SMITE):
+        return False
+
+    caster.spend_hope(SMITE_HOPE)
+    fight.set_token(caster, SMITE_CHARGED, 1)
+    fight.note(f"{caster.name} charges a smite")
+    return True
+
+
+@damage_scaling(
+    SMITE,
+    unmodelled=[
+        "'when you next successfully attack **with a weapon**' reaches a weapon "
+        "swing only. A card that rolls its own damage - a Grimoire spell, Bolt "
+        "Beacon - is not a weapon attack and correctly never spends the charge, "
+        "but it also means a Splendor caster who mostly casts may never use it",
+    ],
+)
+def smite_doubles(holder: Holder, target, fight: Fight = None) -> float | None:
+    """The doubling itself, and the moment the charge is spent.
+
+    Asked once, immediately before the weapon's damage is rolled and only after
+    the attack has landed - which is exactly "when you next successfully attack
+    with a weapon". So the charge is never burned on a miss.
+
+    Returns a factor rather than dice, because doubling has to reach the weapon's
+    dice, its flat modifier *and* the critical bonus at once. `roll_damage` takes
+    it as `multiplier` and `DamageRollResult.total` floors the product, so every
+    later reader - the play-by-play, Whirlwind's splash, the target's on-attacked
+    content - sees the number that actually landed.
+    """
+    if fight is None or not fight.token_count(holder, SMITE_CHARGED):
+        return None
+
+    fight.set_token(holder, SMITE_CHARGED, 0)
+    fight.set_token(holder, SMITE_STRUCK, 1)
+    fight.note(f"{holder.name}'s smite lands, doubling the blow")
+    return 2.0
+
+
+@damage_typing(SMITE)
+def smite_is_magic(holder: Holder, target, fight: Fight = None):
+    """"Regardless of the weapon's damage type" - the smite is magic.
+
+    Registered on the same name as the doubling above, which is how one card
+    reaches two hooks. Asked at the moment the damage is handed to the target,
+    which is *after* `smite_doubles` has already cleared the charge - so this
+    reads its own token instead, set alongside it.
+
+    Worth knowing what it is worth: the type decides whose resistance applies, so
+    a smite gets through an adversary resistant to physical damage and is halved by
+    one resistant to magic. The card names it as an upside and it is not always
+    one.
+    """
+    if fight is None or not fight.token_count(holder, SMITE_STRUCK):
+        return None
+
+    fight.set_token(holder, SMITE_STRUCK, 0)
+    return DamageType.MAGIC
+
+
 out_of_combat_ability(
     "Mending Touch",
     "Spend 2 Hope to clear a Hit Point or a Stress on somebody, and once per "
@@ -477,6 +594,16 @@ no_combat_effect(
     "swinging at. Worth being plain that the dismissal is about *this* "
     "simulation: at a table, knowing the answer to one yes-or-no question can "
     "decide whether a fight happens at all.",
+)
+
+no_combat_effect(
+    "Shape Material",
+    "A Hope shapes a section of natural material the caster is touching - stone, "
+    "ice, wood - into a rudimentary tool or a door, no larger than themselves. "
+    "Craft, and the simulator has no objects to shape: nothing in a fight is made "
+    "of anything, no tool is carried that wasn't authored on the sheet, and a door "
+    "is somewhere to go, which is position. It touches nobody's numbers, grants no "
+    "roll and makes no attack.",
 )
 
 no_combat_effect(

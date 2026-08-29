@@ -329,6 +329,9 @@ _ally_extra_damage: dict[str, Callable] = {}
 _attack_misses: dict[str, Callable] = {}
 _death_move_wards: dict[str, Callable] = {}
 _adversary_attack_disadvantages: dict[str, Callable] = {}
+_move_rescinds: dict[str, Callable] = {}
+_damage_scalings: dict[str, Callable] = {}
+_damage_typings: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -701,6 +704,72 @@ def ally_extra_damage(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_ally_extra_damage, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def damage_scaling(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that multiplies the damage its **holder** deals.
+
+    Signature: `(holder, target, fight) -> float | None` - the factor, or None to
+    decline. Holder-scoped on whoever is swinging, and asked once immediately
+    before the damage is rolled, so the answer is passed into `roll_damage` as its
+    `multiplier` rather than applied afterwards.
+
+    **The party-side twin of `damage_multiplier`**, which is GM-side and scanned
+    across the living adversaries because the Kneebreaker's `I've Got 'Em` belongs
+    to a third party. Nothing let a PC scale their *own* damage, which is what
+    Splendor's *Smite* is - "double the result of your damage roll".
+
+    **None of the damage hooks next door can say it.** `damage_bonus` and
+    `extra_damage` add to the roll, `damage_pool` reshapes the dice before the
+    throw, and the two die hooks touch one die each - so all four reach part of a
+    damage roll, and doubling has to reach the dice, the flat modifier *and* the
+    critical bonus at once. Doubling the dice count instead would land on the same
+    mean with a different spread, which is a different card in a game where damage
+    becomes HP through threshold bands.
+
+    Factors from several sources multiply together, and `DamageRollResult.total`
+    floors the product once at the end - the same arrangement `Adversary._dealt`
+    already uses on the other side of the table.
+
+    Being asked is close to the commitment: the damage roll follows immediately,
+    so content that spends a charge here has spent it.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_damage_scalings, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def damage_typing(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that changes what type its holder's weapon damage is.
+
+    Signature: `(holder, target, fight) -> DamageType | frozenset | None` - the
+    type this hit now deals, or None to decline. Holder-scoped, and the first
+    answer wins. Splendor's *Smite* is the reason: "this attack deals magic damage
+    regardless of the weapon's damage type".
+
+    **Distinct from `standard_damage_type` next door**, which says the same thing
+    for an adversary's printed attack and deliberately takes **no `fight`** - its
+    answer is a standing fact about a stat block, and `Adversary.type_of_damage`
+    is called from places that have no fight to pass. This one is asked from a
+    single place that always has one, and it has to: a charge that is spent or
+    unspent is exactly the per-fight state the other hook refuses to carry.
+
+    Asked where a weapon's damage is handed to the target, so it reaches a PC's
+    swing and nothing else. Content that rolls its own attack states its own type
+    on the page and is never asked - the same discriminator `standard_damage_type`
+    uses, and declared as a gap where such content registers.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_damage_typings, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -1661,6 +1730,52 @@ def reroll(name: str, unmodelled: Iterable[str] = ()):
     return register
 
 
+def move_rescind(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that takes its holder's move back and lets them act again.
+
+    Signature: `(holder, roll, fight) -> bool` - True to rescind the move, in
+    which case the PC takes their spotlight over from the start. Holder-scoped on
+    whoever rolled, because that is how the SRD writes it: Arcana's *Premonition*
+    rescinds "a roll **you** made".
+
+    **Not `reroll` next door, which cannot say this.** That hook replaces the
+    *dice* of the roll that was made, so content registered there always re-makes
+    the same move - a Cinder Grasp that missed is a Cinder Grasp thrown again.
+    This one discards the move itself and the PC's options are shuffled afresh, so
+    the second attempt can be a different card or a weapon swing. That difference
+    is the whole of what the card says, and folding it into the reroll hook would
+    have been an existing simplification swallowing a card that disagrees with it.
+
+    **Asked only of a move that resolved without damage.** That is the outcome the
+    simulator can genuinely take back: nothing has been dealt, and everything a
+    roll's outcome feeds is spent by the loop *after* the move returns. So a
+    rescinded roll hands the GM no Fear, never passes the spotlight, and is never
+    seen by the GM-side content that watches or rewrites a party roll
+    (`converted_party_roll`, `apply_on_party_attack_roll`) or by the party's own
+    `apply_ally_on_roll` - all four are called from `combat/fight.py`, one step
+    outside this. Content that means a **failed** move - which is where the GM
+    conveys consequences - checks `roll.is_success` for itself.
+
+    **The second attempt stands.** It is asked once per spotlight, so a chain of
+    rescinds off one move is impossible even if something offered one.
+
+    **What the rescinded move spent is not refunded.** Stress marked and Hope paid
+    for the first attempt are gone; only the move is taken back. Nothing reports
+    what an option spent, so refunding would mean every option growing a receipt,
+    and it is declared as a gap where content registers instead.
+
+    Being asked is the commitment - the move goes back as soon as anything says so
+    - which means content may spend a per-rest use on the spot.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_move_rescinds, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
 def force_reroll(name: str, unmodelled: Iterable[str] = ()):
     """Register content that forces an *adversary* to re-make a roll.
 
@@ -2346,6 +2461,37 @@ def remake_action_roll(roller: Holder, roll, remake: Callable, fight: Fight = No
     return roll
 
 
+def move_is_rescinded(roller: Holder, roll, fight: Fight = None) -> bool:
+    """Whether anything the roller carries takes their move back to be made again.
+
+    False unless something says so, and the **first** answer wins - a move is
+    rescinded once, not twice. Holder-scoped, unlike the reroll hooks either side
+    of it: this is content acting on its own roll rather than on an ally's. See
+    `move_rescind`.
+
+    Candidates are shuffled when there is more than one, for the reason
+    `_party_offers` shuffles: which of two cards spends itself must not be decided
+    by the order a sheet was typed in. The shuffle is skipped otherwise, so a
+    party carrying none of this content draws nothing from the global RNG.
+
+    One call site, in `combat/policy.py`'s `take_pc_turn`, where the move has
+    resolved without damage and its Hope or Fear outcome has not yet been spent.
+    """
+    _discover()
+    candidates = [
+        found
+        for name in roller.named_features
+        if (found := _registered(_move_rescinds, name)) is not None
+    ]
+    if len(candidates) > 1:
+        random.shuffle(candidates)
+
+    for rescind in candidates:
+        if rescind(roller, roll, fight):
+            return True
+    return False
+
+
 def force_adversary_reroll(
     attacker, target, roll, remake: Callable, fight: Fight = None
 ):
@@ -2399,6 +2545,44 @@ def total_extra_damage(holder: Holder, target, roll, fight=None) -> list:
         if contribute is not None:
             groups.extend(contribute(holder, target, roll, fight))
     return groups
+
+
+def dealt_damage_scaling(holder: Holder, target, fight: Fight = None) -> float:
+    """How much this holder's own content multiplies the damage they're dealing.
+
+    One, unless something answers. Asked of the attacker's own features rather
+    than of the field, which is what separates it from
+    `incoming_damage_multiplier` - see `damage_scaling`. Several answers multiply
+    together; the caller passes the product to `roll_damage` and
+    `DamageRollResult.total` floors it once.
+    """
+    _discover()
+    multiplier: float = 1
+    for name in holder.named_features:
+        scale = _registered(_damage_scalings, name)
+        if scale is not None:
+            answer = scale(holder, target, fight)
+            if answer:
+                multiplier *= answer
+    return multiplier
+
+
+def dealt_damage_type(holder: Holder, target, printed, fight: Fight = None):
+    """The type this holder's weapon hit deals, defaulting to the weapon's own.
+
+    `printed` is what the catalogue says the weapon deals, returned unchanged
+    unless content overrides it. The **first** override wins: two cards each
+    retyping the same swing is not a state the SRD has, and combining them would
+    have to invent a rule for what physical-and-magic-and-something-else means.
+    """
+    _discover()
+    for name in holder.named_features:
+        retype = _registered(_damage_typings, name)
+        if retype is not None:
+            answer = retype(holder, target, fight)
+            if answer is not None:
+                return answer
+    return printed
 
 
 def total_ally_extra_damage(attacker: Holder, target, roll, fight=None) -> list:

@@ -43,6 +43,17 @@ class DamageRollResult:
     is_critical: bool = False
     drop_lowest: int = 0
 
+    # What the finished total is multiplied by. A raw input like `drop_lowest` and
+    # `is_critical` beside it - not a duplicate of anything derived - and it is
+    # here because "double the result of your damage roll" cannot be said any
+    # other way: the doubling has to reach the dice, the modifier *and* the
+    # critical bonus at once, and folding it into the modifier would reach only
+    # one of the three.
+    #
+    # Splendor's *Smite* is the first user. Defaulted, so every existing
+    # construction of this class is unchanged.
+    multiplier: float = 1.0
+
     @property
     def _discardable_dice(self) -> list[int]:
         """Every die the discard is allowed to touch, lowest first."""
@@ -109,8 +120,13 @@ class DamageRollResult:
 
     @property
     def total(self) -> int:
-        """rolled_total + modifier + critical_bonus."""
-        return self.rolled_total + self.modifier + self.critical_bonus
+        """(rolled_total + modifier + critical_bonus), scaled by `multiplier`.
+
+        Floored once, at the end, the way every other scaling in the codebase
+        rounds - see `Adversary._dealt`, which halves and doubles the same way.
+        With the default multiplier of 1.0 this is exactly the sum it always was.
+        """
+        return int((self.rolled_total + self.modifier + self.critical_bonus) * self.multiplier)
 
     def __repr__(self) -> str:
         groups = " + ".join(
@@ -124,6 +140,8 @@ class DamageRollResult:
             parts.append(f"mod={self.modifier:+d}")
         if self.is_critical:
             parts.append(f"CRIT(+{self.critical_bonus})")
+        if self.multiplier != 1.0:
+            parts.append(f"x{self.multiplier:g}")
         parts.append(f"total={self.total}")
         return "DamageRoll(" + ", ".join(parts) + ")"
 
@@ -133,6 +151,7 @@ def roll_damage(
     modifier: int = 0,
     is_critical: bool = False,
     drop_lowest: int = 0,
+    multiplier: float = 1.0,
 ) -> DamageRollResult:
     """Roll one or more dice groups and resolve modifier/critical damage.
 
@@ -154,4 +173,5 @@ def roll_damage(
         modifier=modifier,
         is_critical=is_critical,
         drop_lowest=drop_lowest,
+        multiplier=multiplier,
     )

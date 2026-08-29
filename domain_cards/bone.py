@@ -18,6 +18,10 @@ Level 3 adds the two cards that reach *other* people's rolls and other people's
 armor: Tactician is the first content anywhere that belongs to a PC helping
 somebody else, and Brace is the first that spends more than the one free Armor
 Slot the damage rule already marks.
+
+Level 5's **Signature Move** is the first content anywhere to swap the party's
+Hope Die - the `hope_die` hook has existed since the Faerie and no domain card
+had ever registered on it.
 """
 
 import random
@@ -33,10 +37,12 @@ from content.registry import (
     extra_armor_slot,
     extra_damage,
     help_bonus,
+    hope_die,
     hope_die_for,
     insignificant_combat_effect,
     no_combat_effect,
     on_hit,
+    on_roll,
     total_damage_bonus,
     total_roll_bonus,
 )
@@ -500,7 +506,103 @@ def redirect(holder: Holder, attacker, roll, fight: Fight = None) -> None:
     )
 
 
+# --- Signature Move ----------------------------------------------------------
+
+SIGNATURE_MOVE = "Signature Move"
+
+# The die that replaces the d12 Hope Die. Also what identifies the roll
+# afterwards - see `signature_move_clears`.
+SIGNATURE_MOVE_DIE = 20
+
+
+@hope_die(
+    SIGNATURE_MOVE,
+    unmodelled=[
+        "'as part of an action you're taking' - `hope_die_for` is asked wherever "
+        "Duality Dice are rolled, and a PC's **Reaction Rolls** (Counterspell, "
+        "Repudiate) are among those sites. Nothing there distinguishes an action "
+        "roll from a reaction, so a Reaction Roll can claim the per-rest use. The "
+        "d20 still helps that roll; what is lost is the Stress, since the clear "
+        "below only ever fires on the spotlight's action roll",
+        "Naming and describing the move is fiction with no mechanic attached, so "
+        "nothing here records what the move is",
+    ],
+)
+def signature_move(holder: Holder, fight: Fight) -> int | None:
+    """Signature Move (Bone, level 5). A d20 in place of the Hope Die.
+
+    SRD: "Name and describe your signature combat move. Once per rest, when you
+    perform this signature move as part of an action you're taking, you can roll a
+    **d20** as your Hope Die. On a success, clear a Stress."
+
+    A d20 against a d12 Fear Die does two things at once, and the second is the
+    larger: the roll's total goes up by four on average, and the roll comes up
+    with **Hope** far more often than with Fear - which is what decides whether
+    the party keeps the spotlight. This is the first content anywhere to swap the
+    Hope Die on the party's side.
+
+    SIMULATION RULE - policy, ruled. **Spent on the first action roll made while
+    a Stress is marked.** Taking the first roll of the fight outright was offered
+    and declined: the card pays out a Stress clear on a success, and a party at
+    full Stress would throw that half away. Waiting for a mark is the same
+    reasoning Critical Inspiration and Healing Field already follow, and it costs
+    the d20 on the opening rolls of a fight, which is deliberate.
+
+    Being asked is the commitment - `hope_die_for` consults this immediately
+    before the roll - so the per-rest use is claimed here rather than afterwards.
+    """
+    if fight is None or holder.stress_marked <= 0:
+        return None
+    if not fight.use_once_per_rest(holder, SIGNATURE_MOVE):
+        return None
+
+    fight.note(f"{holder.name} performs their signature move, rolling a d20 for Hope")
+    return SIGNATURE_MOVE_DIE
+
+
+@on_roll(SIGNATURE_MOVE)
+def signature_move_clears(holder: Holder, roll, fight: Fight) -> None:
+    """The Stress a successful signature move clears.
+
+    Registered on the same name as the die swap above, which is how one card
+    reaches two hooks - the arrangement Ferocity and Boost already use.
+
+    **Which roll this was is read off the roll itself**, through the Hope Die's
+    size, rather than through a token the swap left behind. `DualityRollResult`
+    records what each die was rolled on (added for Support Tank), and nothing else
+    in the project swaps to a d20, so the size identifies the roll exactly. A
+    token would have been wrong here: `hope_die_for` is asked at roll sites this
+    hook never hears about, so one set on a Reaction Roll would sit there and pay
+    out on the next action roll instead.
+    """
+    if fight is None or roll is None:
+        return
+    if roll.hope_die_sides != SIGNATURE_MOVE_DIE or not roll.is_success:
+        return
+    if holder.stress_marked <= 0:
+        return
+
+    holder.clear_stress(1)
+    fight.note(f"{holder.name}'s signature move lands, clearing a Stress")
+
+
 # --- Assessed and dismissed --------------------------------------------------
+
+no_combat_effect(
+    "Know Thy Enemy",
+    "An Instinct Roll against a creature being observed; on a success, a Hope "
+    "buys one set of information about them - unmarked HP and Stress, Difficulty "
+    "and thresholds, tactics and damage dice, or features and Experiences - and a "
+    "Stress additionally removes a Fear from the GM's pool. Dismissed on its "
+    "**trigger**, the way Gifted Tracker and Stealth Expertise are: 'when "
+    "observing a creature' is not a move the simulator ever makes, and every "
+    "number the card would reveal is already read by the party's own policies, so "
+    "the information half changes nothing here. Worth recording that the Fear "
+    "clause is real and fully representable - a Fear removed is an extra "
+    "activation the GM never gets - and that modelling it alone, as a partial "
+    "implementation with the information declared a gap, was proposed and "
+    "declined. The card is filed whole rather than split.",
+)
 
 no_combat_effect(
     "Untouchable",

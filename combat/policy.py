@@ -64,6 +64,7 @@ from content import (
     granted_attack_advantage,
     hope_die_for,
     is_immune_to,
+    move_is_rescinded,
     remake_action_roll,
     skips_spotlight,
     standard_attack_area,
@@ -207,13 +208,38 @@ def take_pc_turn(pc: PlayerCharacter, state: FightState) -> AttackResult | None:
 
     Returns the roll that closed it, or None if there was nothing left to
     attack (which only happens if the fight is already over).
+
+    **A move that came to nothing can be taken back.** Content may rescind it and
+    send the PC through the whole choice again - Arcana's *Premonition* is the
+    first, and the choice is genuinely re-made rather than the dice re-thrown, so
+    the second attempt can be an entirely different card. Asked generically;
+    nothing here knows what any of it is, or that any of it exists.
+
+    Offered at most once, so the second attempt stands however it comes out. The
+    move is re-made rather than resumed, which means a condition charging its
+    holder for making an action roll charges again - correctly, since the second
+    attempt is a second action roll.
     """
     target = choose_pc_target(state, pc)
     _use_free_actions(pc, state, roll_to_follow=target is not None)
 
     if target is None:
         return None
-    return _make_the_roll(pc, target, state)
+
+    result = _make_the_roll(pc, target, state)
+    if result is None or result.damage_roll is not None or not result.made_an_attack:
+        return result
+    if not move_is_rescinded(pc, result.attack_roll, state):
+        return result
+
+    state.note(f"{pc.name} takes the move back, and it never happened")
+    # The party's focus may have moved while the first attempt resolved - a
+    # condition it applied could have finished something off - so who to act
+    # against is asked again rather than carried over.
+    target = choose_pc_target(state, pc)
+    if target is None:
+        return result
+    return _make_the_roll(pc, target, state) or result
 
 
 def _use_free_actions(

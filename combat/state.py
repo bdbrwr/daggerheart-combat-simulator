@@ -513,6 +513,12 @@ class FightState:
         still gone. That is deliberate and it is the whole weight of the thing:
         the GM turn charges before an adversary is asked what it does, exactly as
         it does for the Green Ooze's `Slow`.
+
+        **The two sides answer this differently, and should.** A GM *paid* for the
+        activation, so it is spent on nothing; the party's spotlight is not bought,
+        so `combat/fight.py` skips a PC who cannot act and gives it to somebody who
+        can - passing it to the GM only when nobody in the party can use it. Sage's
+        *Wild Fortress* is the first thing that puts a PC in this state.
         """
         return any(
             holder_id == id(combatant) and condition.prevents_action

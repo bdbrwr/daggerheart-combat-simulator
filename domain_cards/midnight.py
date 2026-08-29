@@ -26,6 +26,12 @@ the opposite duration - and that difference is the whole of what it costs to
 write. A permanent reduction is simply a smaller number on the stat block; a
 temporary one has to be given back, so the card carries a condition whose only
 job is to time it.
+
+Level 5's **Hush** brings *Silenced*, the first condition whose effect is settled
+per holder when it lands - it stops an adversary whose printed attack is magic and
+leaves everybody else merely conditioned. It is also the first party-applied
+condition anywhere that can lift **without the GM paying a Fear**, since the card
+prints an ender that reaches the caster rather than the holder.
 """
 
 from combat.results import AttackResult
@@ -33,12 +39,13 @@ from content.aoe import Range, area_difficulty, targets_beaten, targets_in_area
 from content.conditions import (
     HIDDEN,
     RESTRAINED,
+    SILENCED,
     VULNERABLE,
     WHEN_THEY_ACT,
     Condition,
     when_the_gm_pays,
 )
-from content.damage_types import DamageType
+from content.damage_types import DamageType, types_in
 from content.registry import (
     Fight,
     Holder,
@@ -47,6 +54,7 @@ from content.registry import (
     attack_advantage,
     free,
     no_combat_effect,
+    on_damaged,
     total_extra_damage,
 )
 from content.spellcast import spellcast
@@ -625,6 +633,136 @@ def _glyph_fades(holder, fight: Fight, moment: str) -> bool:
     return True
 
 
+# --- Hush --------------------------------------------------------------------
+
+HUSH = "Hush"
+
+
+@action(
+    HUSH,
+    unmodelled=[
+        "'within Close range' for the target, and 'everything within Very Close "
+        "range of them' for the area - no positions are tracked, so the area rule "
+        "in SIMULATION-RULES.md decides how many the silence reaches, measured "
+        "over the adversaries other than the target",
+        "The silence **following the target as they move**, which is what makes "
+        "this an area that travels rather than one that is placed. Nothing moves "
+        "here, so who is caught is settled once when the spell lands",
+        "'they can't make noise' - noise has no representation. Only the spell "
+        "half of Silenced reaches a fight",
+        "'or you cast Hush again' as an ender - the standing don't-re-apply rule "
+        "already stops a second cast while a silence is standing, so the clause "
+        "is unreachable rather than unimplemented",
+    ],
+)
+def hush(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Hush (Midnight, level 5). Silence a target and everything around them.
+
+    SRD: make a Spellcast Roll against a target within Close range. On a success,
+    spend a Hope to conjure suppressive magic around the target that encompasses
+    everything within Very Close range of them and follows them as they move. The
+    target and anything within the area is *Silenced* until the GM spends a Fear
+    on their turn to clear this condition, you cast Hush again, or you take Major
+    damage. While *Silenced*, they can't make noise and can't cast spells.
+
+    SIMULATION RULE - rules interpretation, ruled. **"Can't cast spells" is
+    answered by the Counterspell rule**: magic damage is the only magic this
+    simulator recognises, since nothing marks a feature as magical and damage is
+    the one thing that carries a type. So the silence is asked, per target and at
+    the moment it lands, whether that adversary's **printed attack deals magic
+    damage**. If it does, the condition stops them acting, exactly as Stunned
+    does - the activation and the Fear that bought it are both spent on nothing.
+    If it doesn't, they are Silenced and inert, exactly as Restrained is, and the
+    GM still has to pay a Fear each to clear it.
+
+    Reading it as stopping *any* Action feature was offered and declined, as was
+    leaving the condition inert for everybody.
+
+    The Hope is what conjures the suppression, so a caster with none declines
+    before rolling rather than spending the spotlight and failing to pay - the
+    Bolt Beacon and Glyph of Nightfall reading. It is spent only on a success, as
+    the card orders it.
+
+    The third ender - the caster taking Major damage - **is** modelled, in
+    `hush_breaks` below. That makes this the first party condition anywhere that
+    the GM can end without paying for it.
+    """
+    if fight is None or not caster.can_spend_hope(1):
+        return None
+    if fight.has_condition(target, SILENCED):
+        return None
+
+    attack_roll = spellcast(caster, target, fight)
+    if attack_roll is None:
+        return None
+
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    caster.spend_hope(1)
+
+    others = [
+        adversary for adversary in fight.living_adversaries if adversary is not target
+    ]
+    caught = [target] + targets_in_area(Range.VERY_CLOSE, others)
+    for adversary in caught:
+        fight.apply_condition(
+            adversary,
+            Condition(
+                name=SILENCED,
+                end=when_the_gm_pays,
+                source=caster,
+                prevents_action=_casts_with_magic(adversary),
+            ),
+        )
+
+    stopped = sum(1 for adversary in caught if _casts_with_magic(adversary))
+    fight.note(
+        f"{caster.name} hushes {len(caught)}, {stopped} of whom cannot act at all"
+    )
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+def _casts_with_magic(adversary) -> bool:
+    """Whether this adversary's printed attack is the kind of magic a silence stops.
+
+    Read off the stat block's own damage type, which is the only handle the
+    simulator has on whether anything is magical - the same reading Counterspell
+    is built on. Decided once, when the condition lands, rather than asked again
+    later: a stat block's printed type does not change mid-fight, and freezing it
+    onto `Condition.prevents_action` is what lets the fight loop stay generic.
+
+    The gap it leaves is an adversary whose *standard attack* is physical but
+    whose Action feature deals magic damage. It is Silenced and inert, where the
+    page would stop the feature.
+    """
+    return DamageType.MAGIC in types_in(adversary.type_of_damage())
+
+
+@on_damaged(HUSH)
+def hush_breaks(holder: Holder, amount: int, hp_marked: int, fight: Fight) -> None:
+    """Major damage to the caster tears the suppression apart.
+
+    The card's third ender, and the only one in the project that lets a condition
+    the party applied lift **without the GM paying for it**. Read on the damage
+    *amount* against the caster's printed Major threshold, which is the standing
+    reading of "takes Major damage" - the same one Get Back Up takes of "Severe".
+
+    Only silences this caster raised are cleared. `release_conditions_from` would
+    have taken everything they had applied, which would drop a Chokehold or a
+    glyph off the same PC being hit, so the condition's `source` is checked one at
+    a time instead.
+    """
+    if fight is None or amount < holder.major_threshold:
+        return
+
+    for adversary in fight.living_adversaries:
+        silence = fight.condition_on(adversary, SILENCED)
+        if silence is not None and silence.source is holder:
+            fight.clear_condition(adversary, SILENCED)
+            fight.note(f"{holder.name} reels, and {adversary.name} is no longer Silenced")
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
 no_combat_effect(
@@ -637,6 +775,17 @@ no_combat_effect(
     "the simulator makes attack rolls, Spellcast Rolls and Reaction Rolls, and "
     "never rolls to move unnoticed through anywhere. Dismissed on the trigger, "
     "the way Gifted Tracker was, and not on the size of the effect.",
+)
+no_combat_effect(
+    "Phantom Retreat",
+    "A Hope activates the spell where the caster is standing, and another Hope at "
+    "any time before their next rest makes them disappear and reappear on that "
+    "spot; the spell then ends. Its whole effect is where somebody is standing, "
+    "and no positions are tracked - the Blink Out case with a delay attached. "
+    "Worth knowing that modelling it would make a party *worse*, since the two "
+    "Hope would buy nothing here, and that at a table this is one of the strongest "
+    "escapes in the domain: it is how a Rogue walks into a fight they intend to "
+    "leave.",
 )
 no_combat_effect(
     "Pick and Pull",

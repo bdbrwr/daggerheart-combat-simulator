@@ -24,10 +24,12 @@ from content.registry import (
     action,
     ally_damage_reduction,
     hope_die_for,
+    move_rescind,
     no_combat_effect,
     total_extra_damage,
 )
 from content.spellcast import spellcast
+from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import roll_duality
 
@@ -557,6 +559,210 @@ def preservation_blast(caster: Holder, target, fight: Fight) -> AttackResult | N
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
     )
+
+
+# --- Chain Lightning ---------------------------------------------------------
+
+CHAIN_LIGHTNING = "Chain Lightning"
+
+CHAIN_LIGHTNING_STRESS = 2
+CHAIN_LIGHTNING_DICE = 2
+CHAIN_LIGHTNING_DIE = 8
+CHAIN_LIGHTNING_MODIFIER = 4
+
+# The card costs a resource beyond the roll, so it waits for a second target -
+# the Rain of Blades side of the split rather than the Preservation Blast side,
+# where a spell that costs nothing but the roll never declines.
+CHAIN_LIGHTNING_MINIMUM_TARGETS = 2
+
+
+@action(
+    CHAIN_LIGHTNING,
+    unmodelled=[
+        "'all targets within Close range' - no positions are tracked, so the "
+        "area rule in SIMULATION-RULES.md decides how many the first burst "
+        "catches",
+        "'within Close range of previous targets who took damage' - nothing "
+        "records who is standing near whom, so each further wave is a fresh "
+        "Close draw over the adversaries the lightning has not reached yet. The "
+        "shape of the chain at a table - two adversaries beside each other "
+        "carrying it into a third across the room - has no representation here",
+    ],
+)
+def chain_lightning(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Chain Lightning (Arcana, level 5).
+
+    SRD: "Mark 2 Stress to make a Spellcast Roll, unleashing lightning on all
+    targets within Close range. Targets you succeed against must make a reaction
+    roll with a Difficulty equal to the result of your Spellcast Roll. Targets who
+    fail take 2d8+4 magic damage. Additional adversaries not already targeted by
+    Chain Lightning and within Close range of previous targets who took damage
+    must also make the reaction roll. Targets who fail take 2d8+4 magic damage.
+    This chain continues until there are no more adversaries within range."
+
+    One Spellcast Roll against the whole area, each adversary checked against its
+    own Difficulty - the Wild Flame shape. What is new is the second gate: beating
+    an adversary's Difficulty only earns it a **reaction roll**, and the lightning
+    lands on the ones that fail it. An adversary's reaction roll is a flat d20 with
+    no modifier, since adversaries have no traits, and the Difficulty is the total
+    the Spellcast Roll came to - so a big roll both catches more of the area and is
+    harder to shrug off.
+
+    SIMULATION RULE - rules interpretation, ruled. **The chain is a fresh Close
+    draw per wave.** Whoever the lightning damaged carries it onward, and who is
+    near them is the positional question the area rule answers everywhere else, so
+    each wave draws `targets_in_area(Range.CLOSE, ...)` again from the adversaries
+    it has not reached. Waves continue while the previous one actually dealt
+    damage, which is what "until there are no more adversaries within range" comes
+    to on a field with no positions in it. Reading it as "everything still alive"
+    was offered and declined.
+
+    **The damage is rolled once and reused**, the reading `Adversary.area_attack`
+    already takes of one roll landing on several targets - so every adversary the
+    chain catches, in every wave, takes the same 2d8+4.
+
+    SIMULATION RULE - policy, ruled. Declines below `CHAIN_LIGHTNING_MINIMUM_TARGETS`
+    in the initial band. The 2 Stress is what separates this from Preservation
+    Blast, which never declines because it costs nothing the caster wasn't
+    spending anyway.
+    """
+    trait = getattr(caster, "spellcast_trait", "")
+    if not trait or trait not in caster.traits:
+        return None
+
+    area = targets_in_area(Range.CLOSE, fight.living_adversaries)
+    if len(area) < CHAIN_LIGHTNING_MINIMUM_TARGETS:
+        return None
+    if not caster.will_spend_stress(CHAIN_LIGHTNING_STRESS):
+        return None
+
+    # The Stress buys the roll, so it is marked once the cast is definitely going
+    # ahead and never on a decline.
+    caster.spend_stress(CHAIN_LIGHTNING_STRESS)
+    attack_roll = spellcast(caster, target, fight, difficulty=area_difficulty(area))
+    if attack_roll is None:
+        return None
+
+    beaten = targets_beaten(attack_roll, area)
+    if not beaten:
+        fight.note(f"{caster.name}'s lightning finds nobody ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=CHAIN_LIGHTNING_DICE, sides=CHAIN_LIGHTNING_DIE)]
+        + total_extra_damage(caster, target, attack_roll, fight),
+        modifier=CHAIN_LIGHTNING_MODIFIER,
+        is_critical=attack_roll.is_critical,
+    )
+
+    # Held by identity: `Adversary` is a plain dataclass, so two spawned copies of
+    # one stat block compare equal and a membership test on the objects would drop
+    # the second of a pair from the chain.
+    reached = {id(adversary) for adversary in area}
+    struck = _shocked(beaten, attack_roll.total, damage_roll.total, fight)
+    marked = sum(hit for _, hit in struck)
+    fight.note(
+        f"{caster.name} looses chain lightning, catching {len(struck)} "
+        f"for {damage_roll.total} each"
+    )
+
+    while struck:
+        onward = [
+            adversary
+            for adversary in fight.living_adversaries
+            if id(adversary) not in reached
+        ]
+        if not onward:
+            break
+        wave = targets_in_area(Range.CLOSE, onward)
+        reached.update(id(adversary) for adversary in wave)
+        struck = _shocked(wave, attack_roll.total, damage_roll.total, fight)
+        marked += sum(hit for _, hit in struck)
+        if struck:
+            fight.note(f"The lightning arcs onward into {len(struck)} more")
+
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
+def _shocked(targets: list, difficulty: int, damage: int, fight: Fight) -> list:
+    """Which of `targets` fail the reaction roll, and what the lightning cost them.
+
+    A flat d20 against `difficulty` per adversary - no modifier, since adversaries
+    have no traits to roll and the SRD's reaction rolls for them are exactly that.
+    The Difficulty is passed as `evasion` on purpose; see `dice/d20.py`, which
+    keeps that name for the number a d20 has to beat whatever it is called on the
+    other side of the table.
+
+    Returns pairs rather than bare adversaries because the caller needs the HP the
+    chain marked in total, and asking each target again afterwards would not say.
+    """
+    caught = []
+    for adversary in targets:
+        if roll_d20(evasion=difficulty).is_success:
+            fight.note(f"{adversary.name} shrugs off the lightning")
+            continue
+        caught.append(
+            (adversary, adversary.take_damage(damage, fight, damage_type=DamageType.MAGIC))
+        )
+    return caught
+
+
+# --- Premonition -------------------------------------------------------------
+
+PREMONITION = "Premonition"
+
+
+@move_rescind(
+    PREMONITION,
+    unmodelled=[
+        "'immediately after the GM conveys the consequences of a roll you made' "
+        "reaches a **failed** move only. A success with Fear has consequences "
+        "conveyed too, and its damage has already landed - the simulator cannot "
+        "un-deal it, so that half of the trigger is out of reach",
+        "'like they never happened' does not refund what the rescinded move "
+        "spent. Stress marked and Hope paid for the first attempt are gone; only "
+        "the move itself is taken back. Refunding was offered and would mean "
+        "every option reporting what it cost, which nothing does",
+        "Rolls made outside the spotlight's one move - a Reaction Roll, a "
+        "Counterspell - are not offered to this hook, so a vision cannot rescue "
+        "one of those",
+    ],
+)
+def premonition(holder: Holder, roll, fight: Fight) -> bool:
+    """Premonition (Arcana, level 5). Whether the move that just failed is taken back.
+
+    SRD: "You can channel arcane energy to have visions of the future. Once per
+    long rest, immediately after the GM conveys the consequences of a roll you
+    made, you can rescind the move and consequences like they never happened and
+    make another move instead."
+
+    SIMULATION RULE - rules interpretation, ruled. **A move, not a roll.** The
+    simulator already had a hook that re-throws the dice of a roll that resolved -
+    Luckbender and Adaptability both use it - and registering here instead is the
+    difference between "cast that again" and "do something else". Rescinding sends
+    the PC back through the whole spotlight, options shuffled afresh, so a Wizard
+    whose Cinder Grasp missed may swing their staff the second time.
+
+    **The consequences that can be taken back are a failure's.** The move's Hope
+    or Fear outcome is spent by the loop after the move returns, so a rescinded
+    failure costs the party nothing - no Fear handed over, no spotlight passed.
+    That is the whole of what the card buys here, and it is a large thing: a roll
+    with Fear is how the GM's turn arrives.
+
+    No policy of its own to rule on. The card has one trigger, one use per long
+    rest, and no cost, so it fires on the first move of the fight that fails -
+    holding it back would mostly mean not using it, which is the Deadly Focus
+    reading of a free once-per-rest.
+    """
+    if fight is None or roll is None or roll.is_success:
+        return False
+    if not fight.use_once_per_rest(holder, PREMONITION, long=True):
+        return False
+
+    fight.note(f"{holder.name} foresaw this, and the move is unmade ({roll})")
+    return True
 
 
 # --- Assessed and dismissed --------------------------------------------------

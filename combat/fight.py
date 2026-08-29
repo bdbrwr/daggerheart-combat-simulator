@@ -136,6 +136,13 @@ def _take_pc_spotlight(state: FightState) -> None:
     """One PC acts, then the spotlight either stays with the party or moves."""
     pc = _next_pc(state)
     if pc is None:
+        # Nobody standing can act - every conscious PC is sheltered, stunned or
+        # otherwise held. The spotlight goes to the GM rather than being held by a
+        # party that can do nothing with it, which is also the only thing stopping
+        # `_resolve` spinning: a spotlight that resolves into nothing never
+        # increments `pc_actions`, so the safety net would never catch it.
+        state.note("Nobody in the party can act; the spotlight passes")
+        state.spotlight = Side.GM
         return
 
     state.acted_this_pass.add(id(pc))
@@ -188,8 +195,20 @@ def _next_pc(state: FightState):
     hand the first-listed PC more actions than the rest. Everyone goes once
     before anyone goes twice; when the party has all acted the pass resets and
     they keep going.
+
+    **A PC a condition stops from acting is skipped rather than spotlighted.**
+    The GM side spends the activation and the Fear that bought it on a Stunned
+    adversary, because the GM chose to spotlight it; the party's spotlight isn't
+    bought, so it simply goes to somebody who can use it. Read generically off
+    `Condition.prevents_action` - Sage's *Wild Fortress* shelters two PCs who
+    "can't make attacks", and a Stunned PC would answer the same way if anything
+    stunned one.
+
+    Returns None when nobody can act, which the caller turns into the spotlight
+    passing to the GM. That matters: without it a party entirely unable to act
+    would hold the spotlight forever.
     """
-    standing = state.conscious_party
+    standing = [pc for pc in state.conscious_party if not state.cannot_act(pc)]
     if not standing:
         return None
 

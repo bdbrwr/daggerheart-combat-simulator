@@ -15,6 +15,8 @@ Cards assessed as belonging outside a fight are declared at the bottom, so that
 as importantly, never looks like a dismissal either.
 """
 
+import random
+
 from content.aoe import Range, targets_reached
 from content.registry import (
     Fight,
@@ -39,6 +41,12 @@ NOT_GOOD_ENOUGH_CEILING = 2
 SCRAMBLE = "Scramble"
 VERSATILE_FIGHTER = "Versatile Fighter"
 DEADLY_FOCUS = "Deadly Focus"
+CHAMPIONS_EDGE = "Champion's Edge"
+
+# "Spend up to 3 Hope... you can't choose the same option more than once", and the
+# card prints exactly three options - so this is the printed cap and the length of
+# the list at once. Kept as a number so the page and the code read alike.
+CHAMPIONS_EDGE_HOPE = 3
 
 # Which adversary the focus is fixed on, held as that adversary's `id()` - the
 # same way Ranger's Focus remembers its mark. Zero means the focus is over, which
@@ -375,6 +383,91 @@ def deadly_focus(holder: Holder, target, roll, fight: Fight = None) -> list:
     # `discardable=False`, like every die a feature adds to somebody else's roll.
     return [DiceGroup(count=1, sides=find_weapon(carried).damage_die, discardable=False)]
 
+
+@on_hit(
+    CHAMPIONS_EDGE,
+    unmodelled=[
+        "A critical that deals **no damage** never reaches this hook. `on_hit` is "
+        "asked where a landed attack has rolled damage, so a card that crits and "
+        "applies a condition instead - Midnight's Shadowbind, Sage's Death Grip - "
+        "is an attack the Blade critically succeeded on that this cannot see",
+    ],
+)
+def champions_edge(attacker: Holder, target, result, fight: Fight) -> None:
+    """Champion's Edge (Blade, level 5). Up to 3 Hope cashed in on a critical.
+
+    SRD: "When you critically succeed on an attack, you can spend up to 3 Hope and
+    choose one of the following options for each Hope spent: you clear a Hit
+    Point; you clear an Armor Slot; the target must mark an additional Hit Point.
+    You can't choose the same option more than once."
+
+    Three printed options and a cap of three Hope, with no repeats - so the cap is
+    the option list, and a Blade with the Hope for it buys every option that is
+    open to them.
+
+    SIMULATION RULE - policy, ruled. **Every option that would actually do
+    something, up to the Hope available.** Clearing a Hit Point with none marked
+    and clearing an Armor Slot with none marked both buy nothing, so neither is
+    offered - the standing rule that a benefit computing to zero is not paid for,
+    and here it is read off the sheet the player is looking at rather than off a
+    statistic. Forcing the target to mark an HP is dropped for the same reason
+    once the attack has already finished it off.
+
+    Where the Hope is short of the live options, **the shuffle picks among them**,
+    which is the standing default for a choice nobody has ruled on. No Hope floor:
+    a critical is rare, and holding Hope back for other cards was offered and
+    declined.
+
+    The extra HP is marked directly rather than dealt as damage. The card says the
+    target marks a Hit Point, not that it takes damage worth one - so no threshold
+    is read, no resistance applies, and nothing that responds to being damaged
+    fires. A target this finishes off is still reported defeated, since the loop
+    checks after the on-hit riders have run.
+    """
+    if fight is None or result.attack_roll is None:
+        return
+    if not result.attack_roll.is_critical:
+        return
+
+    def clear_a_hit_point() -> str:
+        attacker.clear_hp(1)
+        return "clears a Hit Point"
+
+    def clear_an_armor_slot() -> str:
+        attacker.clear_armor_slot(1)
+        return "clears an Armor Slot"
+
+    def press_the_advantage() -> str:
+        target.mark_hp(1)
+        return f"forces {target.name} to mark another Hit Point"
+
+    options = []
+    if attacker.hp_marked > 0:
+        options.append(clear_a_hit_point)
+    if attacker.armor_marked > 0:
+        options.append(clear_an_armor_slot)
+    if not target.is_defeated:
+        options.append(press_the_advantage)
+    if len(options) > 1:
+        random.shuffle(options)
+
+    for take in options[:CHAMPIONS_EDGE_HOPE]:
+        if not attacker.can_spend_hope(1):
+            break
+        attacker.spend_hope(1)
+        fight.note(f"{attacker.name}'s critical {take()}")
+
+
+no_combat_effect(
+    "Vitality",
+    "Two of - one Stress slot, one Hit Point slot, +2 damage thresholds - gained "
+    "permanently when the card is chosen, after which it goes into the vault for "
+    "good. All three are values a character sheet carries already resolved, so the "
+    "choice is in the numbers before a fight starts and applying it here would "
+    "count it twice; the same reason At Ease, Battlemage and Fortified Armor are "
+    "declared rather than run. The vaulting makes it plainer still: the card does "
+    "not even occupy a loadout slot during the fight it is paying for.",
+)
 
 no_combat_effect(
     "Fortified Armor",

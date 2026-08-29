@@ -13,12 +13,13 @@ visible.
 
 ## Scope
 
-**Levels 1 to 4, all nine domains** - 81 cards. That is every card a level 4
-party of any class combination could hold, so a new party composition can be
-simulated without writing code first. Levels 5+ wait until a party reaches them.
+**Levels 1 to 5, all nine domains** - 99 cards, complete. That is every card a
+level 5 party of any class combination could hold, so a new party composition can
+be simulated without writing code first. Levels 6+ wait until a party reaches
+them.
 
-The scope grew from levels 1-2, then to 3, then to 4, each time the previous one
-was finished. Cards are ported **by level** rather than by domain: a level is the
+The scope grew from levels 1-2, then to 3, then to 4, then to 5, each time the
+previous one was finished. Cards are ported **by level** rather than by domain: a level is the
 slice a party actually occupies, and finishing one means no loadout at that level
 can name a card nobody has written.
 
@@ -136,7 +137,37 @@ cards land in different states, which is most of why the states exist: Soothing
 Speech is a real heal that happens during a rest, and Through Your Eyes is
 scouting. Filing the first as *no combat effect* would have lost the difference.
 
+## Level 5
+
+| Domain | Level 5 |
+|---|---|
+| **Arcana** | ✅ Chain Lightning · ✅ Premonition |
+| **Blade** | ✅ Champion's Edge · 🚫 Vitality |
+| **Bone** | 🚫 Know Thy Enemy · ✅ Signature Move |
+| **Codex** | 🚫 Manifest Wall · 🚫 Teleport |
+| **Grace** | ✅ Words of Discord · 🚫 Thought Delver |
+| **Midnight** | ✅ Hush · 🚫 Phantom Retreat |
+| **Sage** | ✅ Thorn Skin · ✅ Wild Fortress |
+| **Splendor** | ✅ Smite · 🚫 Shape Material |
+| **Valor** | ✅ Rousing Strike · ⏸ Armorer |
+
+**11 modelled, 7 no effect, 1 out of combat, 0 outstanding.**
+
+**Levels 1 to 5 are complete across all nine domains** - 99 cards. Every card a
+level 5 party of any class combination could hold is either running or assessed,
+and nothing in the slice is in the *unimplemented* state. Batches 14 (Arcana,
+Blade), 15 (Bone, Codex), 16 (Grace, Midnight) and 17 (Sage, Splendor, Valor)
+cover the eighteen.
+
+**Level 5 dismisses more than any level below it.** Seven of the eighteen reach no
+fight, where levels 1 to 4 together dismissed nineteen out of eighty-one. Nearly
+all of them are repositioning or information, which is the same pair of reasons
+that has always driven dismissals - what is new is only how many of them one level
+holds.
+
 ### Order it was done in
+
+
 
 The five domains the Immareth sheets already draw from first - **Blade, Codex,
 Sage, Splendor, Valor**, 14 cards - so every card landing was a loadout the
@@ -145,15 +176,18 @@ current party could actually swap to. Then the four that had no module at all:
 
 ### What's next
 
-**Levels 1 to 4 are complete.** **Level 5** is the next slice - two cards per
-domain, eighteen more, and nothing needs them until a party reaches level 5.
-Every domain's page has been read at least once, so the printed-page check is a
-re-read rather than a hunt, and levels 5 to 10 all sit on the pages already used.
+**Levels 1 to 5 are complete.** **Level 6** is the next slice - two cards per
+domain, eighteen more, and nothing needs them until a party reaches level 6. Every
+domain's page has been read several times now, so the printed-page check is a
+re-read rather than a hunt, and levels 6 to 10 all sit on the pages already used.
 
-Worth knowing before starting it: the level 4 batches got *smaller* as they went
-- four domains, then two, then one, then two - because the cards stopped being
-variations on shapes that already existed. Level 5 should be planned as one or
-two domains at a time rather than half a level.
+Worth knowing before starting it: **level 5 cost far more machinery than level 4
+did**, which is the opposite of what the level 4 notes predicted. Four of the four
+batches brought a new hook or a change to the fight loop - `move_rescind`, the
+Hope Die swap's second reader, `damage_scaling`, `damage_typing`, a `dice/` field
+and two loop changes. The cards stopped being variations on shapes that already
+existed some time ago, and levels 6+ should be planned as two domains at a time
+with a machinery bill expected rather than hoped against.
 
 ### What the modelled ones cover
 
@@ -686,6 +720,190 @@ ward does nothing at all until the moment it does everything. The user's ruling
 holds it back until the frailest ally is near death, which is a real bet - a
 party that never gets there has spent nothing, and one that gets there twice has
 only the one ward.
+
+### Batch 14 — Arcana and Blade at level 5 (4 cards)
+
+The first of level 5. **Verified against the printed page** (SRD pp. 119-121);
+Arcana's level 5 crosses the sheet the way Grace's level 4 did - Chain Lightning
+sits at the foot of p. 119 and Premonition at the head of p. 120.
+
+| Card | Disposition |
+|---|---|
+| **Chain Lightning** (Ar 5) | Modelled. 2 Stress, one Spellcast Roll over the Close band, and a flat-d20 reaction roll against that roll's own total for everyone it beat - then the same again, wave after wave, until a wave catches nobody |
+| **Premonition** (Ar 5) | Modelled, partial. Once per long rest, a move that failed is taken back and the whole spotlight is chosen again |
+| **Champion's Edge** (Bl 5) | Modelled. Up to 3 Hope cashed in on a critical, one for each of the card's three options that would actually do something |
+| **Vitality** (Bl 5) | No combat effect - two of a Stress slot, an HP slot and +2 thresholds, all of them values a sheet carries resolved. The card then vaults itself permanently, so it does not even hold a loadout slot |
+
+One piece of shared machinery, and it is the batch:
+
+- **`move_rescind`** - content that takes its holder's move back and sends them
+  through the whole spotlight again. **Deliberately not the `reroll` hook**, which
+  re-throws the *dice* of the roll that was made: Premonition says "make another
+  move instead", so the options are shuffled afresh and the second attempt can be
+  an entirely different card. Folding it into the reroll hook, with the difference
+  written up as a gap, would have been an existing simplification swallowing a
+  card that disagrees with it - the trap Support Tank walked into one batch ago.
+  One call site, in `combat/policy.py` → `take_pc_turn`, asked once per spotlight.
+
+**What a rescind can take back is narrower than the card, and the boundary is
+where the value is.** Only a move that dealt no damage is offered, because the
+roll's Hope or Fear is spent by the loop *after* the move returns - so a rescinded
+failure hands the GM no Fear and does not pass the spotlight, which is most of
+what the card is worth. A success with Fear cannot be unmade, and nothing the
+first attempt spent comes back; both are declared as gaps.
+
+**Chain Lightning is the first ability whose reach depends on where the
+*adversaries* are relative to each other** rather than relative to the caster.
+Every area card so far asks "who is within X of me"; this one asks "who is within
+X of the ones I just hit", and the ruling is that each wave draws the Close band
+again over whoever the lightning has not reached. Waves stop when one catches
+nobody. It is also the most expensive single cast in the catalogue at 2 Stress,
+which is what puts it on the declining side of the area split.
+
+**Champion's Edge is the first card that buys several things off one trigger.**
+Three options, three Hope, no repeats - so the ruling is simply that every option
+which isn't a no-op is bought while the Hope lasts, and the shuffle picks when
+the Hope runs short. Worth knowing what it does *not* reach: `on_hit` is asked
+where a landed attack rolled damage, so a critical that applies a condition
+instead never sees it.
+
+### Batch 15 — Bone and Codex at level 5 (4 cards)
+
+**Verified against the printed page** (SRD pp. 122-123 and 124-125). Codex stops
+printing Grimoires at level 5 and prints plain Spells instead, so for the first
+time its two cards are cards rather than books.
+
+| Card | Disposition |
+|---|---|
+| **Signature Move** (Bo 5) | Modelled. Once per rest, a **d20** replaces the Hope Die on an action roll, and a success clears a Stress |
+| **Know Thy Enemy** (Bo 5) | No combat effect - an Instinct Roll while observing a creature, buying information the simulator's own policies already read |
+| **Manifest Wall** (Cx 5) | No combat effect - terrain and a shunt, and no positions are tracked |
+| **Teleport** (Cx 5) | No combat effect - travel, the Blink Out case at longer range |
+
+**No new machinery**, which is the notable thing about the batch after the last
+one: Signature Move is built entirely out of parts, and three of the four cards
+are declarations.
+
+**Signature Move is the first content anywhere to swap the party's Hope Die.**
+The `hope_die` hook has existed since the Faerie, and until now nothing had
+registered on it from a domain card. A d20 against a d12 Fear Die raises the
+total by four on average and, more importantly, makes the roll come up with
+**Hope** far more often - which is what decides whether the party keeps the
+spotlight.
+
+Two things about how it is built are worth knowing. Its Stress clear is a second
+hook on the same name (the Ferocity arrangement), and **which roll to pay out on
+is read off `DualityRollResult.hope_die_sides`** rather than a token the swap
+left behind - because `hope_die_for` is asked at roll sites the on-roll hook never
+hears about, so a token set on a Reaction Roll would sit there and fire on the
+next action roll instead. That field exists because Support Tank needed it one
+batch ago, which is the second use it has found.
+
+**Know Thy Enemy is the dismissal worth reading carefully**, because half of it
+is a real combat effect. "Mark a Stress to remove a Fear from the GM's Fear Pool"
+drains a pool this simulator tracks closely, and a partial implementation - the
+Fear clause running, the information declared a gap - was proposed and declined.
+The user's ruling files the card whole, on its **trigger**: "when observing a
+creature" is not a move the simulator makes, which is the Gifted Tracker and
+Stealth Expertise reading. If encounters ever grow a scouting step, this is the
+card waiting for it.
+
+### Batch 16 — Grace and Midnight at level 5 (4 cards)
+
+**Verified against the printed page** (SRD pp. 126-127 and 128-129).
+
+| Card | Disposition |
+|---|---|
+| **Words of Discord** (Gr 5) | Modelled, partial. A Spellcast Roll (13) makes an adversary mark a Stress and attack one of its own |
+| **Hush** (Mid 5) | Modelled, partial. A Hope Silences a target and the Very Close band around them, which stops the ones whose attacks are magic |
+| **Thought Delver** (Gr 5) | No combat effect - reading minds, the Through Your Eyes case |
+| **Phantom Retreat** (Mid 5) | No combat effect - a delayed teleport back to a marked spot, the Blink Out case |
+
+**No new machinery**, and for Words of Discord that is the whole story of the
+ruling. Making an adversary attack its own side had no representation anywhere,
+and the natural reading - that it replaces the adversary's next activation - would
+have needed a new hook for party content to take over an adversary's spotlight,
+since the existing target-override hook returns a PC and would raise on an
+adversary. The user ruled the attack **immediate**, resolved inside the cast, so
+the card does it all itself. The mechanical consequence is worth carrying into any
+reading of the numbers: the whisperer still takes its own spotlight afterwards, so
+the party gains an attack on the GM's side rather than removing one aimed at
+themselves.
+
+The compelled attack is rolled directly rather than through `Adversary.attack` -
+that measures against a PC's Evasion and would raise on an adversary target, and
+an attack on an adversary is measured against **Difficulty**.
+
+**Silenced is the first new condition since level 3**, and the first whose effect
+is decided *per holder at the moment it lands*. "They can't cast spells" is
+answered by the Counterspell rule - magic damage is the only magic represented
+here - so the card asks each target whether its printed attack is magic and sets
+`Condition.prevents_action` accordingly. A magic adversary is Stunned in all but
+name; a physical one is Silenced and inert like Restrained, and the GM still pays
+a Fear each to clear it.
+
+**Hush also brings the first party-applied condition that can end without the GM
+paying**, through its printed "or you take Major damage" clause. That reaches the
+*caster* rather than the holder, so it hangs off `on_damaged` and clears only the
+silences whose `source` is that PC.
+
+Worth noting alongside it: the user flagged that the party is now **draining the
+GM's Fear** through the standing "the GM pays a Fear to clear it" rule, and Hush
+applies one condition per target across an area. Recorded in `SIMULATION-RULES.md`
+under that rule as something to look at in the numbers rather than something to
+change.
+
+### Batch 17 — Sage, Splendor and Valor at level 5 (6 cards)
+
+The last of level 5, and three domains rather than two at the user's request.
+**Verified against the printed page** (SRD pp. 130-131, 132-133 and 134-135).
+
+| Card | Disposition |
+|---|---|
+| **Thorn Skin** (Sg 5) | Modelled, partial. A Hope sprouts a pool of d6s that soak incoming damage and bite back at anything in Melee |
+| **Wild Fortress** (Sg 5) | Modelled, partial. A dome two PCs shelter inside - it soaks everything aimed at them and costs them their spotlights |
+| **Smite** (Sp 5) | Modelled, partial. 3 Hope charges a weapon blow that lands **doubled**, and as magic |
+| **Rousing Strike** (V 5) | Modelled, partial. Once per rest, a critical clears a Hit Point on every conscious PC, or 1d4 Stress for anyone at full HP |
+| **Shape Material** (Sp 5) | No combat effect - craft, and there are no objects here to shape |
+| **Armorer** (V 5) | Out of combat - its +1 Armor Score is already in the sheet, and what remains is a downtime move that restores an Armor Slot on **every ally** |
+
+Three pieces of shared machinery, and this is the batch that cost the most since
+batch 13:
+
+- **`damage_scaling`** - content that multiplies the damage its own holder deals,
+  the party-side twin of the GM's `damage_multiplier`. None of the four existing
+  damage hooks could say "double the result of your damage roll": two add to the
+  roll, one reshapes the dice before the throw, and two touch a single die.
+- **`DamageRollResult.multiplier`**, which is a `dice/` change and the reason the
+  hook can be honest. Doubling has to reach the dice, the flat modifier **and**
+  the critical bonus at once; doubling the dice count instead would land on the
+  same mean with a different spread, which is a different card in a game where
+  damage becomes HP through bands. A raw input beside `drop_lowest`, defaulted, so
+  every existing construction is unchanged.
+- **`damage_typing`** - content that retypes its holder's weapon hit. Deliberately
+  not `standard_damage_type` next door, which says the same thing for an
+  adversary and takes no `fight`: a charge that is spent or unspent is exactly the
+  per-fight state that hook refuses to carry.
+
+Plus one change to the fight loop: **a PC who cannot act is skipped rather than
+spotlighted**, and the spotlight passes to the GM only when nobody in the party
+can act. The two sides now answer `cannot_act` differently, and should - a GM paid
+for the activation a Stunned adversary wastes, and the party's spotlight is not
+bought. It is also what stops `_resolve` spinning, since a spotlight that resolves
+into nothing never increments `pc_actions`.
+
+**Wild Fortress is the first card that takes PCs out of the fight**, and the first
+thing with a damage track that is not a combatant. The dome is a pair of tokens on
+its caster: hits aimed at either occupant are returned in full by the card's own
+damage-reduction hook and marked against the dome's printed 15/30, and it releases
+both of them at 3. The `SHELTERED` condition carries no `end`, because what ends
+it happens to the dome and a dome is never offered an announced moment.
+
+**Armorer is the clearest case yet of a card whose two clauses want two different
+states.** Its Armor Score bonus is a number the sheet already carries, and its
+downtime clause restores an Armor Slot on every ally - which is neither
+unrepresentable nor small. Filing it as *out of combat* keeps it on the
+sequenced-encounter list rather than losing it to a dismissal.
 
 ## Consolidating `_spellcast`
 

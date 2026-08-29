@@ -26,6 +26,11 @@ fight. That is worth recording rather than looking like an omission - Grace is
 the only domain so far whose whole level contributes nothing, and the two cards
 land in *different* states, which is most of why the states exist. Soothing
 Speech is a real heal that happens during a rest; Through Your Eyes is scouting.
+
+Level 5 carries **Words of Discord**, the first thing anywhere that makes one side
+of the table attack itself. The whisper is the party's whole contribution: the
+attack that follows is the adversary's own, rolled against another adversary's
+Difficulty and dealing the whisperer's printed damage.
 """
 
 from combat.results import AttackResult
@@ -49,6 +54,7 @@ from content.registry import (
     out_of_combat_ability,
 )
 from content.spellcast import spellcast
+from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import roll_duality
 
@@ -420,6 +426,138 @@ def _invisibility_runs_out(holder, fight: Fight, moment: str) -> bool:
     return True
 
 
+# --- Words of Discord --------------------------------------------------------
+
+WORDS_OF_DISCORD = "Words of Discord"
+
+# Printed on the card rather than read off the target, which is unusual - almost
+# every other attack in the project is measured against a Difficulty the stat
+# block carries.
+WORDS_OF_DISCORD_DIFFICULTY = 13
+
+# Set on an adversary once the compelled attack is over. "The target realizes what
+# happened", and under the ruling below that is the end of the card for them.
+DISCORD_HEARD = "Words of Discord heard"
+
+
+@action(
+    WORDS_OF_DISCORD,
+    unmodelled=[
+        "'an adversary within Melee range' - no positions are tracked, so any "
+        "adversary can be whispered to",
+        "The **-5 penalty** for casting this on somebody who has already heard "
+        "it. The ruling is that the caster declines once every adversary has, so "
+        "a second cast on the same target never happens and the penalty is never "
+        "applied. It is printed and reachable, and only the policy puts it out of "
+        "reach - which is worth knowing if that policy is ever changed",
+    ],
+)
+def words_of_discord(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Words of Discord (Grace, level 5). Turn an adversary on its own side.
+
+    SRD: "Whisper words of discord to an adversary within Melee range and make a
+    Spellcast Roll (13). On a success, the target must mark a Stress and make an
+    attack against another adversary instead of against you or your allies. Once
+    this attack is over, the target realizes what happened. The next time you cast
+    Words of Discord on them, gain a -5 penalty to the Spellcast Roll."
+
+    **The first thing in the simulator that makes one side attack itself.** The
+    compelled attack is a real one: the adversary's own attack modifier against
+    the victim's **Difficulty**, dealing the whisperer's printed damage, typed as
+    its stat block types it. There is no PC damage roll anywhere in this - the
+    party's contribution is the whisper.
+
+    SIMULATION RULE - rules interpretation, ruled. **The attack happens
+    immediately, inside the cast**, rather than replacing the adversary's next
+    activation. The other reading was offered and declined; it would have needed a
+    new hook for party content to take over an adversary's spotlight, and the
+    existing target-override hook cannot say it, since that returns a PC. The
+    consequence follows plainly from the mechanics and is worth stating: the
+    whisperer still takes its own spotlight afterwards, so the card buys the party
+    an extra attack on the GM's side rather than taking one away from themselves.
+
+    SIMULATION RULE - policy, ruled. **A target who has not heard it before**, and
+    the card declines outright once every living adversary has. Casting at -5
+    against a Difficulty of 13 was offered as the alternative and declined. Which
+    fresh adversary is whispered to, and which other one is attacked, both follow
+    the party's focus-fire rule - the most wounded of the candidates, exactly as
+    Redirect chooses who a turned attack lands on.
+
+    Costs nothing but the roll, so there is no other state in which casting it is
+    worse than not - the Wild Flame reading.
+    """
+    living = fight.living_adversaries
+    if len(living) < 2:
+        return None
+
+    fresh = [
+        adversary
+        for adversary in living
+        if not fight.token_count(adversary, DISCORD_HEARD)
+    ]
+    if not fresh:
+        return None
+
+    whispered = max(fresh, key=lambda adversary: adversary.hp_marked)
+    attack_roll = spellcast(
+        caster, whispered, fight, difficulty=WORDS_OF_DISCORD_DIFFICULTY
+    )
+    if attack_roll is None:
+        return None
+
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    whispered.mark_stress(1)
+    fight.note(
+        f"{caster.name} whispers discord to {whispered.name}, who marks a Stress "
+        f"and turns on their own"
+    )
+    _lash_out(whispered, living, fight)
+    fight.set_token(whispered, DISCORD_HEARD, 1)
+
+    # No damage roll of the caster's own, so nothing the party carries fires off
+    # this as though it were a landed hit. The play-by-play reports it as a miss,
+    # which it shares with every other card whose success is not damage.
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+def _lash_out(whispered, living: list, fight: Fight) -> None:
+    """The compelled attack, made by the whispered adversary against one of its own.
+
+    Rolled here rather than through `Adversary.attack`, which measures its roll
+    against a PC's **Evasion** and would raise on an adversary target. An attack
+    against an adversary is measured against Difficulty - the SRD says so outright
+    - so the d20 is thrown directly, the same way an adversary's Reaction Roll is.
+
+    The victim is the most wounded of the others, which is the party's own
+    focus-fire rule: the discord is the party's doing, so where it lands follows
+    what the party is already trying to achieve. The same choice Redirect makes.
+    """
+    others = [adversary for adversary in living if adversary is not whispered]
+    if not others:
+        return
+
+    victim = max(others, key=lambda adversary: adversary.hp_marked)
+    swing = roll_d20(modifier=whispered.attack_modifier, evasion=victim.difficulty)
+    if not swing.is_success:
+        fight.note(f"{whispered.name} lashes out at {victim.name} and misses")
+        return
+
+    damage = roll_damage(
+        dice_groups=whispered.damage_dice,
+        modifier=whispered.damage_modifier,
+        is_critical=swing.is_critical,
+    )
+    victim.take_damage(damage.total, fight, damage_type=whispered.type_of_damage())
+    fight.note(
+        f"{whispered.name} lashes out at {victim.name} for {damage.total} "
+        f"({victim.hp_marked}/{victim.hp_max} HP marked)"
+    )
+    if victim.is_defeated:
+        fight.note(f"{victim.name} is defeated")
+
+
 # --- Assessed rather than built ----------------------------------------------
 
 out_of_combat_ability(
@@ -445,6 +583,16 @@ no_combat_effect(
     "Both halves are about a conversation - and the Stress is contingent on one, "
     "so it cannot be salvaged as the modelled part. Nothing in a fight turns on "
     "whether an adversary is telling the truth.",
+)
+no_combat_effect(
+    "Thought Delver",
+    "A Hope reads the vague surface thoughts of a target within Far range, and a "
+    "Spellcast Roll delves for deeper ones; on a roll with Fear the target may "
+    "notice. Its whole output is information about what somebody is thinking, "
+    "which is the Floating Eye and Through Your Eyes case - nothing in a fight "
+    "turns on it, and the spell makes no attack, grants no roll and moves no "
+    "number. Note that even the failure clause is fiction: being noticed reading "
+    "somebody's mind has no mechanical consequence printed on the card.",
 )
 no_combat_effect(
     "Through Your Eyes",

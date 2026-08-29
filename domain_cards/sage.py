@@ -19,6 +19,12 @@ effects and lets the caster pick one, and one of the three is pure repositioning
 - so the ruling is which of them a simulated caster chooses between, and the cost
 of that ruling is declared as a gap where the card registers. **Healing Field**
 is the first party-wide heal here that is not a domain card's rider.
+
+Level 5 brings **Wild Fortress**, the first card anywhere that takes PCs *out* of
+the fight - two of them shelter inside a dome that soaks what would have hit them
+and costs them their spotlights. It is also the first thing with a damage track
+that is not a combatant, and the reason `combat/fight.py` now skips a PC who
+cannot act instead of spotlighting them.
 """
 
 import random
@@ -31,13 +37,14 @@ from content.aoe import (
     targets_beaten,
     targets_in_area,
 )
-from content.conditions import RESTRAINED, Condition, when_the_gm_pays
+from content.conditions import RESTRAINED, SHELTERED, Condition, when_the_gm_pays
 from content.damage_types import DamageType
 from content.grimoire import Grimoire
 from content.registry import (
     Fight,
     Holder,
     action,
+    ally_damage_reduction,
     extra_damage,
     free,
     no_combat_effect,
@@ -785,6 +792,307 @@ def healing_field(caster: Holder, fight: Fight) -> bool:
         f"on {len(restored)}"
     )
     return True
+
+
+# --- Thorn Skin ---------------------------------------------------------------
+
+THORN_SKIN = "Thorn Skin"
+
+THORN_DIE = 6
+
+# Tokens still on the card, set to the caster's Spellcast trait when the thorns
+# sprout and spent a few at a time against incoming hits.
+THORN_TOKENS = "Thorn Skin tokens"
+
+
+@free(
+    THORN_SKIN,
+    unmodelled=[
+        "'When you take a rest, clear all unspent tokens' - nothing carries "
+        "between fights, so a caster is spawned fresh from their sheet and the "
+        "tokens go with the fight either way",
+    ],
+)
+def thorn_skin(caster: Holder, fight: Fight) -> bool:
+    """Thorn Skin (Sage, level 5). Sprout thorns, once per rest.
+
+    SRD: "Once per rest, spend a Hope to sprout thorns all over your body. When
+    you do, place a number of tokens equal to your Spellcast trait on this card."
+
+    **No roll**, so it is a free ability: the Hope and the per-rest use are the
+    whole cost and the caster still gets their action roll.
+
+    SIMULATION RULE - policy. Sprouted whenever the Hope can be paid, which is the
+    standing default with no threshold of its own. The tokens last the fight and
+    clear at the next rest whether or not they were spent, so there is no state in
+    which sprouting later is worth more than sprouting now - the same reasoning
+    Deadly Focus and Scramble take of a once-per-rest that costs nothing to hold.
+
+    A caster whose Spellcast trait is zero or less places no tokens and declines
+    rather than spending a Hope on an empty card, the reading Unleash Chaos takes
+    of any count drawn from a trait.
+    """
+    if fight is None or not caster.can_spend_hope(1):
+        return False
+
+    trait = getattr(caster, "spellcast_trait", "")
+    if not trait or trait not in caster.traits:
+        return False
+
+    tokens = caster.traits[trait]
+    if tokens <= 0:
+        return False
+    if fight.token_count(caster, THORN_TOKENS):
+        return False
+    if not fight.use_once_per_rest(caster, THORN_SKIN):
+        return False
+
+    caster.spend_hope(1)
+    fight.set_token(caster, THORN_TOKENS, tokens)
+    fight.note(f"{caster.name} sprouts thorns, placing {tokens} tokens")
+    return True
+
+
+@ally_damage_reduction(
+    THORN_SKIN,
+    unmodelled=[
+        "The thorns are the caster's own, so this is scoped back to its holder "
+        "with a `holder is target` check - the same arrangement Scramble uses, "
+        "since there is no holder-scoped twin of this hook and one card is not a "
+        "reason to build one",
+    ],
+)
+def thorn_skin_reduces(
+    caster: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """Thorn Skin's reduction. Returns the damage this hit should lose.
+
+    SRD: "When you take damage, you can spend any number of tokens to roll that
+    number of d6s. Add the results together and reduce the incoming damage by that
+    amount. If you're within Melee range of the attacker, deal that amount of
+    damage back to them."
+
+    **Reduces the damage number, not the severity**, which is why it registers
+    here rather than on `severity_response`: that hook returns the HP a hit marks
+    and cannot subtract nine from a total. Rune Ward's argument exactly, with a
+    pool instead of one die.
+
+    SIMULATION RULE - policy, ruled. **The fewest tokens that could carry the hit
+    below a threshold it is currently at or above.** Each token is worth at most 6,
+    so the card asks whether `n` tokens *could* drop the damage past the Severe
+    line, the Major line, or 1 - that last being the hit disappearing entirely -
+    and spends the smallest `n` for which the answer is yes. Nothing is spent on a
+    hit no number of tokens could improve, and no more is spent than the hit could
+    need. Spending the whole pool on the first hit worth reducing was offered and
+    declined.
+
+    Like Rune Ward, it reads only what a player can see when they decide: the
+    damage announced and their own printed thresholds. It does **not** read the
+    d6s, which nobody has rolled - so a hit seven points above Severe is worth two
+    tokens even though a pair of 3s would not have saved it.
+
+    "If you're within Melee range of the attacker" is answered off the attacker's
+    **printed band**, the way Redirect answers the same clause - `Adversary.range`
+    is a number on the stat block rather than a position. So the thorns bite back
+    at whatever came into reach and never at an archer.
+    """
+    if fight is None or caster is not target:
+        return 0
+
+    tokens = fight.token_count(caster, THORN_TOKENS)
+    if tokens <= 0:
+        return 0
+
+    spending = _thorns_worth_spending(target, amount, tokens)
+    if spending <= 0:
+        return 0
+
+    fight.spend_tokens(caster, THORN_TOKENS, spending)
+    rolled = roll_damage(dice_groups=[DiceGroup(count=spending, sides=THORN_DIE)])
+    fight.note(
+        f"{caster.name}'s thorns absorb {rolled.total} ({spending} token(s) spent)"
+    )
+
+    attacker = fight.spotlighted
+    if attacker is not None and attacker.attack_band is Range.MELEE:
+        attacker.take_damage(rolled.total, fight, damage_type=DamageType.PHYSICAL)
+        fight.note(f"The thorns tear {attacker.name} for {rolled.total}")
+
+    return rolled.total
+
+
+def _thorns_worth_spending(target, amount: int, tokens: int) -> int:
+    """How many tokens could carry this hit below a line it is currently above.
+
+    Each token is one d6, so `n` of them can take off at most `n * THORN_DIE`.
+    The lines are the ones that change what the hit costs in HP: the Severe
+    threshold, the Major threshold, and 1.
+
+    Returns the smallest such `n`, or 0 when the pool could not move the hit
+    across any line - arithmetic on numbers already printed on the sheet and on
+    the damage the GM just announced, and on nothing else.
+    """
+    lines = (target.severe_threshold, target.major_threshold, 1)
+    for spending in range(1, tokens + 1):
+        if any(
+            line <= amount and amount - spending * THORN_DIE < line for line in lines
+        ):
+            return spending
+    return 0
+
+
+# --- Wild Fortress -------------------------------------------------------------
+
+WILD_FORTRESS = "Wild Fortress"
+
+WILD_FORTRESS_DIFFICULTY = 13
+WILD_FORTRESS_HOPE = 2
+
+# The dome's own printed numbers: thresholds 15/30, and it comes apart once it has
+# marked 3 Hit Points.
+DOME_MAJOR = 15
+DOME_SEVERE = 30
+DOME_HP = 3
+
+# How much of the dome is gone, held on the caster.
+DOME_MARKED = "Wild Fortress HP marked"
+
+
+@action(
+    WILD_FORTRESS,
+    unmodelled=[
+        "'a creature can't be targeted by attacks' - focus fire still picks a "
+        "sheltered PC as readily as anybody, so what is modelled is the dome "
+        "taking the hit rather than the attack never being aimed. The two come to "
+        "the same thing for damage and not for anything that keys on being "
+        "attacked",
+        "The dome as a thing with a position, which is most of what it is at a "
+        "table - who is inside it is decided when it goes up and nobody walks in "
+        "or out",
+        "A caster who goes down some *other* way - Stress that wouldn't fit - "
+        "stops being scanned for the absorption, so the dome quietly stops "
+        "soaking while the ally inside is still held. The fight still resolves, "
+        "since that ally then takes damage normally; what is lost is the dome "
+        "coming apart at the right moment",
+    ],
+)
+def wild_fortress(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Wild Fortress (Sage, level 5). A dome two PCs shelter inside.
+
+    SRD: "Make a Spellcast Roll (13). On a success, spend 2 Hope to grow a natural
+    barricade in the shape of a dome that you and one ally can take cover within.
+    While inside the dome, a creature can't be targeted by attacks and can't make
+    attacks. Attacks made against the dome automatically succeed. The dome has the
+    following damage thresholds and lasts until it marks 3 Hit Points.
+    Thresholds: 15/30."
+
+    **Both halves are modelled, and the second is the price.** Everything aimed at
+    an occupant lands on the dome instead, marking the dome's own HP against its
+    own thresholds; and both occupants lose their spotlights for as long as it
+    stands. It is the first card anywhere that takes a PC out of the fight, which
+    is why `combat/fight.py` now skips a PC who cannot act instead of spotlighting
+    them.
+
+    SIMULATION RULE - policy, ruled. Raised when the caster or the frailest ally
+    is **near death**. Giving up two PCs' attacks only pays for itself to keep
+    somebody standing, which is Life Ward's trigger applied to a card that costs a
+    great deal more than Hope. The ally sheltered is the frailest conscious one -
+    Rune Ward's rule for who a protection goes to.
+
+    Declines while a dome already stands, and without an ally to shelter with,
+    since the card is explicit that it holds two.
+    """
+    if fight is None or not caster.can_spend_hope(WILD_FORTRESS_HOPE):
+        return None
+    if fight.has_condition(caster, SHELTERED):
+        return None
+
+    allies = [pc for pc in fight.conscious_party if pc is not caster]
+    if not allies:
+        return None
+
+    sheltered = min(allies, key=lambda pc: pc.hp_unmarked)
+    if not caster.is_near_death and not sheltered.is_near_death:
+        return None
+
+    attack_roll = spellcast(
+        caster, target, fight, difficulty=WILD_FORTRESS_DIFFICULTY
+    )
+    if attack_roll is None:
+        return None
+
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    caster.spend_hope(WILD_FORTRESS_HOPE)
+    fight.set_token(caster, DOME_MARKED, 0)
+    for occupant in (caster, sheltered):
+        fight.apply_condition(
+            occupant,
+            Condition(name=SHELTERED, source=caster, prevents_action=True),
+        )
+    fight.note(
+        f"{caster.name} grows a dome over themselves and {sheltered.name}, "
+        f"who take no part until it falls"
+    )
+    # No damage of its own, so nothing the party carries fires off this as a
+    # landed hit - the same shape every condition-only card here returns.
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+@ally_damage_reduction(WILD_FORTRESS)
+def wild_fortress_absorbs(
+    caster: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """The dome taking a hit meant for whoever is inside it.
+
+    Returns the whole amount, so the hit resolves to nothing against the PC -
+    `take_damage` floors at zero before the thresholds, which also means no Armor
+    Slot is spent. That is Scramble's shape, and it is what "can't be targeted by
+    attacks" comes to once the attack has been aimed anyway.
+
+    **The dome marks its own HP against its own thresholds**, 15/30, which is the
+    one place in the simulator where something other than a combatant has a
+    threshold band. "Attacks made against the dome automatically succeed", so
+    there is no roll to make - the damage simply arrives.
+
+    Once three are marked the dome comes apart and both occupants are released in
+    the same moment, which is the only way the condition ever ends: it carries no
+    `end` of its own, so nothing offers it at an announced moment.
+    """
+    if fight is None:
+        return 0
+
+    shelter = fight.condition_on(target, SHELTERED)
+    if shelter is None or shelter.source is not caster:
+        return 0
+
+    marked = 3 if amount >= DOME_SEVERE else 2 if amount >= DOME_MAJOR else 1
+    standing = fight.token_count(caster, DOME_MARKED) + marked
+    fight.set_token(caster, DOME_MARKED, standing)
+    fight.note(
+        f"{caster.name}'s dome takes {amount} for {target.name} "
+        f"({min(standing, DOME_HP)}/{DOME_HP} HP marked)"
+    )
+
+    if standing >= DOME_HP:
+        _dome_falls(caster, fight)
+    return amount
+
+
+def _dome_falls(caster: Holder, fight: Fight) -> None:
+    """Release everybody the dome was holding, and clear its tally.
+
+    The condition is cleared here rather than through an `end` predicate because
+    what ends it is something happening to the *dome*, which is not a combatant
+    and is never offered an announced moment.
+    """
+    fight.set_token(caster, DOME_MARKED, 0)
+    for pc in fight.conscious_party:
+        shelter = fight.condition_on(pc, SHELTERED)
+        if shelter is not None and shelter.source is caster:
+            fight.clear_condition(pc, SHELTERED)
+            fight.note(f"The dome falls, and {pc.name} is back in the fight")
 
 
 # Dismissals are the user's call, not the assistant's.
