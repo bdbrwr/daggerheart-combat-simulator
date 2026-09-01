@@ -22,6 +22,10 @@ Slot the damage rule already marks.
 Level 5's **Signature Move** is the first content anywhere to swap the party's
 Hope Die - the `hope_die` hook has existed since the Faerie and no domain card
 had ever registered on it.
+
+Level 6's **Rapid Riposte** is Redirect's twin: the two answer the same trigger -
+an attack on you that failed - split by the band it came from, so between them
+Bone has an answer to every miss.
 """
 
 import random
@@ -29,10 +33,13 @@ import random
 from combat.results import AttackResult
 from content.aoe import Range, chance_within, targets_in_area
 from content.registry import (
+    DamagePool,
     Fight,
     Holder,
     action,
+    adjust_damage_pool,
     attack_missed,
+    dealt_damage_type,
     evasion_bonus,
     extra_armor_slot,
     extra_damage,
@@ -43,6 +50,7 @@ from content.registry import (
     no_combat_effect,
     on_hit,
     on_roll,
+    out_of_combat_ability,
     total_damage_bonus,
     total_roll_bonus,
 )
@@ -586,7 +594,115 @@ def signature_move_clears(holder: Holder, roll, fight: Fight) -> None:
     fight.note(f"{holder.name}'s signature move lands, clearing a Stress")
 
 
+# --- Rapid Riposte -----------------------------------------------------------
+
+RAPID_RIPOSTE = "Rapid Riposte"
+
+
+@attack_missed(
+    RAPID_RIPOSTE,
+    unmodelled=[
+        "An adversary's **area** attack. Only the PC the attack was aimed at is "
+        "announced as having been missed, so a swept attack that failed against "
+        "several is riposted by at most one of them. Redirect declares the same "
+        "gap for the same reason",
+        "'one of your active weapons' - a sheet can carry a secondary weapon and "
+        "nothing in the simulator resolves one (SIMULATION-RULES.md, section 3), "
+        "so the riposte is always made with the primary. Ruled: the primary is "
+        "what the PC swings with everywhere else, so the riposte deals what their "
+        "attacks deal",
+    ],
+)
+def rapid_riposte(holder: Holder, attacker, roll, fight: Fight = None) -> None:
+    """Rapid Riposte (Bone, level 6). Punish a melee attack that missed.
+
+    SRD: "When an attack made against you from within Melee range fails, you can
+    mark a Stress and seize the opportunity to deal the weapon damage of one of
+    your active weapons to the attacker."
+
+    **Redirect's twin, pointed the other way.** That card answers an attack from
+    *beyond* Melee range and turns it onto somebody else; this one answers an
+    attack from *within* Melee range and hits back. Both read the band off
+    `Adversary.attack_band` - a number printed on the stat block rather than a
+    position - so a card whose trigger is about distance is answered without any
+    distances, and the two never fire on the same miss.
+
+    **There is no attack roll.** The card says to deal the weapon's damage, not to
+    make an attack, so nothing is rolled to hit: the miss already happened, and
+    what this buys is damage rather than a chance at it.
+
+    The damage is built the way `items/weapons.py` builds a swing's - Proficiency
+    dice of the weapon's size, the weapon's modifier, then `adjust_damage_pool`
+    asked twice, once holder-wide and once for the weapon's own features. That is
+    deliberate rather than incidental: "the weapon damage of one of your active
+    weapons" is whatever that weapon does, so a Greatsword's Massive discards its
+    lowest here exactly as it would on a swing, and anything that adds to a
+    holder's *weapon* damage reaches the riposte without this card being edited.
+    The type comes through `dealt_damage_type` for the same reason.
+
+    What is deliberately **not** asked is `total_damage_bonus` and
+    `total_extra_damage`. The first is the hook Rage Up spends Stress on "before
+    you make an attack", and the second keys on how an attack roll came out -
+    neither has a trigger here, since no attack is being made.
+
+    SIMULATION RULE - policy. A Reaction, so the standing rule applies: it fires
+    whenever its trigger happens and the cost can be paid, with no desperation
+    gate. The Stress is the shared last-slot rule, as every PC Stress cost is.
+    """
+    if fight is None or holder.proficiency <= 0:
+        return
+    if attacker.attack_band is not Range.MELEE:
+        return
+    carried = getattr(holder, "primary_weapon", "")
+    if not carried:
+        return
+    if not holder.will_spend_stress(1):
+        return
+
+    weapon = find_weapon(carried)
+    pool = adjust_damage_pool(
+        holder,
+        weapon,
+        DamagePool(
+            dice_groups=[DiceGroup(count=holder.proficiency, sides=weapon.damage_die)],
+            drop_lowest=0,
+            modifier=weapon.damage_modifier,
+        ),
+        fight,
+    )
+    pool = adjust_damage_pool(
+        holder, weapon, pool, fight, names=weapon.named_features
+    )
+
+    holder.spend_stress(1)
+    damage = roll_damage(
+        dice_groups=pool.dice_groups,
+        modifier=pool.modifier,
+        drop_lowest=pool.drop_lowest,
+    )
+    attacker.take_damage(
+        damage.total,
+        fight,
+        damage_type=dealt_damage_type(holder, attacker, weapon.damage_type, fight),
+    )
+    fight.note(
+        f"{holder.name} ripostes {attacker.name}'s miss for {damage.total}"
+    )
+
+
 # --- Assessed and dismissed --------------------------------------------------
+
+out_of_combat_ability(
+    "Recovery",
+    "During a short rest, take a long rest downtime move instead - and a Hope "
+    "lets an ally do the same. Not a dismissal: a long rest move clears every "
+    "marked HP or every Stress, which is the largest single restoration in the "
+    "game and is fully representable here. What the card isn't is a combat move - "
+    "its trigger is a rest, which happens between encounters and never during "
+    "one. So it belongs to the sequenced-encounter machinery, which doesn't exist "
+    "yet, and joins Blade's Armorer and A Soldier's Bond as work with a home "
+    "rather than work nobody has done.",
+)
 
 no_combat_effect(
     "Know Thy Enemy",

@@ -32,6 +32,12 @@ per holder when it lands - it stops an adversary whose printed attack is magic a
 leaves everybody else merely conditioned. It is also the first party-applied
 condition anywhere that can lift **without the GM paying a Fear**, since the card
 prints an ender that reaches the caster rather than the holder.
+
+Level 6 reaches no fight at all: Dark Whispers is a conversation and four
+questions for the GM, Mass Disguise is minutes of silence and Presence Rolls.
+Midnight joins Grace's level 4 as a domain whose whole level is declared rather
+than built - and, like that one, it is worth recording so it does not read as an
+omission.
 """
 
 from combat.results import AttackResult
@@ -786,6 +792,33 @@ no_combat_effect(
     "Hope would buy nothing here, and that at a table this is one of the strongest "
     "escapes in the domain: it is how a Rogue walks into a fight they intend to "
     "leave.",
+)
+no_combat_effect(
+    "Dark Whispers",
+    "Speak into the mind of anyone you have made physical contact with, and once "
+    "the channel is open they can speak back; a Spellcast Roll additionally buys "
+    "one answer from the GM - where they are, what they are doing, what they are "
+    "afraid of, what they cherish most. Communication and information about people "
+    "nobody is fighting, which is the Floating Eye and Through Your Eyes case: the "
+    "spell makes no attack, grants no roll and moves no number. The four questions "
+    "are worth naming because two of them sound tactical, and neither is: nothing "
+    "in a simulated fight turns on an adversary's fears or attachments, and where "
+    "they are is the one thing the area rule stands in for precisely because no "
+    "positions are tracked.",
+)
+no_combat_effect(
+    "Mass Disguise",
+    "A few minutes of silence and a Stress redress every willing creature within "
+    "Close range, their new forms sharing a general body structure and size; a "
+    "disguised creature has advantage on Presence Rolls to avoid scrutiny, and a "
+    "Countdown (8) the GM ticks ends it. Both halves are outside a fight - the "
+    "minutes of focus cannot be found during one, and the advantage lands on "
+    "Presence Rolls to avoid scrutiny, which the simulator never makes. The Uncanny "
+    "Disguise ruling, applied to the same spell at party scale, and for the same "
+    "reason: adversaries in an encounter are already hostile and already swinging. "
+    "Deliberately **not** the out-of-combat state, which is for an effect that is "
+    "real and merely mistimed - this one would still buy nothing once encounters "
+    "are sequenced.",
 )
 no_combat_effect(
     "Pick and Pull",

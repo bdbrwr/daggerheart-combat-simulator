@@ -258,6 +258,12 @@ class Fight(Protocol):
     @property
     def defeated_adversaries(self) -> list: ...
 
+    # Off the field but not defeated - see `FightState.removed_adversaries`. It is
+    # how content that took something away can find it again, which Codex's Banish
+    # needs because the page prints a way back.
+    @property
+    def removed_adversaries(self) -> list: ...
+
     @property
     def conscious_party(self) -> list: ...
 
@@ -329,6 +335,7 @@ _ally_extra_damage: dict[str, Callable] = {}
 _attack_misses: dict[str, Callable] = {}
 _death_move_wards: dict[str, Callable] = {}
 _adversary_attack_disadvantages: dict[str, Callable] = {}
+_ally_on_damaged: dict[str, Callable] = {}
 _move_rescinds: dict[str, Callable] = {}
 _damage_scalings: dict[str, Callable] = {}
 _damage_typings: dict[str, Callable] = {}
@@ -1450,6 +1457,44 @@ def on_damaged(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_on_damaged, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def ally_on_damaged(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that fires when *any* party member has just taken damage.
+
+    Signature: `(holder, target, amount, hp_marked, fight) -> None`. Scanned across
+    the conscious party rather than across whoever was hit, because `holder` and
+    `target` are generally different PCs. The Codex spell *Sigil of Retribution* is
+    the reason: it accumulates a die every time the marked adversary "deals damage
+    to **you or your allies**", so a Wizard's card has to hear about a hit landing
+    on the Guardian.
+
+    **Distinct from `on_damaged` next door, which is holder-scoped.** That one
+    fires only for its own holder's wounds, which is right for the Acid Burrower
+    spraying blood and for Grace's *Never Upstaged* - both are about what happened
+    to *me*. Holder-scoping this one would mean a sigil only ever charged off hits
+    the caster personally took, which is precisely what the card does not say.
+
+    Fired from the same place `apply_on_damaged` is, immediately after the marking
+    is done, and with the same two figures for the same reason: the SRD triggers on
+    the number rolled and on what it cost, and each registrant reads the one its own
+    text names.
+
+    **Who dealt the damage is not in the signature.** Damage arrives at a PC without
+    an attacker attached - see the `Fight` protocol's `spotlighted` - so content that
+    needs to know reads that, and declines when nothing is spotlighted because the
+    damage is then the party's own.
+
+    Party-side only. It is asked where a *PC* takes damage and nowhere else, since
+    the party is the "you or your allies" every registrant means.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_on_damaged, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -2880,6 +2925,22 @@ def apply_ally_on_hit(attacker, target, result, fight: Fight = None) -> None:
     _discover()
     for holder, respond in _party_offers(fight, _ally_on_hits):
         respond(holder, attacker, target, result, fight)
+
+
+def apply_ally_on_damaged(target, amount: int, hp_marked: int, fight: Fight = None) -> None:
+    """Let party content respond to *anyone* in the party having just taken damage.
+
+    The party-wide counterpart of `apply_on_damaged`, called from the same place
+    and on the same trigger. Everything registered is asked; content decides for
+    itself whether this particular wound is one it has a claim on - usually by
+    reading `fight.spotlighted` to see who dealt it.
+
+    The scope is the *conscious* party, exactly as `apply_ally_on_hit`'s is, so a
+    caster who has gone down stops maintaining what they cast.
+    """
+    _discover()
+    for holder, respond in _party_offers(fight, _ally_on_damaged):
+        respond(holder, target, amount, hp_marked, fight)
 
 
 def soften_damage(

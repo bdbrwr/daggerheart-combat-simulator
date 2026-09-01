@@ -31,7 +31,14 @@ Level 5 carries **Words of Discord**, the first thing anywhere that makes one si
 of the table attack itself. The whisper is the party's whole contribution: the
 attack that follows is the adversary's own, rolled against another adversary's
 Difficulty and dealing the whisperer's printed damage.
+
+Level 6 turns the domain inward. **Never Upstaged** banks the holder's own wounds
+and pays them back five points apiece, and **Share the Burden** is the only card
+in the project that turns one resource straight into another - an ally's Stress
+becomes the caster's, and each slot moved is a Hope.
 """
+
+import random
 
 from combat.results import AttackResult
 from content.aoe import Range, area_difficulty, targets_beaten, targets_in_area
@@ -45,12 +52,16 @@ from content.conditions import (
 )
 from content.help import help_with_roll
 from content.registry import (
+    DamagePool,
     Fight,
     Holder,
     action,
     adversary_target_override,
+    damage_pool,
+    free,
     hope_die_for,
     no_combat_effect,
+    on_damaged,
     out_of_combat_ability,
 )
 from content.spellcast import spellcast
@@ -556,6 +567,202 @@ def _lash_out(whispered, living: list, fight: Fight) -> None:
     )
     if victim.is_defeated:
         fight.note(f"{victim.name} is defeated")
+
+
+# --- Never Upstaged ----------------------------------------------------------
+
+NEVER_UPSTAGED = "Never Upstaged"
+
+NEVER_UPSTAGED_TOKENS = "Never Upstaged tokens"
+
+# "Gain a +5 bonus to your damage roll for each token on this card."
+NEVER_UPSTAGED_BONUS = 5
+
+
+@on_damaged(NEVER_UPSTAGED)
+def never_upstaged(holder: Holder, amount: int, hp_marked: int, fight: Fight) -> None:
+    """Never Upstaged (Grace, level 6), first half. Bank the wound as tokens.
+
+    SRD: "When you mark 1 or more Hit Points from an attack, you can mark a Stress
+    to place a number of tokens equal to the number of Hit Points you marked on
+    this card. On your next successful attack, gain a +5 bonus to your damage roll
+    for each token on this card, then clear all tokens."
+
+    Keyed on HP **marked**, not on damage taken - `hp_marked` is what the hit
+    finally cost after thresholds, an Armor Slot and any resistance, which is what
+    the card asks for. So a hit an Armor Slot swallowed whole banks nothing, and a
+    Severe one banks three tokens and fifteen points of retaliation.
+
+    SIMULATION RULE - policy. Nothing to rule on beyond the standing default: the
+    Stress is marked whenever the shared last-slot rule allows it. The card asks
+    for no judgement - the tokens sit there until an attack lands and nothing
+    expires them - so what limits it is the Stress track and nothing else.
+
+    Tokens **accumulate** across several wounds, since the card says to place them
+    and only the successful attack clears them. Two Severe hits before the holder
+    next connects is six tokens.
+    """
+    if fight is None or hp_marked < 1:
+        return
+    if not holder.will_spend_stress(1):
+        return
+
+    holder.spend_stress(1)
+    fight.set_token(
+        holder,
+        NEVER_UPSTAGED_TOKENS,
+        fight.token_count(holder, NEVER_UPSTAGED_TOKENS) + hp_marked,
+    )
+    fight.note(
+        f"{holder.name} will not be upstaged, banking {hp_marked} "
+        f"token{'s' if hp_marked > 1 else ''}"
+    )
+
+
+@damage_pool(
+    NEVER_UPSTAGED,
+    unmodelled=[
+        "Damage rolled by anything other than a weapon swing. `adjust_damage_pool` "
+        "is asked from `items/weapons.py` and from Bone's Rapid Riposte, and the "
+        "cards that roll Proficiency dice of their own never consult it - so a "
+        "Grace character who banks tokens and then casts is holding them still. "
+        "The same gap Splendor's Voice of Reason declares",
+    ],
+)
+def never_upstaged_repays(
+    holder: Holder, weapon, pool: DamagePool, fight: Fight = None
+) -> DamagePool:
+    """Never Upstaged, second half. Cash every token into the damage that just landed.
+
+    **On `damage_pool` rather than on either damage hook next door**, and the
+    reason is the card's own wording. "On your next **successful** attack" rules
+    out `damage_bonus`, which is asked before the dice are thrown and would clear
+    the tokens on a miss; "+5 for each token" is a flat number rather than dice,
+    which rules out `extra_damage`. This hook is the only one asked *after* an
+    attack has landed and *before* its damage is rolled, and `DamagePool` carries
+    the flat modifier - so the bonus crosses the target's thresholds exactly once,
+    which is where five points per token is worth having.
+
+    Being asked is the commitment: the damage roll follows immediately, so the
+    tokens are cleared here rather than waiting for something to notice the hit.
+    """
+    if fight is None:
+        return pool
+
+    tokens = fight.token_count(holder, NEVER_UPSTAGED_TOKENS)
+    if not tokens:
+        return pool
+
+    fight.set_token(holder, NEVER_UPSTAGED_TOKENS, 0)
+    bonus = tokens * NEVER_UPSTAGED_BONUS
+    fight.note(f"{holder.name} answers in kind, cashing {tokens} for +{bonus} damage")
+    return pool._replace(modifier=pool.modifier + bonus)
+
+
+# --- Share the Burden --------------------------------------------------------
+
+SHARE_THE_BURDEN = "Share the Burden"
+
+# How few free Stress slots an ally has to be down to before the caster takes
+# their burden on. It mirrors `combat/policy.py`'s `LOW_STRESS_SLOTS`, which is
+# the line at which a PC drinks a stamina potion, and it is restated here rather
+# than imported for the reason Chokehold restates the focus rule: `combat/policy.py`
+# imports `content/`, and the dependency cannot run the other way.
+SHARE_THE_BURDEN_ALLY_SLOTS = 1
+
+
+@free(
+    SHARE_THE_BURDEN,
+    unmodelled=[
+        "'within Melee range' - no positions are tracked, so any conscious ally "
+        "can be relieved",
+        "The intimate knowledge or emotions that leak across is fiction with no "
+        "mechanic attached, so nothing here records what was learned",
+    ],
+)
+def share_the_burden(caster: Holder, fight: Fight) -> bool:
+    """Share the Burden (Grace, level 6). Take an ally's Stress, and be paid for it.
+
+    SRD: "Once per rest, take on the Stress from a willing creature within Melee
+    range. The target describes what intimate knowledge or emotions telepathically
+    leak from their mind in this moment between you. Transfer any number of their
+    marked Stress to you, then gain a Hope for each Stress transferred."
+
+    **No roll**, so it is a free ability: the caster relieves somebody *and* takes
+    their own action roll in the same spotlight. It is also the only card in the
+    project that turns one resource straight into another - every Stress moved is
+    a Hope gained - which is worth reading its numbers knowing.
+
+    SIMULATION RULE - policy, ruled. Three decisions, all the user's:
+
+    * **It waits until an ally is on high Stress** - `SHARE_THE_BURDEN_ALLY_SLOTS`
+      free slots or fewer, the line at which that PC would already be reaching for
+      a stamina potion. Whoever has the most marked, ties drawn at random.
+    * **The caster takes as much as the shared Stress rule lets them**, so they
+      fill to one spare slot and stop. `will_spend_stress` is asked per slot, the
+      same way Rage Up asks it between its two.
+    * **And never more than their Hope can hold.** A Stress transferred past the
+      Hope cap is a slot spent for nothing, since the Hope it pays out simply does
+      not arrive - `gain_hope` counts only what lands. So the transfer stops at
+      whichever of the three limits comes first.
+
+    The Stress is marked on the caster with `spend_stress`, not `mark_stress`:
+    this is a cost they choose, and a voluntary cost must never fall through to an
+    HP when the track is full.
+    """
+    if fight is None:
+        return False
+    if not fight.can_use_once_per_rest(caster, SHARE_THE_BURDEN):
+        return False
+
+    burdened = _most_burdened(caster, fight)
+    if burdened is None:
+        return False
+
+    room = caster.hope_max - caster.hope_marked
+    if room <= 0:
+        return False
+
+    taken = 0
+    while (
+        taken < burdened.stress_marked
+        and taken < room
+        and caster.will_spend_stress(1)
+    ):
+        caster.spend_stress(1)
+        taken += 1
+    if not taken:
+        return False
+
+    burdened.clear_stress(taken)
+    caster.gain_hope(taken)
+    fight.use_once_per_rest(caster, SHARE_THE_BURDEN)
+    fight.note(
+        f"{caster.name} shares {burdened.name}'s burden, taking {taken} Stress "
+        f"and gaining {taken} Hope"
+    )
+    return True
+
+
+def _most_burdened(caster: Holder, fight: Fight):
+    """The ally worth relieving, or None if nobody is close enough to the cliff.
+
+    "A willing creature" is read as an ally rather than the caster, since taking
+    on your own Stress is not a transfer. Ties are drawn rather than settled by
+    party order, which carries no meaning.
+    """
+    allies = [
+        pc
+        for pc in fight.conscious_party
+        if pc is not caster
+        and pc.stress_max - pc.stress_marked <= SHARE_THE_BURDEN_ALLY_SLOTS
+        and pc.stress_marked > 0
+    ]
+    if not allies:
+        return None
+
+    worst = max(pc.stress_marked for pc in allies)
+    return random.choice([pc for pc in allies if pc.stress_marked == worst])
 
 
 # --- Assessed rather than built ----------------------------------------------

@@ -13,13 +13,15 @@ visible.
 
 ## Scope
 
-**Levels 1 to 5, all nine domains** - 99 cards, complete. That is every card a
-level 5 party of any class combination could hold, so a new party composition can
-be simulated without writing code first. Levels 6+ wait until a party reaches
-them.
+**Levels 1 to 5, all nine domains** - 99 cards, complete - plus **level 6 for
+Arcana, Blade, Bone, Codex, Grace and Midnight**. That is every card a level 5
+party of any class combination could hold, so a new party composition can be
+simulated without writing code first. Level 6 is in progress: twelve of its
+eighteen are in, and the table below is the only place the remaining six are
+visible.
 
 The scope grew from levels 1-2, then to 3, then to 4, then to 5, each time the
-previous one was finished. Cards are ported **by level** rather than by domain: a level is the
+previous one was finished, and is now growing into 6. Cards are ported **by level** rather than by domain: a level is the
 slice a party actually occupies, and finishing one means no loadout at that level
 can name a card nobody has written.
 
@@ -165,6 +167,34 @@ all of them are repositioning or information, which is the same pair of reasons
 that has always driven dismissals - what is new is only how many of them one level
 holds.
 
+## Level 6
+
+| Domain | Level 6 |
+|---|---|
+| **Arcana** | 🚫 Rift Walker · ✅ Telekinesis |
+| **Blade** | ✅ Battle-Hardened · ✅ Rage Up |
+| **Bone** | ✅ Rapid Riposte · ⏸ Recovery |
+| **Codex** | ✅ Sigil of Retribution · ✅ Banish |
+| **Grace** | ✅ Never Upstaged · ✅ Share the Burden |
+| **Midnight** | 🚫 Dark Whispers · 🚫 Mass Disguise |
+| **Sage** | ⬜ · ⬜ |
+| **Splendor** | ⬜ · ⬜ |
+| **Valor** | ⬜ · ⬜ |
+
+**8 modelled, 3 no effect, 1 out of combat, 6 outstanding.**
+
+**Level 6 is two thirds done.** Batches 18 (Arcana, Blade, Bone) and 19 (Codex,
+Grace, Midnight) cover twelve of eighteen; Sage, Splendor and Valor are untouched,
+so a level 6 party drawing from any of those three would name cards nobody has
+written. Until the level is finished, this table is the only place that gap is
+visible.
+
+**Midnight is the second domain whose whole level reaches no fight**, after
+Grace's level 4 - and unlike that pair, both of these land in the *same* state.
+Dark Whispers is a conversation and four questions for the GM; Mass Disguise needs
+minutes of silence and pays out in Presence Rolls. Neither is deferred work: they
+would buy nothing once encounters are sequenced either.
+
 ### Order it was done in
 
 
@@ -176,18 +206,20 @@ current party could actually swap to. Then the four that had no module at all:
 
 ### What's next
 
-**Levels 1 to 5 are complete.** **Level 6** is the next slice - two cards per
-domain, eighteen more, and nothing needs them until a party reaches level 6. Every
-domain's page has been read several times now, so the printed-page check is a
-re-read rather than a hunt, and levels 6 to 10 all sit on the pages already used.
+**Levels 1 to 5 are complete, and level 6 is two thirds done.** What remains of it
+is **Sage, Splendor and Valor** - six cards, one batch. Every domain's page has
+been read several times now, so the printed-page check is a re-read rather than a
+hunt, and levels 6 to 10 all sit on the pages already used.
 
-Worth knowing before starting it: **level 5 cost far more machinery than level 4
-did**, which is the opposite of what the level 4 notes predicted. Four of the four
-batches brought a new hook or a change to the fight loop - `move_rescind`, the
-Hope Die swap's second reader, `damage_scaling`, `damage_typing`, a `dice/` field
-and two loop changes. The cards stopped being variations on shapes that already
-existed some time ago, and levels 6+ should be planned as two domains at a time
-with a machinery bill expected rather than hoped against.
+Batch 18 cost no machinery at all and batch 19 cost two hooks, which is roughly
+where levels 3 and 4 sat. Codex's level 6 turned out **not** to be a Grimoire -
+the domain stops printing books at level 5 - so the card count and the thing count
+are finally the same.
+
+One thing batch 18 surfaced that is not a domain card: **secondary weapons do not
+exist in the simulator**, so *Paired* and dual wielding contribute nothing to
+anybody's damage. The gap is now written out in `SIMULATION-RULES.md` §3, and
+Rapid Riposte is built so the bonus reaches it for free when it lands.
 
 ### What the modelled ones cover
 
@@ -904,6 +936,106 @@ states.** Its Armor Score bonus is a number the sheet already carries, and its
 downtime clause restores an Armor Slot on every ally - which is neither
 unrepresentable nor small. Filing it as *out of combat* keeps it on the
 sequenced-encounter list rather than losing it to a dismissal.
+
+### Batch 18 — Arcana, Blade and Bone at level 6 (6 cards)
+
+The first of level 6, three domains at once. **Verified against the printed page**
+(SRD pp. 120-121 for Arcana's level 6 and Blade's, and p. 123 for Bone's).
+
+| Card | Disposition |
+|---|---|
+| **Telekinesis** (Ar 6) | Modelled, partial. Two Spellcast Rolls in one action - lift one adversary, throw them at another for Proficiency d12s + 4 physical |
+| **Battle-Hardened** (Bl 6) | Modelled. Once per long rest, a Hope turns a death move into clearing a Hit Point |
+| **Rage Up** (Bl 6) | Modelled, partial. Up to 2 Stress before a swing, each worth twice the holder's Strength on the damage |
+| **Rapid Riposte** (Bn 6) | Modelled, partial. A Melee attack that missed you costs a Stress and takes the weapon's damage straight back |
+| **Rift Walker** (Ar 6) | No combat effect - a marking on the ground and a rift back to it, which is passage rather than a fight |
+| **Recovery** (Bn 6) | Out of combat - a long rest downtime move taken during a short rest, and a Hope lends it to an ally |
+
+**No new machinery**, which is the first batch since 12 that has been true of and
+is not what the level 5 notes led anyone to expect. All four modelled cards
+registered on hooks that already existed - `action`, `death_move_ward`,
+`damage_bonus` and `attack_missed` - and nothing in `combat/`, `dice/` or
+`content/registry.py` changed.
+
+**Telekinesis is the first card that prints two rolls inside one action.** The
+lift goes through `spellcast()` and is the roll the spotlight resolves on; the
+throw is rolled plainly on the caster's Spellcast trait. That split is forced
+rather than chosen: `total_roll_bonus`, `help_with_roll` and `hope_die_for` all
+keep the contract that being asked is the commitment, so asking them a second time
+in one action would spend an ally's Hope twice and claim a per-rest use twice. The
+throw therefore also earns no Hope or Fear and is not offered to reroll content,
+and both halves are declared as gaps.
+
+**Rapid Riposte is Redirect's twin.** The two answer the same trigger - an attack
+on you that failed - split by the band it came from, which both read off
+`Adversary.attack_band` rather than off any position. Its damage is built through
+`adjust_damage_pool` the way `attack_with` builds a swing's, so a weapon feature
+reaches the riposte; that is also what will pick up **Paired**'s bonus to primary
+weapon damage without this card changing, once secondary weapons exist at all.
+They do not today - `secondary_weapon` is loaded off the sheet and read by
+nothing, and no secondary weapon is catalogued - which is now written out in full
+in `SIMULATION-RULES.md` §3 rather than left as the one-line entry it was.
+
+**Rage Up is the first card whose cost is paid before the roll it pays for.** The
+`damage_bonus` hook is asked before the attack is rolled, which is exactly where
+the card puts the decision, so up to 2 Stress goes whether or not the swing lands.
+That is the page read literally rather than a simplification, and against a
+Strength of 3 it is +12 on the number the target's threshold bands are read
+against.
+
+### Batch 19 — Codex, Grace and Midnight at level 6 (6 cards)
+
+**Verified against the printed page** (SRD p. 125 for Codex's level 6, p. 127 for
+Grace's, and p. 129 for Midnight's - all three levels sit on the right-hand page
+of their domain's spread).
+
+| Card | Disposition |
+|---|---|
+| **Sigil of Retribution** (Cx 6) | Modelled, partial. No roll: mark an adversary and hand the GM a Fear; every blow it lands on the party banks a d8, cashed into the next hit on it |
+| **Banish** (Cx 6) | Modelled, partial. Two contests, and on the second failure the adversary leaves the field entirely - returning only as the party's own rolls with Fear wear the banishment down |
+| **Never Upstaged** (Gr 6) | Modelled, partial. A Stress banks every Hit Point a hit cost, and the next landed attack cashes each token for +5 damage |
+| **Share the Burden** (Gr 6) | Modelled, partial. No roll: take an ally's marked Stress onto your own track, and gain a Hope for each slot moved |
+| **Dark Whispers** (Mn 6) | No combat effect - a private channel into somebody's mind, and four questions for the GM |
+| **Mass Disguise** (Mn 6) | No combat effect - minutes of silence, then advantage on Presence Rolls to avoid scrutiny |
+
+Two pieces of shared machinery:
+
+- **`ally_on_damaged`** - party content that watches *anyone in the party* take
+  damage, the party-wide twin of `on_damaged`. Sigil of Retribution needs it: the
+  card charges when the marked adversary "deals damage to **you or your allies**",
+  and holder-scoping it would have made the sigil charge only off hits the caster
+  personally took. Asked from the same place its twin is, in
+  `PlayerCharacter.take_damage`, and party-side only - "you or your allies" is the
+  party.
+- **`FightState.removed`**, with a `removed_adversaries` property on the state and
+  on the `Fight` protocol. Banish takes an adversary off the field and the page
+  prints a way back, so something has to hold the object while it is gone -
+  `remove` previously kept nothing. It is not a graveyard: nothing in the loop
+  reads it, an adversary in it is as absent as before, and holding the object alive
+  incidentally closes the `id()`-reuse hazard `remove`'s docstring already warned
+  about, for exactly the case that cares.
+
+**Sigil of Retribution is the first party card that pays the GM.** Its cost is not
+Hope or Stress but a Fear handed straight over, which is an extra activation the
+GM would not otherwise have had - and it is spent up front, whether or not the
+sigil ever charges. The user's ruling was explicitly **against** giving it a
+trigger to earn that back: it joins the random selection like any other free
+ability. Worth watching in the numbers, since every other Fear rule in the project
+runs the other way, with the party draining the pool.
+
+**Banish is the first thing that takes an adversary off the field and can put it
+back.** The Green Ooze's *Split* removes and never returns; Codex's *More Where
+That Came From* summons something new. This is the same object leaving and coming
+home with the HP it left with. One consequence is worth reading numbers with in
+mind and is declared as a gap: the party can **win** a fight while an adversary is
+banished, because a removed adversary is not on the field.
+
+**Never Upstaged found the last empty corner of the damage hooks.** "On your next
+*successful* attack" rules out `damage_bonus`, which is asked before the dice and
+would clear the tokens on a miss; "+5 for each token" is flat rather than dice,
+which rules out `extra_damage`. `damage_pool` is the only hook asked after an
+attack has landed and before its damage is rolled, and `DamagePool` carries the
+flat modifier - so no new machinery was needed after all.
 
 ## Consolidating `_spellcast`
 

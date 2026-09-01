@@ -13,6 +13,10 @@ printed-page check became part of the process.
 Cards assessed as belonging outside a fight are declared at the bottom, so that
 "used between encounters" never looks like "nobody has got to it yet" - and, just
 as importantly, never looks like a dismissal either.
+
+Level 6 gives Blade the domain's first card that reaches a **death move** on its
+own holder - Splendor's Life Ward is cast on somebody else - and, in Rage Up, the
+first card anywhere whose cost is paid *before* the roll it pays for.
 """
 
 import random
@@ -23,8 +27,10 @@ from content.registry import (
     Holder,
     ally_damage_reduction,
     attack_advantage,
+    damage_bonus,
     damage_die_maximum,
     damage_die_reroll,
+    death_move_ward,
     extra_damage,
     no_combat_effect,
     on_hit,
@@ -456,6 +462,135 @@ def champions_edge(attacker: Holder, target, result, fight: Fight) -> None:
             break
         attacker.spend_hope(1)
         fight.note(f"{attacker.name}'s critical {take()}")
+
+
+# --- Battle-Hardened ---------------------------------------------------------
+
+BATTLE_HARDENED = "Battle-Hardened"
+
+BATTLE_HARDENED_HOPE = 1
+
+
+@death_move_ward(
+    BATTLE_HARDENED,
+    unmodelled=[
+        "HP marked by anything other than **damage** doesn't reach this. "
+        "`mark_hp_and_check_death` is handed a fight by `take_damage` and by "
+        "nothing else, so a Blade whose last HP is marked by Stress that wouldn't "
+        "fit makes their death move with the card unspent. Life Ward has the same "
+        "gap for the same reason",
+    ],
+)
+def battle_hardened(holder: Holder, target, fight: Fight) -> bool:
+    """Battle-Hardened (Blade, level 6). A Hope buys you out of one death move.
+
+    SRD: "Once per long rest when you would make a Death Move, you can spend a
+    Hope to clear a Hit Point instead."
+
+    **Life Ward's shape, turned on its owner.** That card is cast on somebody else
+    for 3 Hope and waits on a sigil; this one is carried, costs a single Hope, and
+    is spent at the moment it is needed - so the first thing this checks is that
+    the PC about to go down is its own holder. The hook is scanned party-wide,
+    since a ward generally belongs to another PC, and holder-scoping it here is
+    what makes the card personal.
+
+    "Clear a Hit Point instead" is the same clause Life Ward prints: the HP just
+    marked comes back off and the PC stays up with one unmarked. Nothing else of
+    the death move happens - no unconsciousness, no scar roll, and no entry in the
+    `death_moves` tally, because this is asked *before* the move rather than as
+    part of it.
+
+    SIMULATION RULE - policy. Nothing to rule on. **Being asked is the
+    commitment** - the hook is consulted only when a death move is genuinely
+    happening - so there is no moment worth holding a once-per-long-rest use back
+    for, and one Hope is not the kind of price that needs a floor. The Premonition
+    reading of a cheap once-per-rest.
+
+    Once per **long** rest, so a party running a second encounter without one
+    walks in with it already spent - the standing rule for every per-rest resource
+    here.
+    """
+    if fight is None or holder is not target:
+        return False
+    if not holder.can_spend_hope(BATTLE_HARDENED_HOPE):
+        return False
+    if not fight.use_once_per_rest(holder, BATTLE_HARDENED, long=True):
+        return False
+
+    holder.spend_hope(BATTLE_HARDENED_HOPE)
+    target.clear_hp(1)
+    fight.note(
+        f"{target.name} is too battle-hardened to fall, spending a Hope to stay up"
+    )
+    return True
+
+
+# --- Rage Up -----------------------------------------------------------------
+
+RAGE_UP = "Rage Up"
+
+# "You can Rage Up twice per attack" - the printed cap, and the number of Stress
+# a swing can cost.
+RAGE_UP_USES = 2
+
+# "A bonus to your damage roll equal to twice your Strength."
+RAGE_UP_MULTIPLIER = 2
+
+
+@damage_bonus(
+    RAGE_UP,
+    unmodelled=[
+        "Damage rolled by anything other than a weapon swing. `total_damage_bonus` "
+        "is asked where a PC swings - `combat/policy.py` and Bone's Boost - and "
+        "the cards that roll Proficiency dice of their own never consult it, so a "
+        "Blade raging into a domain card's damage gets nothing. The same gap "
+        "Splendor's Voice of Reason declares",
+    ],
+)
+def rage_up(holder: Holder, target, fight: Fight = None) -> int:
+    """Rage Up (Blade, level 6). Stress for damage, twice over.
+
+    SRD: "Before you make an attack, you can mark a Stress to gain a bonus to your
+    damage roll equal to twice your Strength. You can Rage Up twice per attack."
+
+    A flat add rather than dice, so it belongs on `damage_bonus` - and that hook is
+    asked **before the attack roll**, which is exactly where the card puts the
+    decision. The consequence is worth naming: the Stress is spent whether or not
+    the swing lands, because a Blade raging up has committed before they know. That
+    is the card read literally, not a simplification.
+
+    Landing before the target's thresholds is most of what it buys: twice a
+    Strength of 3 is +6 on the number the bands are read against, which is a
+    different thing from +6 printed after them.
+
+    SIMULATION RULE - policy, ruled. **Twice on every attack, whenever the shared
+    last-slot rule allows it** - the standing default for a Stress cost, the same
+    one Boost, Brace and Redirect follow. `will_spend_stress` is re-asked between
+    the two, so a Blade one slot from the cliff rages up once and stops. Capping it
+    at one, and gating the second on a spare slot, were both offered and declined.
+
+    Declines at a Strength of zero or less rather than paying Stress for nothing -
+    or, at a negative Strength, for a penalty. The same reading Unleash Chaos takes
+    of a card whose whole size is drawn from a trait.
+    """
+    strength = holder.traits.get("strength", 0)
+    if strength <= 0:
+        return 0
+
+    paid = 0
+    while paid < RAGE_UP_USES and holder.will_spend_stress(1):
+        holder.spend_stress(1)
+        paid += 1
+    if not paid:
+        return 0
+
+    bonus = paid * RAGE_UP_MULTIPLIER * strength
+    if fight is not None:
+        fight.note(
+            f"{holder.name} rages up {paid} time{'s' if paid > 1 else ''} "
+            f"(+{bonus} damage)"
+        )
+    return bonus
 
 
 no_combat_effect(

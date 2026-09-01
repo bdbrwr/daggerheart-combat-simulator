@@ -115,6 +115,15 @@ class FightState:
     # rest of the swarm must not then act again in the same turn.
     consumed: dict[int, int] = field(default_factory=dict)
 
+    # Adversaries taken off the field by `remove` rather than defeated. Not a
+    # graveyard and not read by the loop: an adversary in here is as absent as it
+    # was before, out of `living_adversaries` and out of `defeated_adversaries`.
+    # It exists so content that took something off the field can find it again -
+    # the Codex spell *Banish* prints a way back, and something has to be holding
+    # the object when that way back is rolled. The Green Ooze's *Split* leaves its
+    # original here too and nothing ever looks for it, which is correct.
+    removed: list[Adversary] = field(default_factory=list)
+
     logging: bool = False
     log: list[str] = field(default_factory=list)
 
@@ -141,6 +150,17 @@ class FightState:
         Green Ooze splitting - leaves no body, which is right: it did not die.
         """
         return [adversary for adversary in self.adversaries if adversary.is_defeated]
+
+    @property
+    def removed_adversaries(self) -> list[Adversary]:
+        """Adversaries off the field but not defeated, in the order they left.
+
+        The counterpart of `defeated_adversaries`, and read for the same kind of
+        reason: nothing in the loop needs it, and content does. Codex's *Banish*
+        looks here for the adversary it sent away, by the `id()` it recorded when
+        the spell landed.
+        """
+        return list(self.removed)
 
     @property
     def party_is_down(self) -> bool:
@@ -295,8 +315,14 @@ class FightState:
 
         The caller passes a **spawned** combatant, not a catalogue definition, so
         summoning twice never shares one HP track.
+
+        An adversary that had been `remove`d is taken back off that list as it
+        returns, so nothing is both on the field and off it. That is the Codex
+        spell *Banish* coming back: it is the same object, with the HP and Stress
+        it left with, which is what the page describes.
         """
         self.adversaries.append(adversary)
+        self.removed = [gone for gone in self.removed if gone is not adversary]
 
     def summon_ally(self, combatant: PlayerCharacter) -> None:
         """Add a temporary combatant to the **party** already under way.
@@ -343,11 +369,24 @@ class FightState:
         Its **conditions are not** harmless, which is why they are released here -
         see `release_conditions_from`. A hold whose only printed way out is
         something happening to this adversary can never end once it has left.
+
+        **What left is kept**, in `removed`, which is not a graveyard: it is how
+        content that took something off the field can find it again. The Codex
+        spell *Banish* is why - it removes an adversary and the page prints a way
+        back, so something has to still be holding the object when the way back is
+        rolled. Nothing in the loop reads the list, so an adversary in it is as
+        absent as it was before; and holding the object alive also closes the
+        `id()`-reuse hazard above for exactly the case that cares, since a live
+        object's id can never be handed to something else.
         """
         self.release_conditions_from(adversary)
         self.adversaries = [
             standing for standing in self.adversaries if standing is not adversary
         ]
+        # Identity, not equality: `Adversary` is a plain dataclass, so two spawned
+        # copies of one stat block compare equal and `in` would drop the second.
+        if not any(gone is adversary for gone in self.removed):
+            self.removed.append(adversary)
 
     # --- Conditions ----------------------------------------------------------
 

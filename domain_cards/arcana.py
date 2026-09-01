@@ -10,6 +10,10 @@ verbatim text is in .reference/abilities.json, checked against the printed page
 (SRD p. 119), where the Domain Card Reference appendix begins.
 
 Cards from this domain that can't affect a fight are declared at the bottom.
+
+Level 6's **Telekinesis** is the first card anywhere that prints two rolls inside
+one action - see its docstring for why the second is rolled plainly rather than
+through `content/spellcast.py`.
 """
 
 import random
@@ -765,8 +769,146 @@ def premonition(holder: Holder, roll, fight: Fight) -> bool:
     return True
 
 
+# --- Telekinesis -------------------------------------------------------------
+
+TELEKINESIS = "Telekinesis"
+
+TELEKINESIS_DIE = 12
+TELEKINESIS_MODIFIER = 4
+
+# The card needs somebody to pick up *and* somebody to throw them at. On a field
+# of one there is no second target, and the lift alone buys only a change of
+# position - which nothing here represents.
+TELEKINESIS_MINIMUM_TARGETS = 2
+
+
+@action(
+    TELEKINESIS,
+    unmodelled=[
+        "'move them anywhere within Far range of their original position' - the "
+        "whole of what the first roll buys on its own is where the lifted "
+        "adversary ends up, and no positions are tracked. Only the throw reaches "
+        "the fight, which is why the card declines when there is nobody to throw "
+        "them at",
+        "'against a target within Far range', twice - no positions are tracked, "
+        "so both the lift and the throw always reach",
+        "The additional Spellcast Roll is rolled on the caster's Spellcast trait "
+        "alone. Content bonuses, an ally's Help and a swapped Hope Die are all "
+        "hooks whose contract is that **being asked is the commitment**, and "
+        "asking them a second time inside one action would charge for them twice "
+        "- so the throw gets none of them",
+        "The throw's roll produces neither Hope nor Fear and is not offered to "
+        "the party's reroll content. A spotlight resolves into one action with "
+        "one duality outcome and the loop spends the lift's; the throw is a roll "
+        "made inside that action, the way a Reaction Roll is",
+    ],
+)
+def telekinesis(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Telekinesis (Arcana, level 6). Pick one adversary up and throw it at another.
+
+    SRD: "Make a Spellcast Roll against a target within Far range. On a success,
+    you can use your mind to move them anywhere within Far range of their original
+    position. You can throw the lifted target as an attack against the second
+    target by making an additional Spellcast Roll. On a success, deal d12+4
+    physical damage to the second target using your Proficiency. This spell then
+    ends."
+
+    Two rolls in one action, and they are made against **different** adversaries:
+    the first against whoever is being lifted, the second against whoever they are
+    thrown at. Only the second takes damage - the lifted adversary is the
+    projectile and the card gives it nothing.
+
+    "Using your Proficiency" counts the dice, as it does everywhere else, so a
+    Proficiency 3 caster throws 3d12+4. Physical damage, which is what the page
+    says: a Wizard hitting somebody with a Wizard is not magic.
+
+    SIMULATION RULE - policy, ruled. Two decisions:
+
+    * **The throw goes at the party's focus** - `target`, whoever the party's own
+      targeting rule already picked - so the damage lands where every other card
+      puts it.
+    * **The adversary lifted is the one with the lowest printed Difficulty**,
+      chosen at random among ties. The first roll is made against *its* Difficulty
+      and nothing else about it matters, so grabbing the easiest thing to grab is
+      the choice a table makes. That reads a number printed on a stat block, not
+      a statistic anybody has to work out.
+
+    Declines below `TELEKINESIS_MINIMUM_TARGETS` living adversaries. The card
+    costs no Stress and no Hope, so this is not the Rain of Blades gate - it is
+    that the spell has no second half to resolve, and the first half is
+    positioning.
+    """
+    trait = getattr(caster, "spellcast_trait", "")
+    if not trait or trait not in caster.traits:
+        return None
+    if caster.proficiency <= 0:
+        return None
+
+    living = fight.living_adversaries
+    if len(living) < TELEKINESIS_MINIMUM_TARGETS:
+        return None
+
+    others = [adversary for adversary in living if adversary is not target]
+    if not others:
+        return None
+
+    # Ties broken by a draw rather than by list order: which of two equally easy
+    # adversaries gets picked up must not be decided by the order a catalogue
+    # happened to list them in.
+    easiest = min(adversary.difficulty for adversary in others)
+    lifted = random.choice(
+        [adversary for adversary in others if adversary.difficulty == easiest]
+    )
+
+    grab = spellcast(caster, lifted, fight)
+    if grab is None:
+        return None
+    if not grab.is_success:
+        fight.note(f"{caster.name} reaches for {lifted.name} and can't lift them")
+        return AttackResult(attack_roll=grab, damage_roll=None)
+
+    # The additional Spellcast Roll. Rolled here rather than through
+    # `content/spellcast.py` on purpose - see the declared gaps: that helper asks
+    # three commitment hooks, and this is the second roll of one action.
+    throw = roll_duality(modifier=caster.traits[trait], difficulty=target.difficulty)
+    if not throw.is_success:
+        fight.note(
+            f"{caster.name} hurls {lifted.name} at {target.name} and misses ({throw})"
+        )
+        return AttackResult(attack_roll=grab, damage_roll=None)
+
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=caster.proficiency, sides=TELEKINESIS_DIE)]
+        # Asked with the **throw**, since that is the roll that landed - content
+        # keying on how an attack came out is asking about the one that hit.
+        + total_extra_damage(caster, target, throw, fight),
+        modifier=TELEKINESIS_MODIFIER,
+        is_critical=throw.is_critical,
+    )
+    marked = target.take_damage(
+        damage_roll.total, fight, damage_type=DamageType.PHYSICAL
+    )
+    fight.note(
+        f"{caster.name} throws {lifted.name} into {target.name} "
+        f"for {damage_roll.total}"
+    )
+    return AttackResult(
+        attack_roll=grab, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
+no_combat_effect(
+    "Rift Walker",
+    "A Spellcast Roll (15) plants an arcane marking where the caster stands; the "
+    "next successful cast opens a rift back to it, and the rift stays open until "
+    "it is closed or another spell is cast. Its whole effect is safe passage to a "
+    "spot on the ground, and no positions are tracked - the standing answer for "
+    "content whose effect is where somebody is standing, the same one Blink Out, "
+    "Flight and Teleport already have. At a table it is an escape route prepared "
+    "in advance, which is most of what an Arcana caster spends level 6 on.",
+)
 no_combat_effect(
     "Blink Out",
     "A Spellcast Roll (12), then a Hope teleports the caster to a point within "

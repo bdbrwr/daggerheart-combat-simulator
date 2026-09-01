@@ -10,6 +10,12 @@ Card text is paraphrased in each docstring rather than quoted in full. The
 verbatim text is in .reference/abilities.json, and was checked against the
 printed page (SRD pp. 124-125) for all nine books.
 
+Level 6 is where the domain stops attacking and starts rearranging the fight.
+**Sigil of Retribution** is the first party card anywhere that pays the *GM* -
+a Fear, up front - and the first that banks somebody else's wounds as damage.
+**Banish** takes an adversary off the field entirely and prints a way back, which
+is what gave `FightState` a `removed` list to hold it in.
+
 A Codex book is mostly utility, and that is a fact about the domain rather than
 a gap: of the twenty-five spells in the nine books, thirteen change a fight. The
 rest are declared `no_combat_effect` at the bottom under their own names *and*
@@ -48,7 +54,11 @@ from content.registry import (
     Holder,
     action,
     ally_damage_reduction,
+    ally_on_damaged,
     ally_on_hit,
+    ally_on_roll,
+    extra_damage,
+    free,
     hope_die_for,
     no_combat_effect,
     total_extra_damage,
@@ -56,7 +66,7 @@ from content.registry import (
 from content.spellcast import spellcast
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
-from dice.duality import roll_duality
+from dice.duality import DualityOutcome, roll_duality
 
 # The GM's pool has to be worth draining before spending a spotlight's roll on a
 # condition that deals no damage. Below this, damage is the better use.
@@ -1201,6 +1211,304 @@ def construct_strike(construct: Holder, target, fight: Fight):
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
     )
+
+
+# --- Sigil of Retribution ------------------------------------------------------
+
+SIGIL_OF_RETRIBUTION = "Sigil of Retribution"
+
+SIGIL_DIE = 8
+
+# Placed on the *adversary* wearing the sigil, so "this effect ends when the marked
+# adversary is defeated" is answered by looking at the field rather than by
+# remembering anything on the caster - a defeated adversary is not in
+# `living_adversaries`, so nothing finds the mark and the spell may be cast again.
+SIGIL_MARK = "Sigil of retribution"
+
+# The dice waiting on the card, held on the caster - it is their card.
+SIGIL_DICE = "Sigil dice"
+
+
+@free(
+    SIGIL_OF_RETRIBUTION,
+    unmodelled=[
+        "'within Close range' - no positions are tracked, so the sigil always "
+        "reaches whoever the party is focusing",
+        "'or you cast Sigil of Retribution again' - the spell is only cast while "
+        "no sigil stands, so nothing ever moves one. Re-casting to shift the mark "
+        "onto a fresher target is a judgement about the fight that nobody has "
+        "ruled on, and the card's other ender covers the case that matters: the "
+        "marked adversary dying frees it",
+    ],
+)
+def sigil_of_retribution(caster: Holder, fight: Fight) -> bool:
+    """Sigil of Retribution (Codex, level 6). Mark one adversary and bank its blows.
+
+    SRD: "Mark an adversary within Close range with a sigil of retribution. The GM
+    gains a Fear. When the marked adversary deals damage to you or your allies,
+    place a d8 on this card. You can hold a number of d8s equal to your level. When
+    you successfully attack the marked adversary, roll the dice on this card and
+    add the total to your damage roll, then clear the dice. This effect ends when
+    the marked adversary is defeated or you cast Sigil of Retribution again."
+
+    **No roll**, so it is a free ability: the caster marks somebody *and* takes
+    their action roll in the same spotlight. What it costs is not the caster's at
+    all - **the GM gains a Fear** - which makes this the first party card anywhere
+    that pays the other side of the table outright. A Fear is an extra activation
+    the GM would not otherwise have had.
+
+    SIMULATION RULE - policy, ruled. **No trigger of its own.** It is offered like
+    any other free ability, shuffled among them and bounded by the spotlight
+    budget, and it fires whenever no sigil is standing. Holding it back until the
+    party had taken damage - proof that the marked adversary would ever charge it -
+    was proposed and declined: the user's ruling is that content with nothing
+    special about it joins the random selection rather than getting a bespoke
+    trigger.
+
+    The mark goes on the party's focus target, which is the adversary with the most
+    HP marked - `combat/policy.py`'s rule, **restated** here rather than called,
+    since that module imports this package and the dependency cannot run the other
+    way. The same arrangement Chokehold already uses.
+
+    Declines while a sigil stands. One card, one sigil.
+    """
+    if fight is None:
+        return False
+
+    living = fight.living_adversaries
+    if not living:
+        return False
+    if any(fight.token_count(adversary, SIGIL_MARK) for adversary in living):
+        return False
+
+    marked = max(living, key=lambda adversary: adversary.hp_marked)
+    fight.set_token(marked, SIGIL_MARK, 1)
+    # A fresh sigil starts empty. The dice belong to the previous one, whose
+    # adversary is dead - "this effect ends" takes them with it.
+    fight.set_token(caster, SIGIL_DICE, 0)
+    fight.gain_fear(1)
+    fight.note(
+        f"{caster.name} marks {marked.name} with a sigil of retribution "
+        f"(the GM gains a Fear)"
+    )
+    return True
+
+
+@ally_on_damaged(SIGIL_OF_RETRIBUTION)
+def sigil_charges(
+    caster: Holder, target, amount: int, hp_marked: int, fight: Fight
+) -> None:
+    """A d8 goes on the card every time the marked adversary hurts the party.
+
+    Registered on the same name as the free ability above, which is how one card
+    reaches several hooks. **Party-wide**, because the card says "damage to you or
+    your allies" - a sigil that only charged off the caster's own wounds would be a
+    different and much smaller card, which is the whole reason `ally_on_damaged`
+    exists.
+
+    Who dealt the damage comes from `fight.spotlighted`, since damage reaches a PC
+    with no attacker attached. `None` there means the hit was the party's own - On
+    Fire burning its holder - and charges nothing, which is right: the sigil is
+    retribution against one adversary.
+
+    Keyed on **damage dealt**, not HP marked, exactly as the card says: "when the
+    marked adversary deals damage". So a hit an Armor Slot swallowed whole still
+    puts a die on the card.
+
+    Capped at the caster's level, which is what the page prints. Over the cap the
+    blow simply banks nothing.
+    """
+    if fight is None or amount <= 0:
+        return
+
+    attacker = fight.spotlighted
+    if attacker is None or not fight.token_count(attacker, SIGIL_MARK):
+        return
+
+    held = fight.token_count(caster, SIGIL_DICE)
+    if held >= caster.level:
+        return
+
+    fight.set_token(caster, SIGIL_DICE, held + 1)
+    fight.note(f"{caster.name}'s sigil answers for {target.name} ({held + 1}d8)")
+
+
+@extra_damage(SIGIL_OF_RETRIBUTION)
+def sigil_repays(caster: Holder, target, roll, fight: Fight = None) -> list:
+    """The dice on the card, thrown into the damage of a hit on the marked adversary.
+
+    Asked from inside the damage roll, so the dice join it and cross the target's
+    thresholds once - which is the whole reason `extra_damage` exists rather than
+    dealing a second hit afterwards. It also means a **missed** attack neither
+    spends the dice nor throws them, since the hook is only reached on a hit.
+
+    `discardable=False`, like every die a feature adds to somebody else's roll: a
+    Massive or Powerful weapon discards the lowest of the dice *it* rolled, and
+    these are not among them.
+    """
+    if fight is None or not fight.token_count(target, SIGIL_MARK):
+        return []
+
+    held = fight.token_count(caster, SIGIL_DICE)
+    if not held:
+        return []
+
+    fight.set_token(caster, SIGIL_DICE, 0)
+    fight.note(f"{caster.name}'s sigil discharges {held}d8 into {target.name}")
+    return [DiceGroup(count=held, sides=SIGIL_DIE, discardable=False)]
+
+
+# --- Banish --------------------------------------------------------------------
+
+BANISH = "Banish"
+
+BANISH_DIE = 20
+
+# The Difficulty the banished adversary rolls against to come back, held on the
+# caster as a plain number, and the `id()` of whoever is out there. Both are
+# `set_token` values rather than counts - the Ranger's Focus arrangement, which is
+# what that method exists for.
+BANISHED_WHO = "Banished adversary"
+BANISHED_DIFFICULTY = "Banishment difficulty"
+
+
+@action(
+    BANISH,
+    unmodelled=[
+        "'within Close range' - no positions are tracked, so the spell always "
+        "reaches whoever the party is focusing",
+        "A banished adversary is off the field, so **the party can win a fight "
+        "while one is still banished**. That follows from the standing reading "
+        "that a removed adversary is not there rather than from anything about "
+        "this card, and it is the one place the spell is worth more here than at "
+        "a table, where the GM would still have it in hand",
+        "The banished adversary's own return roll is not made on any schedule of "
+        "its own - only a PC rolling with Fear buys it one, which is what the page "
+        "prints. A fight in which the party never rolls with Fear again never "
+        "sees it back",
+    ],
+)
+def banish(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Banish (Codex, level 6). Take one adversary off the board entirely.
+
+    SRD: "Make a Spellcast Roll against a target within Close range. On a success,
+    roll a number of d20s equal to your Spellcast trait. The target must make a
+    reaction roll with a Difficulty equal to your highest result. On a success, the
+    target must mark a Stress but isn't banished. Once per rest on a failure, they
+    are banished from this realm. When the PCs roll with Fear, the Difficulty gains
+    a -1 penalty and the target makes another reaction roll. On a success, they
+    return from banishment."
+
+    **Two gates, not one.** Beating the target's Difficulty only earns the spell a
+    second contest: a pool of d20s equal to the caster's Spellcast trait, best
+    result taken, against a flat d20 the adversary rolls with no modifier. So a
+    high Spellcast trait buys more attempts at a high number rather than a bonus,
+    which is a different shape from every other spell in the domain.
+
+    SIMULATION RULE - rules interpretation, ruled. **Banishment is `remove`, not
+    defeat** - the Green Ooze's *Split* shape. The adversary leaves the field with
+    its HP and Stress untouched, is not reported as a kill, and comes back the same
+    object it left as. `FightState.removed` is what holds it in the meantime, and
+    the caster remembers which one by `id()`, the way Ranger's Focus remembers its
+    mark.
+
+    The **-1 is cumulative**: each PC roll with Fear lowers the Difficulty by
+    another point and buys another attempt, so a banishment gets easier the longer
+    it lasts and the worse the party's luck runs. Reading it as a flat -1 applied
+    once was the alternative; the page's "gains a -1 penalty" alongside a repeated
+    roll reads as accumulating.
+
+    SIMULATION RULE - rules interpretation. The per-rest limit gates **the
+    banishment, not the spell**. "Once per rest on a failure, they are banished" is
+    the Repudiate and Troublemaker phrasing - the limit sits on the payoff - so the
+    spell may be cast again after it has been used, and a failed reaction roll with
+    the use already spent simply does nothing. The Stress is the *success* clause
+    and is not owed on a failure.
+
+    SIMULATION RULE - policy. Nothing to rule on: no Hope, no Stress, and the
+    per-rest use is claimed only when the banishment actually happens, so casting
+    costs nothing but the roll the caster was making anyway. The Preservation Blast
+    reading - it never declines.
+    """
+    trait = getattr(caster, "spellcast_trait", "")
+    if not trait or trait not in caster.traits:
+        return None
+
+    dice = caster.traits[trait]
+    if dice <= 0:
+        return None
+
+    attack_roll = spellcast(caster, target, fight)
+    if attack_roll is None:
+        return None
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    difficulty = max(random.randint(1, BANISH_DIE) for _ in range(dice))
+
+    # A flat d20 with no modifier, since adversaries have no traits to roll. The
+    # Difficulty is passed as `evasion` on purpose; see `dice/d20.py`.
+    if roll_d20(evasion=difficulty).is_success:
+        target.mark_stress(1)
+        fight.note(
+            f"{caster.name} reaches for {target.name} at {difficulty}, and they "
+            f"hold on - a Stress marked"
+        )
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    if not fight.use_once_per_rest(caster, BANISH):
+        fight.note(f"{caster.name} has no banishment left to give {target.name}")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    fight.set_token(caster, BANISHED_WHO, id(target))
+    fight.set_token(caster, BANISHED_DIFFICULTY, difficulty)
+    fight.remove(target)
+    fight.note(f"{caster.name} banishes {target.name} from this realm")
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+@ally_on_roll(BANISH)
+def banish_weakens(caster: Holder, roller, roll, fight: Fight) -> None:
+    """Every roll the party makes with Fear loosens the banishment by a point.
+
+    Registered on the same name as the spell, which is how one card reaches two
+    hooks. **Party-wide**, because the card says "when the PCs roll with Fear" -
+    any of them, not only the caster - which is exactly what `ally_on_roll` is for.
+
+    A critical is neither Hope nor Fear (the two dice matched, so neither won), so
+    it does not loosen anything. `DualityOutcome` is asked rather than the dice
+    compared, which keeps that right for free.
+
+    The adversary is found in `fight.removed_adversaries` by the `id()` recorded
+    when the spell landed. It cannot have been recycled onto something else: the
+    removed list is holding the object alive.
+    """
+    if fight is None or roll is None:
+        return
+    if getattr(roll, "outcome", None) is not DualityOutcome.FEAR:
+        return
+
+    banished_id = fight.token_count(caster, BANISHED_WHO)
+    if not banished_id:
+        return
+
+    banished = next(
+        (gone for gone in fight.removed_adversaries if id(gone) == banished_id), None
+    )
+    if banished is None:
+        fight.set_token(caster, BANISHED_WHO, 0)
+        return
+
+    difficulty = fight.token_count(caster, BANISHED_DIFFICULTY) - 1
+    fight.set_token(caster, BANISHED_DIFFICULTY, difficulty)
+
+    if not roll_d20(evasion=difficulty).is_success:
+        fight.note(f"{banished.name} claws at the veil and fails ({difficulty})")
+        return
+
+    fight.set_token(caster, BANISHED_WHO, 0)
+    fight.summon(banished)
+    fight.note(f"{banished.name} returns from banishment")
 
 
 # --- Level 5: assessed and dismissed ------------------------------------------

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from content import (
+    apply_ally_on_damaged,
     apply_on_damaged,
     death_move_prevented,
     extra_armor_slots,
@@ -545,6 +546,13 @@ class PlayerCharacter:
 
         self.mark_hp_and_check_death(hp_to_mark, fight)
         apply_on_damaged(self, amount, hp_to_mark, fight)
+
+        # And content another PC carries that watches the *party* take damage,
+        # rather than only its own holder - the Codex spell Sigil of Retribution,
+        # which charges a die whenever the adversary it marked "deals damage to you
+        # or your allies". The party-wide twin of the call above, asked from the
+        # same place and on the same trigger. Nothing here knows what any of it is.
+        apply_ally_on_damaged(self, amount, hp_to_mark, fight)
         return hp_to_mark
 
     def mark_hp_and_check_death(self, amount: int, fight=None) -> None:
