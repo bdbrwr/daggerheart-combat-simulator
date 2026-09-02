@@ -19,13 +19,19 @@ The GM side has multiplied damage since the Kneebreaker; the party had no way to
 because every damage hook here adds to a roll or reshapes it rather than scaling
 the finished number. Doubling has to reach the dice, the modifier and the critical
 bonus at once, which is what put a `multiplier` on `DamageRollResult`.
+
+Level 6 is the domain at its most restorative and needed no new machinery for it.
+**Restoration** is a pool of touches refilled by a long rest, and the first card
+anywhere that can lift a condition without naming one - which is what put
+`conditions_on` on the fight state. **Zone of Protection** is a ward that gets
+*better* the more it works: it soaks 1, then 2, and on up to 6 before it goes out.
 """
 
 import random
 from dataclasses import replace
 
 from combat.results import AttackResult
-from content.aoe import Range, targets_in_area
+from content.aoe import Range, chance_within, targets_in_area
 from content.conditions import VULNERABLE, Condition, when_the_gm_pays
 from content.damage_types import DamageType
 from content.help import help_with_roll
@@ -34,6 +40,7 @@ from content.registry import (
     Fight,
     Holder,
     action,
+    ally_damage_reduction,
     damage_pool,
     damage_scaling,
     damage_typing,
@@ -574,6 +581,285 @@ def smite_is_magic(holder: Holder, target, fight: Fight = None):
 
     fight.set_token(holder, SMITE_STRUCK, 0)
     return DamageType.MAGIC
+
+
+# --- Restoration ---------------------------------------------------------------
+
+RESTORATION = "Restoration"
+
+# The pool placed on the card after a long rest, one per point of Spellcast trait.
+RESTORATION_TOKENS = "Restoration tokens"
+
+# What one token buys: "clear 2 Hit Points or 2 Stress for each token spent".
+RESTORATION_CLEARS = 2
+
+# How badly off a PC has to be before a token goes on them, in either track.
+# Ruled by the user: two or fewer slots left unmarked on the track being restored.
+RESTORATION_IN_TROUBLE = 2
+
+
+@free(
+    RESTORATION,
+    unmodelled=[
+        "'Touch a creature' - no positions are tracked, so any conscious party "
+        "member can be reached, the caster included",
+        "Healing a physical or magical ailment, and the GM charging extra tokens "
+        "for a strong one. There are no ailments here beyond the conditions the "
+        "simulator models, which the clause below covers at the card's flat price",
+        "Conditions the *party* put on a PC are left alone - Sage's Wild Fortress "
+        "shelters two of them deliberately - so only an affliction from off the "
+        "party's own side is cleared. Read off `Condition.source`, which some "
+        "adversary content leaves unset; an unsourced condition counts as an "
+        "affliction, which is the safe direction to be wrong in",
+    ],
+)
+def restoration(caster: Holder, fight: Fight) -> bool:
+    """Restoration (Splendor, level 6). A pool of touches, refilled by a long rest.
+
+    SRD: "After a long rest, place a number of tokens equal to your Spellcast
+    trait on this card. Touch a creature and spend any number of tokens to clear
+    2 Hit Points or 2 Stress for each token spent. You can also spend a token
+    from this card when touching a creature to clear the Vulnerable condition or
+    heal a physical or magical ailment... When you take a long rest, clear all
+    unspent tokens."
+
+    **No roll**, so it is a free ability and the caster still takes their action
+    in the same spotlight. The pool is stocked lazily, the first time the card is
+    consulted in a fight, and stocking is not itself a use - a card that has
+    nobody to touch has done nothing.
+
+    **The pool is gated on the long rest the card names.** A party walking in off
+    a short rest or off no rest at all has no tokens, which is what
+    `use_once_per_rest(..., long=True)` says; see `combat/rest.py` on why rest
+    state belongs to the encounter.
+
+    SIMULATION RULE - policy, ruled. **A token goes on a PC who is in trouble on
+    one of the two tracks** - `RESTORATION_IN_TROUBLE` or fewer slots left
+    unmarked - and never on somebody merely dented. HP is taken before Stress
+    where a PC qualifies on both, which is the Healing Hands ruling: a downed PC
+    is what ends a fight.
+
+    **One token per touch.** The trigger and the price line up exactly - a PC at
+    two unmarked HP is back above the line the moment two are cleared - so
+    spending more would be healing past the state that called for it. The card's
+    "any number" is what lets a *second* touch happen next spotlight.
+
+    SIMULATION RULE - policy, ruled. The condition clause is read at the card's
+    flat price for **any** condition rather than only Vulnerable, which is the
+    user's ruling and the simpler rule: a token clears one. Which of the three
+    kinds of touch happens is picked at random among those that would do
+    something, the standing rule for a choice with no policy of its own - so
+    nothing here scores a Vulnerable against a marked Hit Point.
+    """
+    if fight is None or not _stock_restoration(caster, fight):
+        return False
+
+    touches = _restoration_candidates(caster, fight)
+    if not touches:
+        return False
+
+    patient, what = random.choice(touches)
+    if not fight.spend_tokens(caster, RESTORATION_TOKENS, 1):
+        return False
+
+    if what == "hp":
+        patient.clear_hp(RESTORATION_CLEARS)
+        fight.note(
+            f"{caster.name} restores {patient.name}, clearing "
+            f"{RESTORATION_CLEARS} Hit Points"
+        )
+    elif what == "stress":
+        patient.clear_stress(RESTORATION_CLEARS)
+        fight.note(
+            f"{caster.name} restores {patient.name}, clearing "
+            f"{RESTORATION_CLEARS} Stress"
+        )
+    else:
+        lifted = random.choice(_afflictions(patient, fight))
+        fight.clear_condition(patient, lifted.name)
+        fight.note(f"{caster.name}'s touch lifts {lifted.name} from {patient.name}")
+    return True
+
+
+def _stock_restoration(caster: Holder, fight: Fight) -> bool:
+    """Put the caster's Spellcast trait in tokens on the card; return whether any stand.
+
+    Done once per long rest rather than once per fight, through the same per-rest
+    machinery every other card uses - so the pool is empty for a party that walked
+    in without one, and stocking cannot happen twice in a fight.
+
+    A PC with no Spellcast trait cannot hold this card at all: it is a Spell, and
+    the size of its pool is a number they do not have.
+    """
+    trait = getattr(caster, "spellcast_trait", "")
+    if not trait or trait not in caster.traits:
+        return False
+
+    if fight.use_once_per_rest(caster, RESTORATION, long=True):
+        fight.set_token(caster, RESTORATION_TOKENS, max(caster.traits[trait], 0))
+    return fight.token_count(caster, RESTORATION_TOKENS) > 0
+
+
+def _restoration_candidates(caster: Holder, fight: Fight) -> list:
+    """Every touch that would restore something, as (PC, what) pairs.
+
+    HP before Stress on any one PC - the `elif` is the Healing Hands ruling, that
+    a marked Hit Point is the more urgent of the two. Between PCs, and between
+    healing and lifting a condition, the caller chooses at random: nothing here
+    weighs a Vulnerable against a wound, which would be scoring the party.
+    """
+    touches = []
+    for pc in fight.conscious_party:
+        if _in_trouble(pc.hp_unmarked, pc.hp_marked):
+            touches.append((pc, "hp"))
+        elif _in_trouble(pc.stress_max - pc.stress_marked, pc.stress_marked):
+            touches.append((pc, "stress"))
+        if _afflictions(pc, fight):
+            touches.append((pc, "condition"))
+    return touches
+
+
+def _in_trouble(unmarked: int, marked: int) -> bool:
+    """Whether a track is low enough to touch, and has a full clear's worth on it.
+
+    Two conditions rather than one, and they are different rules. The first is the
+    user's ruling on when this card is used at all - `RESTORATION_IN_TROUBLE` or
+    fewer slots left. The second is the standing clearing-in-full rule: a token
+    buys exactly `RESTORATION_CLEARS`, so it is not spent where only one of them
+    would land.
+    """
+    return unmarked <= RESTORATION_IN_TROUBLE and marked >= RESTORATION_CLEARS
+
+
+def _afflictions(pc: Holder, fight: Fight) -> list:
+    """The conditions on `pc` that came from off the party's own side.
+
+    A condition the party applied to one of its own is something they wanted -
+    Sage's *Wild Fortress* shelters two PCs on purpose - so clearing one would
+    make this card actively harmful. Read off `Condition.source` rather than off
+    any condition's name, so nothing here knows what Sheltered is.
+
+    A condition with no source at all counts as an affliction, which is the safe
+    way round: some adversary content leaves the field unset, and the cost of
+    being wrong is a token spent rather than a card working against its holder.
+    """
+    party = fight.conscious_party
+    return [
+        condition
+        for condition in fight.conditions_on(pc)
+        if not any(condition.source is ally for ally in party)
+    ]
+
+
+# --- Zone of Protection ----------------------------------------------------------
+
+ZONE_OF_PROTECTION = "Zone of Protection"
+
+ZONE_DIFFICULTY = 16
+
+# The die sitting on the card, as a token holding its current face. Starts at 1,
+# climbs by one each time the zone soaks a hit, and the zone ends when it would
+# pass ZONE_DIE_MAX.
+ZONE_DIE = "Zone of Protection die"
+ZONE_DIE_MAX = 6
+
+
+@action(
+    ZONE_OF_PROTECTION,
+    unmodelled=[
+        "'Choose a point within Far range' and 'all allies within Very Close "
+        "range of that point' - no positions are tracked, so whether a PC is "
+        "inside the zone is rolled from the area rule each time they take damage "
+        "rather than settled when the zone goes up. That is the user's ruling, "
+        "and the consequence is that the same PC can be inside it one hit and "
+        "outside it the next",
+        "The caster is not automatically inside their own zone - they choose the "
+        "point, but the band is rolled over the whole party including them",
+    ],
+)
+def zone_of_protection(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Zone of Protection (Splendor, level 6). A shield that grows as it works.
+
+    SRD: "Make a Spellcast Roll (16). Once per long rest on a success, choose a
+    point within Far range and create a visible zone of protection there for all
+    allies within Very Close range of that point. When you do, place a d6 on this
+    card with the 1 value facing up. When an ally in this zone takes damage, they
+    reduce it by the die's value. You then increase the die's value by one. When
+    the die's value would exceed 6, this effect ends."
+
+    **The per-long-rest use is claimed only on a success**, which is the page read
+    literally - "once per long rest **on a success**" - so a failed roll costs the
+    caster nothing but the spotlight it was made on.
+
+    SIMULATION RULE - policy, ruled. **Cast at the start of the fight**, which
+    here means it never declines while no zone of its own stands: it is a
+    candidate from the caster's first spotlight, so it goes up as early as the
+    option shuffle allows. That follows from the die itself - it soaks 1, then 2,
+    and on up to 6 before ending, so the zone is worth the most to a party that
+    raises it before anything has hit them.
+
+    Declines while a zone already stands. The card holds one at a time, and the
+    die on it is the whole of what makes it work.
+    """
+    if fight is None or fight.token_count(caster, ZONE_DIE):
+        return None
+    if not fight.can_use_once_per_rest(caster, ZONE_OF_PROTECTION, long=True):
+        return None
+
+    attack_roll = spellcast(caster, target, fight, difficulty=ZONE_DIFFICULTY)
+    if attack_roll is None:
+        return None
+
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    fight.use_once_per_rest(caster, ZONE_OF_PROTECTION, long=True)
+    fight.set_token(caster, ZONE_DIE, 1)
+    fight.note(f"{caster.name} raises a zone of protection")
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+@ally_damage_reduction(ZONE_OF_PROTECTION)
+def zone_of_protection_soaks(
+    caster: Holder, target, amount: int, fight: Fight = None, damage_type=None
+) -> int:
+    """The zone taking the die's value off a hit, and then growing by one.
+
+    Registered party-wide rather than holder-scoped for Rune Ward's reason: the
+    zone protects allies, and the PC being hit is generally not the one whose card
+    it is. The token says whose zone it is, so every other Splendor PC's copy
+    declines.
+
+    **Whether this PC is inside the zone is rolled per hit**, off `chance_within`
+    over the whole party - the user's ruling, and the same tool Natural Familiar
+    and Support Tank use for "is one particular person within X of here". The zone
+    is a point rather than a combatant, so the field the band is drawn over is the
+    party, the caster included.
+
+    Reduces the raw damage before thresholds, which is what this hook is for and
+    what makes the die worth more than its face: taking 4 off a hit sitting just
+    over a threshold drops what it marks by a whole HP.
+
+    The die climbs only on a hit it actually soaked, and the zone ends when the
+    next value would pass 6 - so the last hit it takes is reduced by 6 and then it
+    is gone, for 21 damage across six hits if it lasts that long.
+    """
+    if fight is None:
+        return 0
+
+    value = fight.token_count(caster, ZONE_DIE)
+    if value <= 0:
+        return 0
+    if random.random() >= chance_within(Range.VERY_CLOSE, len(fight.conscious_party)):
+        return 0
+
+    if value + 1 > ZONE_DIE_MAX:
+        fight.set_token(caster, ZONE_DIE, 0)
+        fight.note(f"The zone soaks {value} for {target.name} and fades")
+    else:
+        fight.set_token(caster, ZONE_DIE, value + 1)
+        fight.note(f"The zone soaks {value} for {target.name}")
+    return value
 
 
 out_of_combat_ability(

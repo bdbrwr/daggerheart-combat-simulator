@@ -25,6 +25,12 @@ the fight - two of them shelter inside a dome that soaks what would have hit the
 and costs them their spotlights. It is also the first thing with a damage track
 that is not a combatant, and the reason `combat/fight.py` now skips a PC who
 cannot act instead of spotlighting them.
+
+**Level 6 is the first level of this domain that reaches no fight at all**, and
+neither of its cards is dismissed: *Conjured Steeds* and *Forager* are both filed
+*out of combat*, which is the state for an effect that is real and representable
+and simply happens between fights. Sage is the first domain to have two cards in
+that state at one level.
 """
 
 import random
@@ -48,6 +54,7 @@ from content.registry import (
     extra_damage,
     free,
     no_combat_effect,
+    out_of_combat_ability,
     severity_response,
     total_extra_damage,
 )
@@ -1114,4 +1121,33 @@ no_combat_effect(
     "spends Hope on an Experience it assumes always applies, so that bonus is "
     "in the numbers already. Worth revisiting if Experiences are ever modelled "
     "as applying only sometimes.",
+)
+
+out_of_combat_ability(
+    "Conjured Steeds",
+    "Spend any number of Hope to conjure that many steeds the party rides until "
+    "their next long rest or the steeds take any damage. Two of its three clauses "
+    "are travel - double land speed, and moving within Far range without a roll - "
+    "and the third is a real combat trade the simulator could express outright: a "
+    "rider takes -2 on attack rolls and gains +2 on damage rolls. So this is not a "
+    "dismissal, and filing it as one would have been false in both directions. "
+    "What is true of it is *when* it is cast: conjuring mounts is something a "
+    "party does on the road, and the ridden state is what they would carry into "
+    "the fight at the far end of it. The user ruled it into this state on that "
+    "reading, so it joins the sequenced-encounter list rather than being written "
+    "as something cast mid-fight.",
+)
+
+out_of_combat_ability(
+    "Forager",
+    "'As an additional downtime move you can choose, roll a d6 to see what you "
+    "forage' - the card names its own moment, and it is between fights. What it "
+    "produces is not: the six results are a food that clears 2 Stress, a relic "
+    "worth 2 Hope, an arcane rune worth +2 to a Spellcast Roll, a healing vial "
+    "that clears 2 Hit Points, a luck charm that rerolls any die, and a free "
+    "choice among them, and the party can carry five at a time. Every one of "
+    "those would change a fight it was spent in. The user's ruling is that when "
+    "sequenced encounters land, this is modelled as the downtime move it is - "
+    "each forage handing the party a consumable carrying one of those abilities - "
+    "so the card is on the to-do list rather than dismissed.",
 )

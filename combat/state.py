@@ -429,6 +429,24 @@ class FightState:
     def clear_condition(self, holder, name: str) -> None:
         self.conditions.pop((id(holder), name), None)
 
+    def conditions_on(self, holder) -> list[Condition]:
+        """Every condition sitting on `holder` right now, in no meaningful order.
+
+        `has_condition` and `condition_on` both ask about a condition somebody
+        already has in mind. This one exists for content that doesn't: Splendor's
+        *Restoration* spends a token to clear a condition without naming which,
+        and the SRD prints several more that lift "a condition" generically.
+
+        The order is the insertion order of a dict keyed by `(id, name)`, which
+        carries no meaning at all - so a caller choosing between several must
+        choose at random rather than taking the first.
+        """
+        return [
+            condition
+            for (holder_id, _), condition in self.conditions.items()
+            if holder_id == id(holder)
+        ]
+
     def release_conditions_from(self, source) -> list[str]:
         """End the conditions `source` applied that **only `source`** could end.
 

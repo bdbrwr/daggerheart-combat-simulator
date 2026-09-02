@@ -43,6 +43,7 @@ from content.help import help_with_roll
 from content.registry import (
     apply_before_attacked,
     apply_on_attacked,
+    granted_action_roll_advantage,
     granted_attack_advantage,
     maximise_damage_dice,
     party_attack_is_hobbled,
@@ -123,6 +124,16 @@ def attack_with(
     # not per reroll: content here spends its Stress on being consulted.
     advantage_state = combined(
         advantage_state, granted_attack_advantage(attacker, target, fight)
+    )
+
+    # And content that grants Advantage on *any* action roll rather than on a
+    # standard attack - the Valor card Inevitable, which hands the next roll
+    # after a failure an advantage die. A separate hook because a swing is only
+    # one of the shapes an action roll takes; see `action_roll_advantage`. Asked
+    # here for the same reason its neighbour is, and folded rather than
+    # overwriting, so two sources land where the SRD puts them.
+    advantage_state = combined(
+        advantage_state, granted_action_roll_advantage(attacker, target, fight)
     )
 
     # A condition can hobble the trait this weapon rolls - the Archer Guard's

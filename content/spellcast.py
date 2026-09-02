@@ -21,14 +21,15 @@ of six.
 ## What a Spellcast Roll is made of
 
 Duality Dice plus the caster's Spellcast trait, against the target's Difficulty,
-and then four things that all have to happen **outside** the roll's closure:
+and then five things that all have to happen **outside** the roll's closure:
 
   * anything content adds to the roll (`total_roll_bonus`),
   * an ally spending a Hope to help (`content/help.py`),
   * the size of the Hope Die (`hope_die_for`),
+  * Advantage on the roll (`granted_action_roll_advantage`),
   * and the party's chance to re-make the result (`remake_action_roll`).
 
-The first three share one contract: **being asked is the commitment.** Several
+The first four share one contract: **being asked is the commitment.** Several
 registrants spend Hope, mark Stress or claim a per-rest use simply by being
 consulted, so they are evaluated once and the closure reuses the answers. A
 reroll re-makes the *dice*, never the decisions that fed them - asking twice
@@ -52,7 +53,14 @@ question entirely by giving the target a Difficulty of 0 or 1.
 from dice.duality import roll_duality
 
 from .help import help_with_roll
-from .registry import Fight, Holder, hope_die_for, remake_action_roll, total_roll_bonus
+from .registry import (
+    Fight,
+    Holder,
+    granted_action_roll_advantage,
+    hope_die_for,
+    remake_action_roll,
+    total_roll_bonus,
+)
 
 __all__ = ["spellcast"]
 
@@ -101,11 +109,18 @@ def spellcast(
     )
     against = target.difficulty if difficulty is None else difficulty
     hope_die = hope_die_for(caster, fight)
+    # Content that hands *any* action roll Advantage - the Valor card Inevitable.
+    # Not `attack_advantage`, which only a standard attack consults, so a card
+    # registered there would reach a weapon swing and never a cast. Resolved out
+    # here with everything else for the reason the module docstring gives: being
+    # asked is the commitment, and a reroll must not spend a one-shot grant twice.
+    advantage_state = granted_action_roll_advantage(caster, target, fight)
 
     def roll():
         return roll_duality(
             modifier=modifier,
             difficulty=against,
+            advantage_state=advantage_state,
             hope_die=hope_die,
             help_dice=helped.dice,
         )

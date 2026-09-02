@@ -237,6 +237,7 @@ class Fight(Protocol):
     def apply_condition(self, holder, condition) -> None: ...
     def has_condition(self, holder, name: str) -> bool: ...
     def condition_on(self, holder, name: str): ...
+    def conditions_on(self, holder) -> list: ...
     def clear_condition(self, holder, name: str) -> None: ...
     def summon(self, adversary) -> None: ...
     def summon_ally(self, combatant) -> None: ...
@@ -339,6 +340,7 @@ _ally_on_damaged: dict[str, Callable] = {}
 _move_rescinds: dict[str, Callable] = {}
 _damage_scalings: dict[str, Callable] = {}
 _damage_typings: dict[str, Callable] = {}
+_action_roll_advantages: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -1048,6 +1050,46 @@ def attack_advantage(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_attack_advantages, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def action_roll_advantage(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that grants its holder Advantage on **any** action roll.
+
+    Signature: `(holder, target, fight) -> AdvantageState | None` - identical to
+    `attack_advantage` next door, and folded the same way with `combined`, so
+    Advantage and Disadvantage cancel rather than stack. The Valor card
+    *Inevitable* ("when you fail an action roll, your next action roll has
+    advantage") is the reason it exists.
+
+    **Wider than `attack_advantage`, which cannot say this.** That hook is asked
+    only where a *standard attack* is rolled - the stat block's printed attack on
+    the GM's side, the weapon swing on the party's - so a card registered there
+    would hand a Guardian's swing Advantage and leave a Wizard's Spellcast Roll
+    untouched. An action roll is either of those, and in Daggerheart it is also
+    the unit the spotlight turns on, so a card that names one means both.
+
+    Asked from the two shapes every PC action roll goes through:
+    `items/weapons.py`'s `attack_with` and `content/spellcast.py`'s `spellcast`.
+    A **Reaction Roll is correctly never offered it** - the SRD's action rolls and
+    reaction rolls are different things, and only the first is what this names.
+
+    **Being asked is the commitment**, the same contract `attack_advantage`,
+    `hope_die` and `total_roll_bonus` keep: the roll follows immediately, so
+    content holding a one-shot grant spends it when consulted rather than needing
+    to be told afterwards that the roll happened.
+
+    Two roll sites are outside it, and are declared as gaps where content
+    registers: Splendor's *Healing Hands* and Grace's *Invisibility* both call
+    `roll_duality` by hand, for the reason recorded at the end of
+    `domain_cards/PORTED.md`.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_action_roll_advantages, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -2337,6 +2379,29 @@ def granted_attack_advantage(holder, target, fight=None):
     states = []
     for name in holder.named_features:
         grants = _registered(_attack_advantages, name)
+        if grants is not None:
+            state = grants(holder, target, fight)
+            if state is not None:
+                states.append(state)
+    return combined(*states) if states else AdvantageState.NONE
+
+
+def granted_action_roll_advantage(holder, target, fight=None):
+    """Everything this holder carries that changes the state of their action roll.
+
+    Returns an `AdvantageState`, `NONE` when nothing answers. Folded together
+    rather than first-answer-wins, exactly as `granted_attack_advantage` folds -
+    see `action_roll_advantage` for why the two hooks are not one.
+
+    Asked once per action roll, outside any reroll closure: being asked is the
+    commitment, so consulting it twice for one roll would spend a one-shot grant
+    twice. Both call sites work the answer into the modifier alongside everything
+    else they resolve up front.
+    """
+    _discover()
+    states = []
+    for name in holder.named_features:
+        grants = _registered(_action_roll_advantages, name)
         if grants is not None:
             state = grants(holder, target, fight)
             if state is not None:

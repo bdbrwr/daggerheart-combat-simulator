@@ -13,17 +13,15 @@ visible.
 
 ## Scope
 
-**Levels 1 to 5, all nine domains** - 99 cards, complete - plus **level 6 for
-Arcana, Blade, Bone, Codex, Grace and Midnight**. That is every card a level 5
-party of any class combination could hold, so a new party composition can be
-simulated without writing code first. Level 6 is in progress: twelve of its
-eighteen are in, and the table below is the only place the remaining six are
-visible.
+**Levels 1 to 6, all nine domains** - 117 cards, complete. That is every card a
+level 6 party of any class combination could hold, so a new party composition can
+be simulated without writing code first, and nothing in the slice is in the
+*unimplemented* state.
 
-The scope grew from levels 1-2, then to 3, then to 4, then to 5, each time the
-previous one was finished, and is now growing into 6. Cards are ported **by level** rather than by domain: a level is the
-slice a party actually occupies, and finishing one means no loadout at that level
-can name a card nobody has written.
+The scope grew from levels 1-2, then to 3, then to 4, then to 5, then to 6, each
+time the previous one was finished. Cards are ported **by level** rather than by
+domain: a level is the slice a party actually occupies, and finishing one means no
+loadout at that level can name a card nobody has written.
 
 ## How porting works
 
@@ -177,23 +175,25 @@ holds.
 | **Codex** | ✅ Sigil of Retribution · ✅ Banish |
 | **Grace** | ✅ Never Upstaged · ✅ Share the Burden |
 | **Midnight** | 🚫 Dark Whispers · 🚫 Mass Disguise |
-| **Sage** | ⬜ · ⬜ |
-| **Splendor** | ⬜ · ⬜ |
-| **Valor** | ⬜ · ⬜ |
+| **Sage** | ⏸ Conjured Steeds · ⏸ Forager |
+| **Splendor** | ✅ Restoration · ✅ Zone of Protection |
+| **Valor** | ✅ Inevitable · ✅ Rise Up |
 
-**8 modelled, 3 no effect, 1 out of combat, 6 outstanding.**
+**12 modelled, 3 no effect, 3 out of combat, 0 outstanding.**
 
-**Level 6 is two thirds done.** Batches 18 (Arcana, Blade, Bone) and 19 (Codex,
-Grace, Midnight) cover twelve of eighteen; Sage, Splendor and Valor are untouched,
-so a level 6 party drawing from any of those three would name cards nobody has
-written. Until the level is finished, this table is the only place that gap is
-visible.
+**Levels 1 to 6 are complete across all nine domains** - 117 cards. Batches 18
+(Arcana, Blade, Bone), 19 (Codex, Grace, Midnight) and 20 (Sage, Splendor, Valor)
+cover the eighteen.
 
-**Midnight is the second domain whose whole level reaches no fight**, after
-Grace's level 4 - and unlike that pair, both of these land in the *same* state.
-Dark Whispers is a conversation and four questions for the GM; Mass Disguise needs
-minutes of silence and pays out in Presence Rolls. Neither is deferred work: they
-would buy nothing once encounters are sequenced either.
+**Two whole domains reach no fight at this level, in two different ways.**
+Midnight is the second domain after Grace's level 4 to have both its cards
+dismissed - Dark Whispers is a conversation and four questions for the GM, Mass
+Disguise needs minutes of silence and pays out in Presence Rolls, and neither
+would buy anything once encounters are sequenced either. **Sage is the first
+domain with a whole level *out of combat***, which is the opposite claim: both of
+its cards are real and representable and simply happen between fights, so they
+are on the sequenced-encounter list rather than dismissed. Level 6 has three
+cards in that state, which is more than any other level.
 
 ### Order it was done in
 
@@ -206,15 +206,15 @@ current party could actually swap to. Then the four that had no module at all:
 
 ### What's next
 
-**Levels 1 to 5 are complete, and level 6 is two thirds done.** What remains of it
-is **Sage, Splendor and Valor** - six cards, one batch. Every domain's page has
-been read several times now, so the printed-page check is a re-read rather than a
-hunt, and levels 6 to 10 all sit on the pages already used.
+**Levels 1 to 6 are complete.** Level 7 is the next slice, and every domain's page
+has been read several times now, so the printed-page check is a re-read rather
+than a hunt - levels 7 to 10 all sit on the pages already used.
 
-Batch 18 cost no machinery at all and batch 19 cost two hooks, which is roughly
-where levels 3 and 4 sat. Codex's level 6 turned out **not** to be a Grimoire -
-the domain stops printing books at level 5 - so the card count and the thing count
-are finally the same.
+Level 6 cost less machinery than level 5: batch 18 cost nothing at all, batch 19
+cost two hooks and batch 20 cost one hook and one reader on the fight state, which
+is roughly where levels 3 and 4 sat. Codex's level 6 turned out **not** to be a
+Grimoire - the domain stops printing books at level 5 - so from here the card
+count and the thing count are the same.
 
 One thing batch 18 surfaced that is not a domain card: **secondary weapons do not
 exist in the simulator**, so *Paired* and dual wielding contribute nothing to
@@ -1036,6 +1036,80 @@ would clear the tokens on a miss; "+5 for each token" is flat rather than dice,
 which rules out `extra_damage`. `damage_pool` is the only hook asked after an
 attack has landed and before its damage is rolled, and `DamagePool` carries the
 flat modifier - so no new machinery was needed after all.
+
+### Batch 20 — Sage, Splendor and Valor at level 6 (6 cards)
+
+The last of level 6. **Verified against the printed page** (SRD p. 131 for Sage's
+level 6, p. 133 for Splendor's and p. 135 for Valor's - the right-hand page of each
+domain's spread, as batch 19 found).
+
+| Card | Disposition |
+|---|---|
+| **Restoration** (Sp 6) | Modelled, partial. A pool of touches equal to the caster's Spellcast trait, refilled by a long rest; one token clears 2 Hit Points, 2 Stress, or a condition |
+| **Zone of Protection** (Sp 6) | Modelled, partial. A Spellcast Roll (16) raises a ward that soaks 1, then 2, and on up to 6 before it goes out |
+| **Inevitable** (V 6) | Modelled, partial. A failed action roll hands the next one Advantage. No cost, no limit, no policy |
+| **Rise Up** (V 6) | Modelled, partial. Marking 1 or more Hit Points clears a Stress |
+| **Conjured Steeds** (Sg 6) | Out of combat - mounts conjured on the road, whose rider modifiers are what the party would carry into a fight at the far end of it |
+| **Forager** (Sg 6) | Out of combat - "as an additional downtime move", producing consumables that would each change a fight they were spent in |
+
+One piece of shared machinery and one new reader on the fight state:
+
+- **`action_roll_advantage`** - content that hands its holder Advantage on **any**
+  action roll rather than on a standard attack. `attack_advantage` next door is
+  asked only where a standard attack is rolled - the printed attack on the GM's
+  side, the weapon swing on the party's - so Inevitable registered there would
+  have reached a Guardian's swing and never a Wizard's Spellcast Roll. Two call
+  sites, `items/weapons.py` → `attack_with` and `content/spellcast.py` →
+  `spellcast`, which between them are every shape a PC's action roll takes bar
+  the two that roll by hand. A **Reaction Roll is deliberately never offered it**:
+  the SRD's action rolls and reaction rolls are different things.
+- **`FightState.conditions_on`**, with a matching line on the `Fight` protocol.
+  `has_condition` and `condition_on` both ask about a condition the caller already
+  has in mind, and Restoration doesn't have one - it spends a token to lift
+  *whatever* is there. The order the dict returns them in carries no meaning, so
+  the card chooses at random rather than taking the first.
+
+**Restoration is the first card that can lift a condition without naming one**,
+and that turned out to need a scope nobody had asked for. Clearing any condition
+at random would sometimes clear one the *party* put on a PC - Sage's *Wild
+Fortress* shelters two of them deliberately - so the card only lifts an affliction
+whose `Condition.source` is not a conscious party member. Read off the record
+rather than off any name, so nothing here knows what Sheltered is; an unsourced
+condition counts as an affliction, which errs toward spending a token rather than
+undoing the party's own work.
+
+**Zone of Protection is the first ward that gets better the more it works.** Every
+other damage reduction in the project is a fixed amount or a roll - an Armor Slot,
+Rune Ward's 1d8, Thorn Skin's pool - and this one starts at 1 and climbs to 6
+before ending, for 21 damage over six hits. That is what makes casting it early
+worth something, and it is why the user ruled it cast at the start of the fight.
+The other half of that ruling is more unusual: **membership is rolled per hit**
+rather than fixed when the zone goes up, since the zone is a *point* rather than a
+person and `chance_within` is the tool for "is somebody within X of here". Over a
+four-PC party that comes to a one-in-four chance each time somebody is hit.
+
+**Sage's level 6 is the first whole level of a domain filed *out of combat*.**
+Both cards were offered as dismissals and the user ruled against both. Conjured
+Steeds is the interesting one: two of its three clauses are travel, but the third
+is a real combat trade the simulator could express outright - a rider takes -2 on
+attack rolls for +2 on damage - so *no combat effect* would have been false. What
+is true of it is when it is cast. Forager names its own moment ("as an additional
+downtime move"), and the user's ruling is that when sequenced encounters land it
+is modelled as that downtime move, handing the party a consumable carrying one of
+the six printed abilities.
+
+**Two of the four modelled cards needed no policy at all**, which is worth
+recording because it is rare here: Inevitable and Rise Up both cost nothing, have
+no limit and state their own triggers exactly. Rise Up did need a *reading*
+though, and it is one that will recur - see below.
+
+**"From an attack" is now read as "from damage" throughout.** Rise Up clears a
+Stress "when you mark 1 or more Hit Points from an attack", and the damage hooks
+carry no attacker - damage reaches a combatant as an amount and a type. Declaring
+the qualifier as a gap was the obvious move and the user ruled against it: in a
+combat simulator everything that marks damage is an attack, a hurled fireball
+included. The reading is in `SIMULATION-RULES.md` §2 once rather than restated on
+every card that will want it.
 
 ## Consolidating `_spellcast`
 

@@ -33,6 +33,12 @@ Level 5 keeps the domain's shape: **Rousing Strike** rides a critical weapon
 attack and lifts the whole party off it, and **Armorer** is filed *out of combat*
 - its Armor Score bonus is already in the sheet, and what remains is a downtime
 move that restores an Armor Slot on every ally.
+
+Level 6 is the cheapest pair the domain has printed. **Inevitable** costs nothing
+at all and is the first card anywhere that reaches an action roll of *any* shape
+rather than a standard attack, which is the one new hook the level cost. **Rise
+Up** splits the way Armorer did - half of it is a threshold the sheet already
+carries, and the half that runs is a Stress cleared off every wound.
 """
 
 import random
@@ -51,6 +57,7 @@ from content.registry import (
     Fight,
     Holder,
     action,
+    action_roll_advantage,
     adversary_attack_disadvantage,
     adversary_target_override,
     ally_on_roll,
@@ -60,7 +67,9 @@ from content.registry import (
     guard,
     hope_die_for,
     no_combat_effect,
+    on_damaged,
     on_hit,
+    on_roll,
     out_of_combat_ability,
     reroll,
     total_damage_bonus,
@@ -708,6 +717,118 @@ def rousing_strike(attacker: Holder, target, result, fight: Fight) -> None:
             cleared = random.randint(1, ROUSING_STRIKE_DIE)
             pc.clear_stress(cleared)
             fight.note(f"{pc.name} is roused, clearing {cleared} Stress")
+
+
+# --- Inevitable ----------------------------------------------------------------
+
+INEVITABLE = "Inevitable"
+
+# Set on the holder by a failed action roll and spent by the next one. A token
+# rather than a condition: it carries no effect anything else reads, and nothing
+# announces a moment at which it would expire.
+INEVITABLE_OWED = "Inevitable owed"
+
+
+@on_roll(INEVITABLE)
+def inevitable_remembers(holder: Holder, roll, fight: Fight) -> None:
+    """Inevitable (Valor, level 6), first half - the failure that owes a die.
+
+    SRD: "When you fail an action roll, your next action roll has advantage."
+
+    No cost, no limit and no per-rest use, so there is no policy to rule on: the
+    card states its own trigger exactly and is on whenever that trigger happens.
+
+    Asked from `combat/fight.py`'s `_apply_duality_outcome`, which is the one
+    place an **action roll** resolves - so a Reaction Roll never sets it, which is
+    right. A roll made against no Difficulty answers None rather than False, and
+    that is not a failure: `is_success is False` for the reason Reassurance and
+    Lean on Me read their triggers the same way.
+
+    Fires *after* the roll it read, so a roll that both spent a token and failed
+    correctly owes another one. The token is set rather than counted up - two
+    failures in a row do not bank two advantage dice, since Advantage in
+    Daggerheart is a state and not a stack.
+    """
+    if fight is None or roll is None or roll.is_success is not False:
+        return
+    fight.set_token(holder, INEVITABLE_OWED, 1)
+
+
+@action_roll_advantage(
+    INEVITABLE,
+    unmodelled=[
+        "Two action rolls the hook is not asked at - Splendor's Healing Hands "
+        "and Grace's Invisibility both roll `roll_duality` by hand rather than "
+        "through the shared Spellcast shape, for the reason recorded at the end "
+        "of domain_cards/PORTED.md. A Valor PC carrying either would keep the "
+        "advantage die for their next roll instead of spending it there",
+        "An action roll a PC's options never reach - a card that declines before "
+        "rolling doesn't spend the die, which is correct, but neither does a "
+        "spotlight spent entirely on free abilities",
+    ],
+)
+def inevitable_pays_out(holder: Holder, target, fight: Fight = None):
+    """Inevitable's second half - the next action roll, taken with Advantage.
+
+    Spent on being consulted, which is this hook's contract: the roll follows
+    immediately, so there is nothing to be told afterwards. That also means the
+    die goes to whichever roll comes first rather than being saved for a better
+    one, which is what the card says - "your **next** action roll".
+
+    A duality roll resolves Advantage additively (a d6 added to the total), not
+    by rolling two dice - see the dice conventions in CLAUDE.md - so what this is
+    worth is +3.5 on one roll and nothing else.
+    """
+    if fight is None or not fight.token_count(holder, INEVITABLE_OWED):
+        return None
+
+    fight.set_token(holder, INEVITABLE_OWED, 0)
+    fight.note(f"{holder.name} was owed one; this roll has Advantage")
+    return AdvantageState.ADVANTAGE
+
+
+# --- Rise Up -------------------------------------------------------------------
+
+RISE_UP = "Rise Up"
+
+
+@on_damaged(
+    RISE_UP,
+    unmodelled=[
+        "'Gain a bonus to your Severe threshold equal to your Proficiency' - a "
+        "character sheet carries its damage thresholds **already resolved**, so "
+        "running the bonus here would count it twice. The same reason Blade's "
+        "Fortified Armor and Vitality are declared, and the standing rule for any "
+        "feature whose whole effect is a number the sheet states",
+    ],
+)
+def rise_up(holder: Holder, amount: int, hp_marked: int, fight: Fight = None) -> None:
+    """Rise Up (Valor, level 6), second clause.
+
+    SRD: "Gain a bonus to your Severe threshold equal to your Proficiency. When
+    you mark 1 or more Hit Points from an attack, clear a Stress."
+
+    No policy to rule on: it costs nothing, has no limit, and states its own
+    trigger, so it fires whenever HP is marked and there is a Stress to clear.
+    Skipped when there is none, which is not a threshold but the difference
+    between clearing something and clearing nothing.
+
+    SIMULATION RULE - rules interpretation, ruled. **"From an attack" is read as
+    "from damage".** Damage arrives at a PC as an amount and a type with no
+    attacker attached, deliberately (see `Fight.spotlighted`), so the qualifier
+    has no handle here - and the user's ruling is that in a combat simulator
+    everything that marks damage is an attack: a fireball hurled at you is an
+    attack, and so is being thrown and taking the fall. So this is not declared as
+    a gap; the reading is recorded in SIMULATION-RULES.md instead, since several
+    other cards will want it.
+    """
+    if fight is None or hp_marked < 1:
+        return
+    if holder.stress_marked <= 0:
+        return
+
+    holder.clear_stress(1)
+    fight.note(f"{holder.name} rises up, clearing a Stress")
 
 
 out_of_combat_ability(
