@@ -43,7 +43,7 @@ def reliable(attacker: Holder, target, fight: Fight) -> int:
 
 
 def _extra_die_discarding_the_lowest(
-    attacker: Holder, weapon, pool: DamagePool, fight=None
+    attacker: Holder, weapon, pool: DamagePool, fight=None, roll=None
 ) -> DamagePool:
     """Roll one more of the weapon's own dice, then throw the lowest away.
 
@@ -79,7 +79,9 @@ def _extra_die_discarding_the_lowest(
 
 
 @damage_pool(qualified(WEAPON, "Massive"))
-def massive(attacker: Holder, weapon, pool: DamagePool, fight=None) -> DamagePool:
+def massive(
+    attacker: Holder, weapon, pool: DamagePool, fight=None, roll=None
+) -> DamagePool:
     """*Massive*: -1 to Evasion; on a successful attack, roll an additional
     damage die and discard the lowest result.
 
@@ -90,7 +92,9 @@ def massive(attacker: Holder, weapon, pool: DamagePool, fight=None) -> DamagePoo
 
 
 @damage_pool(qualified(WEAPON, "Powerful"))
-def powerful(attacker: Holder, weapon, pool: DamagePool, fight=None) -> DamagePool:
+def powerful(
+    attacker: Holder, weapon, pool: DamagePool, fight=None, roll=None
+) -> DamagePool:
     """*Powerful*: on a successful attack, roll an additional damage die and
     discard the lowest result.
 

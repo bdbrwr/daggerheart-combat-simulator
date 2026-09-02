@@ -582,6 +582,23 @@ class FightState:
             for (holder_id, _), condition in self.conditions.items()
         )
 
+    def cannot_be_targeted(self, combatant) -> bool:
+        """Whether a condition currently puts `combatant` out of reach of an attack.
+
+        The exact opposite number of `cannot_act`, and read the same way - off
+        `Condition.untargetable` rather than by name, so nothing here or in the
+        targeting rule knows that Cloaked is what answers, and a second such
+        condition would need no change.
+
+        Distinct from being unconscious, which the SRD also puts out of reach:
+        that is a standing fact about the PC and is read off `is_conscious`. This
+        one is something content did.
+        """
+        return any(
+            holder_id == id(combatant) and condition.untargetable
+            for (holder_id, _), condition in self.conditions.items()
+        )
+
     def searchable_condition(self, combatant):
         """The condition on `combatant` that somebody could spend a roll to end.
 

@@ -244,6 +244,7 @@ class Fight(Protocol):
     def remove(self, adversary) -> None: ...
     def release_conditions_from(self, source) -> list: ...
     def is_vulnerable(self, combatant) -> bool: ...
+    def is_hidden(self, combatant) -> bool: ...
     def disadvantaged_on(self, holder, trait: str) -> bool: ...
     def token_count(self, holder, name: str) -> int: ...
     def add_token(self, holder, name: str, cap: int) -> bool: ...
@@ -341,6 +342,11 @@ _move_rescinds: dict[str, Callable] = {}
 _damage_scalings: dict[str, Callable] = {}
 _damage_typings: dict[str, Callable] = {}
 _action_roll_advantages: dict[str, Callable] = {}
+_spellcast_bonuses: dict[str, Callable] = {}
+_attack_failures: dict[str, Callable] = {}
+_stress_for_hp: dict[str, Callable] = {}
+_armor_for_stress: dict[str, Callable] = {}
+_fear_conversions: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -785,11 +791,127 @@ def damage_typing(name: str, unmodelled: Iterable[str] = ()):
     return register
 
 
+def stress_instead_of_hp(name: str, unmodelled: Iterable[str] = ()):
+    """Register party content that turns HP an adversary would mark into Stress.
+
+    Signature: `(holder, target, hp_to_mark, fight) -> int` - how many of those HP
+    the target marks as **Stress** instead, or 0 to decline. Scanned across the
+    conscious party, since the content belongs to a PC rather than to the
+    adversary it happens to. Grace's *Grace-Touched* is the reason: "when you would
+    force a target to mark a number of Hit Points, you can choose instead to force
+    them to mark that number of Stress".
+
+    **Read as covering damage**, which is the user's ruling and the whole size of
+    the card. "Force a target to mark Hit Points" is not only the handful of
+    effects that say "mark an HP" outright - it is every HP the party causes an
+    adversary to mark, and damage is how nearly all of that happens. What it does
+    *not* reach is HP an adversary spends on its own features (`will_spend_hp`),
+    because nobody is forcing that.
+
+    Asked from `Adversary.take_damage`, after both severity hooks and before the
+    HP is marked, so it sees what the hit finally costs rather than what it started
+    at. The caller marks the Stress, takes the same number off the HP, and reports
+    the reduced figure onward - so content keyed on "marks 2 or more HP" correctly
+    sees the smaller number.
+
+    Party-side only. It is asked where an *adversary* takes damage and nowhere
+    else, since a PC's own Stress track has the SRD's overflow rule on it and
+    converting into that would mean marking HP again.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_stress_for_hp, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def armor_instead_of_stress(name: str, unmodelled: Iterable[str] = ()):
+    """Register content letting its holder pay a Stress cost with an Armor Slot.
+
+    Signature: `(holder, amount) -> bool` - whether this holder may substitute.
+    Grace's *Grace-Touched* is the reason: "you can mark an Armor Slot instead of
+    marking a Stress".
+
+    **No `fight` in the signature**, which is `standard_damage_type`'s reason
+    turned to the party's side: the answer is a standing fact about the character
+    rather than about the moment, and `PlayerCharacter.spend_stress` is called from
+    dozens of places that have no fight to pass. Threading one through every Stress
+    cost in the project to answer a yes-or-no question about a sheet would be a
+    great deal of machinery for a constant.
+
+    Asked from `PlayerCharacter.will_spend_stress` and `spend_stress`, and **only
+    where the standing last-slot rule has already refused** - see
+    `_pays_with_armor` there. That scoping is the user's ruling rather than
+    anything this hook requires: the substitution unlocks a cost the PC would
+    otherwise decline instead of replacing Stress generally, so armor keeps doing
+    its job as the damage sponge.
+
+    Being asked is *not* the commitment here, unlike the pre-roll hooks: this is a
+    predicate, the caller does the marking, and content must not spend anything
+    inside it.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_armor_for_stress, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def fear_conversion(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that stops the GM gaining a Fear from its holder's roll.
+
+    Signature: `(holder, fight) -> bool` - True if the Fear does not arrive, in
+    which case **the content is responsible for whatever happens instead**. The
+    Midnight card *Midnight-Touched* is the reason: "once per rest, when you have 0
+    Hope and the GM would gain a Fear, you can gain a Hope instead", so the card
+    banks the Hope itself before returning True.
+
+    The same contract `death_move_ward` keeps, one resource over. Holder-scoped on
+    whoever rolled, because that is how the card is written - *your* roll with
+    Fear - and the **first** answer wins, since a Fear is denied once.
+
+    Asked from `combat/fight.py`'s `_apply_duality_outcome`, immediately before
+    `gain_fear`, which is the one place a PC's roll hands the GM anything.
+    `apply_on_roll` fires a step earlier and could not do this: it is told how the
+    roll came out and has no way to change what follows.
+
+    **Being asked is the commitment** - the Fear is about to land - so content may
+    claim a per-rest use on the spot.
+
+    Note what it is worth on both sides at once: the GM loses the Fear, which is
+    most of an extra activation, and the party gains whatever the content hands
+    them. Nothing else in the project reaches into the pool from the party's side
+    except by paying a condition off it.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_fear_conversions, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
 def damage_pool(name: str, unmodelled: Iterable[str] = ()):
     """Register content that reshapes the dice an attack is about to roll.
 
-    Signature: `(holder, weapon, pool, fight) -> DamagePool` - the pool as it
+    Signature: `(holder, weapon, pool, fight, roll) -> DamagePool` - the pool as it
     should now be, or the pool it was given to decline.
+
+    `roll` is the attack roll that landed, or **None** where the damage is not
+    coming from an attack at all - Bone's *Rapid Riposte* and Blade's *Glancing
+    Blow* both build a weapon's pool with no roll behind it. It is here for the
+    reason `extra_damage` takes one, arriving at the other half of the problem:
+    Midnight's *Midnight-Touched* adds "the result of your Fear Die" to a damage
+    roll, which is a **flat** amount that depends on how the attack came out. Of
+    the two hooks that could otherwise answer, `extra_damage` sees the roll and can
+    only return dice, and this one carries the flat modifier and could not see the
+    roll. Content that doesn't care ignores it, which is all four of the existing
+    registrants.
 
     This is the hook for Massive and Powerful: "roll an additional damage die
     and discard the lowest result". `extra_damage` can add dice but has no way
@@ -1111,7 +1233,9 @@ def damage_multiplier(name: str, unmodelled: Iterable[str] = ()):
     half damage, which is this hook pointed the other way - and it is the same
     question ("how much of this roll actually lands?") whichever direction it
     moves the number. `Adversary._dealt` floors the product once at the end, so
-    a halving rounds down like every other halving in the codebase.
+    a halving of **damage** rounds down. That is not the rule everywhere: halving
+    an ability's own quantity rounds *up* (Blade's Glancing Blow takes half a
+    Proficiency), which the user ruled separately. See SIMULATION-RULES.md.
 
     Applied to the damage total before the target's thresholds see it, which is
     what "take double damage" means in a game where damage becomes HP through
@@ -1738,6 +1862,75 @@ def roll_bonus(name: str, unmodelled: Iterable[str] = ()):
     return register
 
 
+def spellcast_bonus(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that adds to a **Spellcast Roll** and to nothing else.
+
+    Signature: `(holder, target, fight) -> int` - the bonus, or 0 to decline.
+    Identical to `roll_bonus` next door in everything but where it is asked, and
+    that is the whole of why it exists. Arcana's *Arcana-Touched* grants "+1 bonus
+    to your Spellcast Rolls", and `total_roll_bonus` is consulted from both
+    `items/weapons.py` and `content/spellcast.py` with nothing to tell the two
+    apart - so a card registered there would quietly add the bonus to a Wizard's
+    Broadsword as well.
+
+    One call site, in `content/spellcast.py`, which is the one shape a Spellcast
+    Roll takes. Content whose text says *action roll* or *attack roll* belongs on
+    `roll_bonus`; only content that names the Spellcast Roll specifically belongs
+    here.
+
+    **Being asked is the commitment**, the contract every pre-roll hook keeps: the
+    roll follows immediately and a reroll re-makes the dice without asking again,
+    so content spending a resource here has spent it. It also makes this the one
+    hook that can tell content "a cast is happening right now", which Cloaking
+    Blast reads for its trigger.
+
+    Two Spellcast Rolls sit outside it and are declared as gaps where content
+    registers: Splendor's *Healing Hands* and Grace's *Invisibility* both roll
+    `roll_duality` by hand against a flat printed Difficulty.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_spellcast_bonuses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def attack_failed(name: str, unmodelled: Iterable[str] = ()):
+    """Register content on an **attacker** that responds to their own attack failing.
+
+    Signature: `(holder, target, roll, fight) -> None`. Holder-scoped on whoever
+    swung, which is how the SRD writes it: the Blade card Glancing Blow is "when
+    **you** fail an attack". Nothing is returned - the attack has already missed,
+    and there is nothing left to change about it.
+
+    **Not `attack_missed` next door, which is its mirror.** That hook belongs to
+    whoever was *swung at* - Redirect and Rapid Riposte both answer an attack that
+    failed against *you* - and is asked from the GM turn. This one belongs to the
+    swinger and is asked from `items/weapons.py`, where a PC's attack roll comes
+    up short. The two are one word apart in English and opposite in every other
+    respect, so neither is folded into the other.
+
+    Asked from the one place a PC's weapon attack resolves, so it reaches a swing
+    and a card that swings through `attack_with` - Forceful Push, Boost - and not
+    a Spellcast attack, which rolls its own damage and never comes back here. That
+    last is declared as a gap where content registers.
+
+    `roll` is the attack roll that failed, so content can read how it came out.
+    Content that deals damage here is dealing it **outside** an AttackResult, so
+    the play-by-play still reports the attack as a miss; that too is declared
+    where it registers.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_attack_failures, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
 def on_roll(name: str, unmodelled: Iterable[str] = ()):
     """Register content that responds to how an action roll came out.
 
@@ -2272,20 +2465,108 @@ def total_roll_bonus(holder: Holder, target, fight: Fight, names=None) -> int:
     return total
 
 
-def adjust_damage_pool(holder: Holder, weapon, pool: DamagePool, fight=None, names=None):
+def total_spellcast_bonus(holder: Holder, target, fight: Fight = None) -> int:
+    """Everything this holder carries that adds to a Spellcast Roll, summed.
+
+    Zero unless something answers. The narrow twin of `total_roll_bonus`, asked
+    from `content/spellcast.py` alone - see `spellcast_bonus` for why a card that
+    names the Spellcast Roll cannot use the wider hook.
+
+    Asked once per cast, outside the roll's closure, since being asked is the
+    commitment.
+    """
+    _discover()
+    total = 0
+    for name in holder.named_features:
+        contribute = _registered(_spellcast_bonuses, name)
+        if contribute is not None:
+            total += contribute(holder, target, fight)
+    return total
+
+
+def apply_attack_failed(attacker, target, roll, fight: Fight = None) -> None:
+    """Let the attacker's own content respond to the attack they just missed with.
+
+    Holder-scoped on `attacker`, which is who the SRD writes such a card for - see
+    `attack_failed`. Everything registered is asked and nothing short-circuits: a
+    miss is not a resource anybody is competing for.
+    """
+    _discover()
+    for name in attacker.named_features:
+        respond = _registered(_attack_failures, name)
+        if respond is not None:
+            respond(attacker, target, roll, fight)
+
+
+def adjust_damage_pool(
+    holder: Holder, weapon, pool: DamagePool, fight=None, names=None, roll=None
+):
     """Let content reshape the dice an attack is about to roll.
 
     Each piece of content sees what the previous one left, so two adjustments
     compose. `names` scopes the lookup the same way `total_roll_bonus` does, and
     for gear it is the caller's job to pass the weapon's own feature names -
     Massive belongs to the Greatsword, not to the Guardian holding it.
+
+    `roll` is the attack roll that landed, and **None** where damage is being built
+    outside an attack - see `damage_pool`. Callers that have one pass it; the two
+    cards that deal weapon damage without swinging correctly do not.
     """
     _discover()
     for name in holder.named_features if names is None else names:
         adjust = _registered(_damage_pools, name)
         if adjust is not None:
-            pool = adjust(holder, weapon, pool, fight)
+            pool = adjust(holder, weapon, pool, fight, roll)
     return pool
+
+
+def marked_as_stress_instead(target, hp_to_mark: int, fight: Fight = None) -> int:
+    """How many of the HP this adversary would mark become Stress instead.
+
+    Zero unless party content answers, and the answers **sum** - though nothing
+    stacks two of these today, and the caller clamps to what the hit was worth.
+    Scanned across the conscious party, since the content belongs to a PC rather
+    than to the adversary being hit. See `stress_instead_of_hp`.
+
+    Zero without a fight, since there is no party to scan.
+    """
+    _discover()
+    total = 0
+    for holder, convert in _party_offers(fight, _stress_for_hp):
+        total += convert(holder, target, hp_to_mark, fight)
+    return total
+
+
+def marks_armor_instead_of_stress(holder, amount: int = 1) -> bool:
+    """Whether anything this holder carries lets an Armor Slot pay a Stress cost.
+
+    False unless something says so, and the first answer wins - one permission is
+    the same as two. No `fight`: see `armor_instead_of_stress` for why this is the
+    second hook in the project asked without one.
+    """
+    _discover()
+    for name in holder.named_features:
+        allows = _registered(_armor_for_stress, name)
+        if allows is not None and allows(holder, amount):
+            return True
+    return False
+
+
+def fear_is_converted(roller: Holder, fight: Fight = None) -> bool:
+    """Whether party content stops the GM gaining a Fear off this roll.
+
+    False unless something answers, and the first answer wins - see
+    `fear_conversion`. Content that denies the Fear has already done whatever it
+    does instead by the time this returns.
+
+    False without a fight, and holder-scoped on whoever rolled.
+    """
+    _discover()
+    for name in roller.named_features:
+        deny = _registered(_fear_conversions, name)
+        if deny is not None and deny(roller, fight):
+            return True
+    return False
 
 
 def apply_on_roll(holder: Holder, roll, fight: Fight) -> None:

@@ -160,28 +160,62 @@ def choose_adversary_target(
     Unconscious PCs are skipped at every step: per the SRD they can't be
     targeted at all.
 
+    **So is a PC a condition has put out of reach** - Arcana's *Cloaking Blast*
+    says its holder "cannot be targeted" until they next attack, which is the
+    first thing on the party's side to reach this rule. Read generically through
+    `visible` below, off `Condition.untargetable`; nothing here knows the
+    condition's name or that any such condition exists.
+
     **Unless something the party did has taken the choice away.** Grace's
     Enrapture fixes an Enraptured adversary's attention on whoever cast it,
     which is asked here through one generic dispatch - the mirror of the
     Weaponmaster's Taunt reaching `choose_pc_target`. Nothing in this function
-    knows what an Enrapture is, or that any such content exists.
+    knows what an Enrapture is, or that any such content exists. A cloaked caster
+    is out of reach even of an adversary they enraptured, so the compulsion falls
+    through to the memory rather than reaching through the cloak.
     """
-    standing = state.conscious_party
+    standing = _targetable(state)
     if not standing:
         return None
 
+    reachable = {id(pc) for pc in standing}
+
+    def visible(pc) -> bool:
+        # By `id()`, not `in`: PlayerCharacter is a dataclass, so two PCs with
+        # identical sheets compare equal and `in` would confuse them.
+        return pc is not None and pc.is_conscious and id(pc) in reachable
+
     compelled = forced_adversary_target(adversary, state)
-    if compelled is not None and compelled.is_conscious:
+    if visible(compelled):
         return compelled
 
     remembered = state.last_attacker_of.get(id(adversary))
-    if remembered is not None and remembered.is_conscious:
+    if visible(remembered):
         return remembered
 
-    if state.last_pc_to_attack is not None and state.last_pc_to_attack.is_conscious:
+    if visible(state.last_pc_to_attack):
         return state.last_pc_to_attack
 
     return standing[0]
+
+
+def _targetable(state: FightState) -> list[PlayerCharacter]:
+    """The conscious PCs an adversary is allowed to aim at.
+
+    SIMULATION RULE - simplification. **A cloak protects an individual, not the
+    party.** When every conscious PC is out of reach the whole list is handed back
+    rather than nothing, so the adversary swings at somebody anyway. The
+    alternative - an activation that finds nobody and is spent on air - would make
+    one card, held by one PC in a party of one, a total defence; and it would need
+    a rule for what an adversary does with a spotlight it cannot use, which
+    nothing in the loop has. Declared as a gap where the content registers.
+
+    In a party of the size this simulator is built around the fallback is
+    unreachable, since cloaking every PC at once is not something any card does.
+    """
+    conscious = state.conscious_party
+    unseen = [pc for pc in conscious if not state.cannot_be_targeted(pc)]
+    return unseen or conscious
 
 
 def _shield(target: PlayerCharacter, state: FightState) -> PlayerCharacter:
@@ -613,7 +647,9 @@ def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult
         # it changes what the standard attack *is* rather than replacing it.
         band = standard_attack_area(attacker, fight)
         if band is not None:
-            caught = targets_in_area(band, fight.conscious_party)
+            # The same list the single-target rule draws from, so a cloaked PC is
+            # out of reach of a sweep as well as of a swing.
+            caught = targets_in_area(band, _targetable(fight))
             result, struck = attacker.area_attack(caught, advantage, fight)
             for hit in struck:
                 fight.note(f"{attacker.name} catches {hit.name} in its swing")

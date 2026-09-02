@@ -17,28 +17,38 @@ as importantly, never looks like a dismissal either.
 Level 6 gives Blade the domain's first card that reaches a **death move** on its
 own holder - Splendor's Life Ward is cast on somebody else - and, in Rage Up, the
 first card anywhere whose cost is paid *before* the roll it pays for.
+
+Level 7's **Glancing Blow** is the first card anywhere that pays out on the
+holder's *own* attack failing. Every other card keyed on a miss - Redirect, Rapid
+Riposte - answers a miss made against its holder, which is a different hook
+pointed the other way across the swing.
 """
 
 import random
 
 from content.aoe import Range, targets_reached
 from content.registry import (
+    DamagePool,
     Fight,
     Holder,
+    adjust_damage_pool,
     ally_damage_reduction,
     attack_advantage,
+    attack_failed,
     damage_bonus,
     damage_die_maximum,
     damage_die_reroll,
+    dealt_damage_type,
     death_move_ward,
     extra_damage,
     no_combat_effect,
     on_hit,
     out_of_combat_ability,
+    roll_bonus,
     severity_response,
 )
 from dice.common import AdvantageState
-from dice.damage import DiceGroup
+from dice.damage import DiceGroup, roll_damage
 from items.registry import find_weapon
 
 # Not Good Enough rerolls any die showing this or less.
@@ -614,6 +624,131 @@ no_combat_effect(
     "condition attached to it - *while you are wearing armor* - is not a "
     "qualifier this party ever fails: every sheet in characters/ names an armor.",
 )
+
+# --- Blade-Touched ---------------------------------------------------------------
+
+BLADE_TOUCHED = "Blade-Touched"
+
+BLADE_TOUCHED_ATTACK = 2
+
+
+@roll_bonus(
+    BLADE_TOUCHED,
+    unmodelled=[
+        "'When 4 or more of the domain cards in your loadout are from the Blade "
+        "domain' - the loadout is not counted. The user's ruling is that carrying "
+        "the card is taken as proof the condition is met, since a player who takes "
+        "it has built for it. Recorded as a simulation rule rather than checked",
+        "'+4 bonus to your Severe damage threshold' - a character sheet carries "
+        "its damage thresholds **already resolved**, so running the bonus here "
+        "would count it twice. The same reason Vitality and Fortified Armor are "
+        "declared",
+        "'+2 bonus to your **attack** rolls' also reaches a Spellcast Roll that "
+        "is not an attack, since `total_roll_bonus` is asked from both the swing "
+        "and the cast with nothing to tell them apart. Empty in practice: Blade "
+        "prints no Spellcast Roll at any level, and a Blade-Touched loadout has "
+        "at most one card from anywhere else",
+    ],
+)
+def blade_touched(holder: Holder, target, fight: Fight = None) -> int:
+    """Blade-Touched (Blade, level 7), the clause that isn't already on the sheet.
+
+    SRD: "When 4 or more of the domain cards in your loadout are from the Blade
+    domain, gain the following benefits: +2 bonus to your attack rolls; +4 bonus
+    to your Severe damage threshold."
+
+    No policy - it costs nothing, has no limit and is simply on. **+2 is the
+    largest flat attack bonus any ported card grants**, which is a fact about the
+    printed number rather than a claim about what it will do to a fight.
+    """
+    return BLADE_TOUCHED_ATTACK
+
+
+# --- Glancing Blow ---------------------------------------------------------------
+
+GLANCING_BLOW = "Glancing Blow"
+
+
+@attack_failed(
+    GLANCING_BLOW,
+    unmodelled=[
+        "A failed **Spellcast** attack. This hook is asked where a weapon swing "
+        "resolves, so a card that rolls its own attack and misses does not reach "
+        "it - which suits the card, since what it deals is weapon damage",
+        "The play-by-play still reports the swing as a miss. The damage is dealt "
+        "outside the `AttackResult` the attack returns, so `combat/policy.py` "
+        "notes a miss and this card notes its own hit underneath",
+        "'one of your active weapons' - a sheet can carry a secondary weapon and "
+        "nothing resolves one (SIMULATION-RULES.md, section 3), so the blow is "
+        "always struck with the primary. Rapid Riposte reads the same clause the "
+        "same way",
+    ],
+)
+def glancing_blow(holder: Holder, target, roll, fight: Fight = None) -> None:
+    """Glancing Blow (Blade, level 7). A miss that still costs the target something.
+
+    SRD: "When you fail an attack, you can mark a Stress to deal weapon damage
+    using half your Proficiency."
+
+    **Rapid Riposte's damage, off the opposite trigger.** That card answers an
+    attack that failed *against you*; this one answers your own. The pool is built
+    the way `items/weapons.py` builds a swing's - Proficiency dice of the weapon's
+    size, its modifier, then `adjust_damage_pool` asked holder-wide and again for
+    the weapon's own features - so a Greatsword's Massive discards its lowest here
+    exactly as it would on a hit.
+
+    What is deliberately **not** asked is `total_damage_bonus` and
+    `total_extra_damage`: the first is paid "before you make an attack" and has
+    already been spent on the swing that missed, and the second keys on how an
+    attack roll came out, which here is badly.
+
+    SIMULATION RULE - rules interpretation, ruled. **Half a Proficiency rounds
+    up**, so a Proficiency of 3 rolls two dice and a Proficiency of 1 rolls one.
+    The user's rule, and it means the card can never come to no dice at all.
+
+    SIMULATION RULE - policy. Nothing to rule beyond the standing default: it
+    fires on every failed swing the shared Stress rule allows, which is the same
+    answer Reckless, Versatile Fighter and Rage Up get.
+    """
+    if fight is None or holder.proficiency <= 0:
+        return
+    carried = getattr(holder, "primary_weapon", "")
+    if not carried:
+        return
+    if not holder.will_spend_stress(1):
+        return
+
+    weapon = find_weapon(carried)
+    # Rounded up, per the ruling: `-(-n // 2)` is the floor division the language
+    # gives, negated twice.
+    dice = -(-holder.proficiency // 2)
+    pool = adjust_damage_pool(
+        holder,
+        weapon,
+        DamagePool(
+            dice_groups=[DiceGroup(count=dice, sides=weapon.damage_die)],
+            drop_lowest=0,
+            modifier=weapon.damage_modifier,
+        ),
+        fight,
+    )
+    pool = adjust_damage_pool(holder, weapon, pool, fight, names=weapon.named_features)
+
+    holder.spend_stress(1)
+    damage = roll_damage(
+        dice_groups=pool.dice_groups,
+        modifier=pool.modifier,
+        drop_lowest=pool.drop_lowest,
+    )
+    target.take_damage(
+        damage.total,
+        fight,
+        damage_type=dealt_damage_type(holder, target, weapon.damage_type, fight),
+    )
+    fight.note(
+        f"{holder.name}'s miss still glances off {target.name} for {damage.total}"
+    )
+
 
 out_of_combat_ability(
     "A Soldier's Bond",

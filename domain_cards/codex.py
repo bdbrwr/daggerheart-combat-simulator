@@ -10,6 +10,12 @@ Card text is paraphrased in each docstring rather than quoted in full. The
 verbatim text is in .reference/abilities.json, and was checked against the
 printed page (SRD pp. 124-125) for all nine books.
 
+Level 7 splits the way level 6 did, one card each way. **Codex-Touched** is the
+only *X*-Touched card in the project whose bonus has a price - a Stress buys the
+caster's whole Proficiency on a cast - and the **Book of Homet** is the second
+book after Vagras with nothing implemented at all, both of its spells being
+passage.
+
 Level 6 is where the domain stops attacking and starts rearranging the fight.
 **Sigil of Retribution** is the first party card anywhere that pays the *GM* -
 a Fear, up front - and the first that banks somebody else's wounds as damage.
@@ -61,6 +67,7 @@ from content.registry import (
     free,
     hope_die_for,
     no_combat_effect,
+    spellcast_bonus,
     total_extra_damage,
 )
 from content.spellcast import spellcast
@@ -1538,4 +1545,105 @@ no_combat_effect(
     "tracked. Worth knowing that modelling it would make a party *worse*: the cast "
     "spends a whole action roll to buy nothing here, where at a table it is how a "
     "party leaves a fight it cannot win.",
+)
+
+
+# --- Codex-Touched ---------------------------------------------------------------
+
+CODEX_TOUCHED = "Codex-Touched"
+
+# SIMULATION RULE - policy, ruled. The card sets no limit at all, and the standing
+# default for a Stress-priced rider is the shared last-slot rule. The user ruled
+# **against** that here and set a ceiling instead: the Stress is not marked once
+# this many slots are already marked. A rider asked on *every* cast would otherwise
+# run a caster's whole track through one card in three or four spotlights.
+CODEX_TOUCHED_STRESS_CEILING = 3
+
+
+@spellcast_bonus(
+    CODEX_TOUCHED,
+    unmodelled=[
+        "'When 4 or more of the domain cards in your loadout are from the Codex "
+        "domain' - the loadout is not counted. The user's ruling is that carrying "
+        "the card is taken as proof the condition is met, since a player who takes "
+        "it has built for it. Recorded as a simulation rule rather than checked",
+        "'Once per rest, replace this card with any card from your vault without "
+        "paying its Recall Cost' - nothing models a loadout changing mid-fight. "
+        "Counterspell is the one card that reaches the vault at all and does so "
+        "for itself alone, by the user's ruling; a general swap would need a "
+        "loadout that can be rewritten and a rule for what to swap in",
+        "Two Spellcast Rolls the hook is not asked at - Splendor's Healing Hands "
+        "and Grace's Invisibility roll `roll_duality` by hand rather than through "
+        "the shared shape, for the reason recorded at the end of "
+        "domain_cards/PORTED.md",
+    ],
+)
+def codex_touched(caster: Holder, target, fight: Fight = None) -> int:
+    """Codex-Touched (Codex, level 7), the clause that bites.
+
+    SRD: "When 4 or more of the domain cards in your loadout are from the Codex
+    domain, gain the following benefits: you can mark a Stress to add your
+    Proficiency to a Spellcast Roll; once per rest, replace this card with any card
+    from your vault without paying its Recall Cost."
+
+    **Being asked is the commitment**, which is this hook's contract - the roll
+    follows immediately - so the Stress is marked here rather than needing anything
+    afterwards to confirm the cast happened.
+
+    SIMULATION RULE - policy, ruled. Marked while **fewer than
+    `CODEX_TOUCHED_STRESS_CEILING` slots are already marked**, rather than by the
+    shared last-slot rule every other Stress cost asks. The user ruled this one
+    specially and the reason is the trigger: this is asked on *every* Spellcast
+    Roll, so the standing rule would spend the caster's whole track on it within a
+    few spotlights and leave nothing for the cards that also want Stress. The
+    ceiling caps it at three casts between clears.
+
+    `can_spend_stress` rather than `will_spend_stress`, deliberately: the ceiling
+    replaces the willingness rule rather than sitting on top of it, and the check
+    that remains is only that a slot exists at all.
+    """
+    if fight is None or caster.stress_marked >= CODEX_TOUCHED_STRESS_CEILING:
+        return 0
+    if not caster.can_spend_stress(1):
+        return 0
+
+    caster.spend_stress(1)
+    fight.note(
+        f"{caster.name} marks a Stress; the cast carries their full Proficiency "
+        f"(+{caster.proficiency})"
+    )
+    return caster.proficiency
+
+
+# --- Book of Homet ---------------------------------------------------------------
+#
+# The second book in the domain with nothing implemented, after Vagras, and
+# declared the same way: both of its spells are passage, so the *book* is declared
+# under its own name as well. A Grimoire with no spell registered would report the
+# card as unimplemented, which is the wrong answer for something read and assessed.
+
+no_combat_effect(
+    "Book of Homet",
+    "Both spells are passage. Pass Through is a Spellcast Roll (13) that carries "
+    "the party through a wall or door within Close range, ending once everyone is "
+    "on the other side; Plane Gate is a Spellcast Roll (14) opening a gateway to "
+    "another dimension or plane the caster has been to, lasting until the next "
+    "rest. Neither touches anybody's numbers, grants a roll in a fight or makes an "
+    "attack - the standing answer for content whose whole effect is where somebody "
+    "is standing, which the domain has already given Arcane Door and Teleport.",
+)
+no_combat_effect(
+    "Pass Through",
+    "A Spellcast Roll (13) moves the party through a wall or door within Close "
+    "range. There are no walls in a simulated fight and no positions are tracked, "
+    "so there is nothing to pass through and nowhere to arrive. At a table it is "
+    "how a party gets somewhere the fight was not.",
+)
+no_combat_effect(
+    "Plane Gate",
+    "A Spellcast Roll (14) opens a gateway to a location on another plane the "
+    "caster has visited, lasting until their next rest. Travel, at the longest "
+    "range the domain prints - the Teleport case, and dismissed for the same "
+    "reason: an encounter is one place, and leaving it is not something the "
+    "simulator represents.",
 )

@@ -26,6 +26,11 @@ had ever registered on it.
 Level 6's **Rapid Riposte** is Redirect's twin: the two answer the same trigger -
 an attack on you that failed - split by the band it came from, so between them
 Bone has an answer to every miss.
+
+Level 7 finishes the domain's answer to being hit rather than missed:
+**Bone-Touched** buys one landed attack back off the board outright for 3 Hope,
+which is Scramble's shape at a Bone price. Its +1 Agility is the first *trait*
+bonus declared as already resolved on the sheet.
 """
 
 import random
@@ -38,7 +43,9 @@ from content.registry import (
     Holder,
     action,
     adjust_damage_pool,
+    ally_damage_reduction,
     attack_missed,
+    damage_bonus,
     dealt_damage_type,
     evasion_bonus,
     extra_armor_slot,
@@ -688,6 +695,113 @@ def rapid_riposte(holder: Holder, attacker, roll, fight: Fight = None) -> None:
     fight.note(
         f"{holder.name} ripostes {attacker.name}'s miss for {damage.total}"
     )
+
+
+# --- Bone-Touched ----------------------------------------------------------------
+
+BONE_TOUCHED = "Bone-Touched"
+
+BONE_TOUCHED_HOPE = 3
+
+
+@ally_damage_reduction(
+    BONE_TOUCHED,
+    unmodelled=[
+        "'When 4 or more of the domain cards in your loadout are from the Bone "
+        "domain' - the loadout is not counted. The user's ruling is that carrying "
+        "the card is taken as proof the condition is met, since a player who takes "
+        "it has built for it. Recorded as a simulation rule rather than checked",
+        "'+1 bonus to Agility' - a character sheet carries its traits **already "
+        "resolved**, the same way it carries Evasion and thresholds, so running "
+        "the bonus here would count it twice. The first *trait* to fall under "
+        "that rule rather than a threshold or an Armor Score",
+        "The attack is made to deal no damage rather than to **fail**. Content on "
+        "the attacker that fires on a successful attack - the Bear's Momentum "
+        "handing the GM a Fear - has already run by the time this hook is asked, "
+        "so it fires off an attack the card says never landed. Scramble and Arcane "
+        "Deflection are built the same way and carry the same gap",
+    ],
+)
+def bone_touched(
+    holder: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """Bone-Touched (Bone, level 7). Returns the damage this hit should lose.
+
+    SRD: "When 4 or more of the domain cards in your loadout are from the Bone
+    domain, gain the following benefits: +1 bonus to Agility; once per rest, you
+    can spend 3 Hope to cause an attack that succeeded against you to fail
+    instead."
+
+    **Negated outright, not softened.** The whole amount is returned, so the hit
+    resolves to nothing - and because `take_damage` floors at zero before the
+    thresholds are read, no Armor Slot is spent on an attack that never landed.
+    Scramble's shape and Arcane Deflection's, and the same reason no other hook
+    can say it: an Armor Slot and `severity_response` both work in threshold bands
+    and the smallest thing either can do is take one HP off.
+
+    Registered on the party-wide hook and scoped back to its own holder with
+    `holder is target`, exactly as Scramble is. The card says "an attack that
+    succeeded against **you**", so it never reaches an ally.
+
+    SIMULATION RULE - policy, ruled. Spent on the first hit that would mark **2 or
+    more HP**, or on any hit against a holder already at 2 or fewer unmarked HP.
+    Counterspell's rule and Arcane Deflection's, read here for the third time
+    rather than a fourth number that could drift from them - and it reads only
+    what a player can see when they decide: the damage the GM announced against
+    their own printed thresholds.
+    """
+    if fight is None or holder is not target:
+        return 0
+    if amount < holder.major_threshold and not holder.is_near_death:
+        return 0
+    if not holder.can_spend_hope(BONE_TOUCHED_HOPE):
+        return 0
+    if not fight.use_once_per_rest(holder, BONE_TOUCHED):
+        return 0
+
+    holder.spend_hope(BONE_TOUCHED_HOPE)
+    fight.note(
+        f"{holder.name} spends {BONE_TOUCHED_HOPE} Hope; the attack fails after all"
+    )
+    return amount
+
+
+# --- Cruel Precision -------------------------------------------------------------
+
+CRUEL_PRECISION = "Cruel Precision"
+
+
+@damage_bonus(
+    CRUEL_PRECISION,
+    unmodelled=[
+        "'with a **weapon**' - `damage_bonus` is holder-scoped and is asked "
+        "wherever a PC's damage bonus is worked out, which in practice is the "
+        "weapon swing and the two cards that swing through it. A card rolling its "
+        "own dice does not consult it, so the restriction happens to hold; it is "
+        "declared because nothing enforces it. Body Basher declares the same gap "
+        "for its Melee clause",
+    ],
+)
+def cruel_precision(attacker: Holder, target, fight: Fight = None) -> int:
+    """Cruel Precision (Bone, level 7).
+
+    SRD: "When you make a successful attack with a weapon, gain a bonus to your
+    damage roll equal to either your Finesse or Agility."
+
+    **Body Basher with a choice of trait.** That card is the same sentence with
+    Strength in it, and this registers on the same hook for the same reason:
+    applied before the target's thresholds are consulted, so it changes how many
+    HP the hit marks rather than only the number printed.
+
+    "Either your Finesse or Agility" is the player's choice and the better of the
+    two is taken. That is not a policy needing a ruling - it is arithmetic on two
+    numbers printed on the sheet in front of them, the same thing Support Tank
+    does when it picks the lower of two dice already face-up.
+
+    Floored at zero like Body Basher: a negative trait does not make a PC's own
+    weapon worse.
+    """
+    return max(attacker.traits["finesse"], attacker.traits["agility"], 0)
 
 
 # --- Assessed and dismissed --------------------------------------------------

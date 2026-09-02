@@ -41,6 +41,7 @@ from content import (
 )
 from content.help import help_with_roll
 from content.registry import (
+    apply_attack_failed,
     apply_before_attacked,
     apply_on_attacked,
     granted_action_roll_advantage,
@@ -196,6 +197,13 @@ def attack_with(
     attack_roll = remake_action_roll(attacker, roll(), roll, fight)
 
     if not attack_roll.is_success:
+        # Content the *attacker* carries that answers their own swing coming up
+        # short - the Blade card Glancing Blow, which marks a Stress to land
+        # something anyway. The mirror of `attack_missed`, which belongs to
+        # whoever was swung at and is asked from the GM turn; this is the one
+        # place a PC's attack is known to have failed with the target still in
+        # hand. Nothing here knows what any of it is.
+        apply_attack_failed(attacker, target, attack_roll, fight)
         return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
     # Content the *character* carries that changes the shape of the pool before
@@ -207,6 +215,8 @@ def attack_with(
     # Before the weapon's own features rather than after, because a Proficiency
     # bonus really is one more of the *weapon's* dice - so a Massive discard
     # should see the bumped pool and take the lowest of all of them.
+    # The attack roll goes through so content can key on how it came out -
+    # Midnight-Touched adds the Fear Die's own result to the damage.
     pool = adjust_damage_pool(
         attacker,
         weapon,
@@ -216,13 +226,14 @@ def attack_with(
             modifier=weapon.damage_modifier,
         ),
         fight,
+        roll=attack_roll,
     )
 
     # Then the weapon's own features - this is where Massive and Powerful roll
     # their extra die and discard the lowest, and the discard is theirs alone,
     # reaching only the dice the weapon rolled.
     pool = adjust_damage_pool(
-        attacker, weapon, pool, fight, names=weapon.named_features
+        attacker, weapon, pool, fight, names=weapon.named_features, roll=attack_roll
     )
 
     # Then content the *character* carries that adds dice conditional on how the

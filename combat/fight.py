@@ -33,9 +33,10 @@ from content import (
     apply_on_roll,
     converted_party_roll,
     extra_spotlight_cost,
+    fear_is_converted,
     spotlights_while_defeated,
 )
-from content.conditions import ON_A_GM_TURN, WHEN_THEY_ACT
+from content.conditions import ON_A_GM_TURN, WHEN_THEY_ACT, WHEN_THEY_ATTACK
 from dice.duality import DualityOutcome
 
 # Safety net for a matchup that can't resolve - PCs who can't beat a
@@ -155,6 +156,22 @@ def _take_pc_spotlight(state: FightState) -> None:
     # off comes after.
     state.apply_condition_effects(pc, WHEN_THEY_ACT)
 
+    # A narrower moment than the one below, announced only when the spotlight
+    # resolved into a roll at all. Arcana's *Cloaking Blast* ends "when you make
+    # an attack", and this is as close as the loop can get: `made_an_attack` is
+    # the same discriminator the GM-side watchers below use, and it means "this
+    # action rolled" rather than "this action was an attack". A spotlight spent on
+    # Healing Hands therefore breaks the cloak too, which is declared as a gap on
+    # the card and errs the conservative way.
+    #
+    # Announced **here**, before the roll's outcome is spent, and that ordering is
+    # load-bearing: content whose trigger is the roll having succeeded applies its
+    # condition from `apply_on_roll`, which runs afterwards - so a cloak raised off
+    # an attack spell is not broken by the very attack that raised it.
+    if result is not None and result.made_an_attack:
+        for ended in state.expire_conditions(pc, WHEN_THEY_ATTACK):
+            state.note(f"{pc.name} is no longer {ended}")
+
     # "Until they next act" ends *after* the acting, so a PC knocked over is
     # still Vulnerable for the action that gets them back up - which is the whole
     # point of having been knocked over.
@@ -243,6 +260,14 @@ def _apply_duality_outcome(pc, roll, state: FightState) -> None:
     elif roll.outcome is DualityOutcome.HOPE:
         pc.gain_hope(1)
     else:
+        # Party content that stops the Fear arriving at all - Midnight's
+        # Midnight-Touched turns it into a Hope for a PC who has none. Asked here
+        # because this is the one place a PC's roll hands the GM anything, and
+        # `apply_on_roll` above is told how the roll came out without being able to
+        # change what follows. Content that answers has already done whatever it
+        # does instead; nothing here knows what any of it is.
+        if fear_is_converted(pc, state):
+            return
         gained = state.gain_fear(1)
         if not gained:
             state.note("Fear is already at its cap; the roll with Fear adds nothing")

@@ -39,6 +39,7 @@ from content.registry import (
     force_adversary_reroll,
     harden_damage,
     incoming_damage_multiplier,
+    marked_as_stress_instead,
     resistance_to,
     soften_damage,
     standard_attack_damage,
@@ -610,6 +611,21 @@ class Adversary:
 
         hp_to_mark = soften_damage(self, amount, hp_to_mark, fight, kind)
         hp_to_mark = harden_damage(self, amount, hp_to_mark, fight, kind)
+
+        # Party content that turns HP this adversary would mark into Stress -
+        # Grace's Grace-Touched. Asked after both severity hooks, so it sees what
+        # the hit finally costs rather than what it started at, and before the
+        # marking, which is the whole point. Clamped to the hit and to the Stress
+        # track: content asking for more than either is not a way to mark negative
+        # HP or to overflow a track. Nothing here knows what any of it is.
+        converted = min(
+            max(marked_as_stress_instead(self, hp_to_mark, fight), 0),
+            hp_to_mark,
+            self.stress_unmarked,
+        )
+        if converted:
+            self.mark_stress(converted)
+            hp_to_mark -= converted
 
         self.mark_hp(hp_to_mark)
 

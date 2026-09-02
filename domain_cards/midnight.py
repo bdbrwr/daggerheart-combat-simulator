@@ -38,6 +38,12 @@ questions for the GM, Mass Disguise is minutes of silence and Presence Rolls.
 Midnight joins Grace's level 4 as a domain whose whole level is declared rather
 than built - and, like that one, it is worth recording so it does not read as an
 omission.
+
+Level 7 puts the domain back in the fight twice over. **Midnight-Touched** is the
+first card anywhere that stops the GM gaining a Fear, and the first to read the
+Fear Die's own result as damage - which is what gave `damage_pool` the attack roll.
+**Vanishing Dodge** is the third card on the missed-attack trigger after Redirect
+and Rapid Riposte, and the first to answer a miss with something other than damage.
 """
 
 from combat.results import AttackResult
@@ -50,14 +56,19 @@ from content.conditions import (
     WHEN_THEY_ACT,
     Condition,
     when_the_gm_pays,
+    when_they_attack,
 )
-from content.damage_types import DamageType, types_in
+from content.damage_types import DamageType, damage_type_named, includes, types_in
 from content.registry import (
+    DamagePool,
     Fight,
     Holder,
     action,
     ally_extra_damage,
     attack_advantage,
+    attack_missed,
+    damage_pool,
+    fear_conversion,
     free,
     no_combat_effect,
     on_damaged,
@@ -741,8 +752,18 @@ def _casts_with_magic(adversary) -> bool:
     The gap it leaves is an adversary whose *standard attack* is physical but
     whose Action feature deals magic damage. It is Silenced and inert, where the
     page would stop the feature.
+
+    **The printed type is parsed before it is read.** `Adversary.damage_type` is
+    the string a catalogue entry wrote - "magic", or "magic/physical" for a hit
+    that is both - and `types_in` takes a resolved `DamageType`. Handing it the
+    raw string put it through `frozenset("magic")`, a set of five *characters*,
+    which no `DamageType` is ever a member of - so this silently answered False
+    for every adversary in the catalogue and Hush stopped nobody acting. Fixed by
+    parsing first, which is what `damage_type_named` is for.
     """
-    return DamageType.MAGIC in types_in(adversary.type_of_damage())
+    return includes(
+        damage_type_named(adversary.type_of_damage()), DamageType.MAGIC
+    )
 
 
 @on_damaged(HUSH)
@@ -767,6 +788,161 @@ def hush_breaks(holder: Holder, amount: int, hp_marked: int, fight: Fight) -> No
         if silence is not None and silence.source is holder:
             fight.clear_condition(adversary, SILENCED)
             fight.note(f"{holder.name} reels, and {adversary.name} is no longer Silenced")
+
+
+# --- Midnight-Touched ------------------------------------------------------------
+
+MIDNIGHT_TOUCHED = "Midnight-Touched"
+
+TOUCHED_LOADOUT_GAP = (
+    "'When 4 or more of the domain cards in your loadout are from the Midnight "
+    "domain' - the loadout is not counted. The user's ruling is that carrying the "
+    "card is taken as proof the condition is met, since a player who takes it has "
+    "built for it. Recorded as a simulation rule rather than checked"
+)
+
+
+@fear_conversion(MIDNIGHT_TOUCHED, unmodelled=[TOUCHED_LOADOUT_GAP])
+def midnight_touched(holder: Holder, fight: Fight = None) -> bool:
+    """Midnight-Touched (Midnight, level 7), first clause.
+
+    SRD: "When 4 or more of the domain cards in your loadout are from the Midnight
+    domain, gain the following benefits: once per rest, when you have 0 Hope and
+    the GM would gain a Fear, you can gain a Hope instead; when you make a
+    successful attack, you can mark a Stress to add the result of your Fear Die to
+    your damage roll."
+
+    **The card prints its own trigger exactly**, so there is no policy to rule: it
+    fires at 0 Hope, on a roll that was about to hand the GM a Fear, and it has one
+    use per rest. Nothing here weighs whether a better moment is coming, because 0
+    Hope is already the worst one.
+
+    Being asked is the commitment - the Fear is a line away from landing - so the
+    per-rest use is claimed here and the Hope banked before returning True.
+
+    Worth reading its numbers knowing it moves **two** resources at once: the GM's
+    pool loses what is close to an extra activation, and the PC comes off the floor
+    of a currency several of their cards need. Every other party card that touches
+    the Fear pool pays *into* it or drains it by clearing a condition.
+    """
+    if fight is None or holder.hope_marked > 0:
+        return False
+    if not fight.use_once_per_rest(holder, MIDNIGHT_TOUCHED):
+        return False
+
+    holder.gain_hope(1)
+    fight.note(
+        f"{holder.name} turns the GM's Fear aside and takes a Hope from it instead"
+    )
+    return True
+
+
+@damage_pool(
+    MIDNIGHT_TOUCHED,
+    unmodelled=[
+        TOUCHED_LOADOUT_GAP,
+        "Damage rolled by anything other than a weapon swing. "
+        "`adjust_damage_pool` is asked from `items/weapons.py` and from the two "
+        "cards that deal weapon damage without swinging, and content rolling "
+        "Proficiency dice of its own never consults it - so a Midnight caster's "
+        "spells carry no Fear Die. The same gap Voice of Reason and Never "
+        "Upstaged declare",
+    ],
+)
+def midnight_touched_bites(
+    holder: Holder, weapon, pool: DamagePool, fight: Fight = None, roll=None
+) -> DamagePool:
+    """Midnight-Touched's second clause - the Fear Die, read again as damage.
+
+    **On `damage_pool` rather than either damage hook next door**, which is Never
+    Upstaged's argument with one thing added. "When you make a **successful**
+    attack" rules out `damage_bonus`, asked before the dice are thrown; "the result
+    of your Fear Die" is a flat number rather than dice, which rules out
+    `extra_damage`. What is new is that the number is only knowable *from the roll*,
+    and this hook could not see one until this card - which is why `damage_pool`
+    now carries the attack roll.
+
+    `roll` is None where the damage is not coming from an attack at all (Rapid
+    Riposte, Glancing Blow), and the card declines there: no attack, no Fear Die.
+
+    SIMULATION RULE - policy. The standing default for a Stress cost, which is what
+    Reckless, Versatile Fighter and Rage Up all get: marked on every landed swing
+    the shared last-slot rule allows. Worth knowing the size before reading the
+    numbers - a Fear Die is a d12, so this averages +6.5 on a hit and is the
+    largest per-Stress damage bonus in the project.
+
+    Being asked is the commitment: the damage roll follows immediately, so the
+    Stress is marked here.
+    """
+    if fight is None or roll is None:
+        return pool
+
+    fear = getattr(roll, "fear_die_result", None)
+    if not fear or not holder.will_spend_stress(1):
+        return pool
+
+    holder.spend_stress(1)
+    fight.note(f"{holder.name} marks a Stress; the Fear Die bites for +{fear}")
+    return pool._replace(modifier=pool.modifier + fear)
+
+
+# --- Vanishing Dodge -------------------------------------------------------------
+
+VANISHING_DODGE = "Vanishing Dodge"
+
+
+@attack_missed(
+    VANISHING_DODGE,
+    unmodelled=[
+        "'teleporting to a point within Close range of the attacker' - pure "
+        "repositioning, and no positions are tracked. What is modelled is the "
+        "Hidden it comes wrapped in",
+        "An adversary's **area** attack. Only the PC the attack was aimed at is "
+        "announced as having been missed, so a swept attack that failed against "
+        "several is dodged by at most one of them. Redirect and Rapid Riposte "
+        "declare the same gap for the same reason",
+    ],
+)
+def vanishing_dodge(holder: Holder, attacker, roll, fight: Fight = None) -> None:
+    """Vanishing Dodge (Midnight, level 7). A miss buys a Hope's worth of shadow.
+
+    SRD: "When an attack made against you that would deal physical damage fails,
+    you can spend a Hope to envelop yourself in shadow, becoming *Hidden* and
+    teleporting to a point within Close range of the attacker. You remain Hidden
+    until the next time you make an action roll."
+
+    **The third card on this trigger**, after Redirect and Rapid Riposte, and the
+    first that answers a miss with something other than damage. All three read what
+    they need off the attacker's stat block rather than off any position: those two
+    read the printed range band, and this one reads the printed **damage type**,
+    since "would deal physical damage" is a fact about the attack that never
+    landed.
+
+    "Until the next time you make an action roll" is the `WHEN_THEY_ATTACK` moment,
+    and this is the card that moment is **literally** right for - Cloaking Blast,
+    which it was built for, means "until you attack" and settles for this as an
+    approximation. Here the page and the loop say the same thing.
+
+    SIMULATION RULE - policy. The standing default for a rider costing a single
+    Hope: spent whenever the trigger fires and the PC is not already Hidden.
+    Holding it for a better miss would mean holding it for a miss that looks no
+    different, since nothing about the failed attack tells the PC what comes next.
+    """
+    if fight is None or not holder.can_spend_hope(1):
+        return
+    if fight.is_hidden(holder):
+        return
+    # Parsed before it is read - `Adversary.damage_type` is the string a catalogue
+    # entry wrote, and `includes` wants a resolved type. See `_casts_with_magic`,
+    # which had this wrong.
+    if not includes(damage_type_named(attacker.type_of_damage()), DamageType.PHYSICAL):
+        return
+
+    holder.spend_hope(1)
+    fight.apply_condition(
+        holder, Condition(name=HIDDEN, end=when_they_attack, source=holder)
+    )
+    fight.note(f"{holder.name} slips into shadow as the blow goes wide")
 
 
 # --- Assessed and dismissed --------------------------------------------------

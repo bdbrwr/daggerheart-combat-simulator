@@ -332,7 +332,7 @@ def _second_wind_restores(pc: Holder, fight: Fight) -> None:
     ],
 )
 def voice_of_reason(
-    holder: Holder, weapon, pool: DamagePool, fight: Fight = None
+    holder: Holder, weapon, pool: DamagePool, fight: Fight = None, roll=None
 ) -> DamagePool:
     """Voice of Reason (Splendor, level 3), second clause.
 

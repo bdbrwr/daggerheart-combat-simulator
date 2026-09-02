@@ -13,15 +13,18 @@ visible.
 
 ## Scope
 
-**Levels 1 to 6, all nine domains** - 117 cards, complete. That is every card a
-level 6 party of any class combination could hold, so a new party composition can
-be simulated without writing code first, and nothing in the slice is in the
-*unimplemented* state.
+**Levels 1 to 6, all nine domains** - 117 cards, complete - plus **level 7 for
+Arcana, Blade, Bone, Codex, Grace and Midnight**. That is every card a level 6
+party of any class combination could hold, so a new party composition can be
+simulated without writing code first. Level 7 is in progress: twelve of its
+eighteen are in, and the table below is the only place the remaining six are
+visible.
 
 The scope grew from levels 1-2, then to 3, then to 4, then to 5, then to 6, each
-time the previous one was finished. Cards are ported **by level** rather than by
-domain: a level is the slice a party actually occupies, and finishing one means no
-loadout at that level can name a card nobody has written.
+time the previous one was finished, and is now growing into 7. Cards are ported
+**by level** rather than by domain: a level is the slice a party actually
+occupies, and finishing one means no loadout at that level can name a card nobody
+has written.
 
 ## How porting works
 
@@ -195,6 +198,39 @@ its cards are real and representable and simply happen between fights, so they
 are on the sequenced-encounter list rather than dismissed. Level 6 has three
 cards in that state, which is more than any other level.
 
+## Level 7
+
+| Domain | Level 7 |
+|---|---|
+| **Arcana** | ✅ Arcana-Touched · ✅ Cloaking Blast |
+| **Blade** | ✅ Blade-Touched · ✅ Glancing Blow |
+| **Bone** | ✅ Bone-Touched · ✅ Cruel Precision |
+| **Codex** | ✅ Codex-Touched · 🚫 Book of Homet |
+| **Grace** | ✅ Grace-Touched · 🚫 Endless Charisma |
+| **Midnight** | ✅ Midnight-Touched · ✅ Vanishing Dodge |
+| **Sage** | ⬜ · ⬜ |
+| **Splendor** | ⬜ · ⬜ |
+| **Valor** | ⬜ · ⬜ |
+
+**10 modelled, 2 no effect, 6 outstanding.**
+
+**Level 7 is two thirds done.** Batches 21 (Arcana, Blade, Bone) and 22 (Codex,
+Grace, Midnight) cover twelve of eighteen; Sage, Splendor and Valor are untouched,
+so a level 7 party drawing from any of those three would name cards nobody has
+written. Until the level is finished, this table is the only place that gap is
+visible.
+
+**Every domain prints an *X*-Touched card at this level**, gated on holding four
+or more of that domain's cards in the loadout - so nine of the eighteen turn on
+the same question. The user ruled that carrying the card is taken as proof of the
+loadout rather than counting it (SIMULATION-RULES.md §1), which means the
+remaining three domains inherit an answer rather than each needing one.
+
+**Six of the six Touched cards so far are partial**, and always for the same
+reason: each prints a list of bonuses, and at least one entry in every list is a
+number a character sheet already carries. Blade's Severe threshold, Bone's
+Agility, Codex's vault swap - the pattern is the level's, not any one card's.
+
 ### Order it was done in
 
 
@@ -206,9 +242,14 @@ current party could actually swap to. Then the four that had no module at all:
 
 ### What's next
 
-**Levels 1 to 6 are complete.** Level 7 is the next slice, and every domain's page
-has been read several times now, so the printed-page check is a re-read rather
-than a hunt - levels 7 to 10 all sit on the pages already used.
+**Levels 1 to 6 are complete, and level 7 is two thirds done.** What remains of it
+is **Sage, Splendor and Valor** - six cards, one batch, which closes the level.
+Every domain's page has been read several times now, so the printed-page check is a
+re-read rather than a hunt, and levels 8 to 10 all sit on the pages already used.
+
+Three of those six are *X*-Touched cards, and their shared loadout gate is already
+ruled - so each one is really a short list of printed bonuses to file against the
+sheet-resolved-values rule.
 
 Level 6 cost less machinery than level 5: batch 18 cost nothing at all, batch 19
 cost two hooks and batch 20 cost one hook and one reader on the fight state, which
@@ -1110,6 +1151,154 @@ the qualifier as a gap was the obvious move and the user ruled against it: in a
 combat simulator everything that marks damage is an attack, a hurled fireball
 included. The reading is in `SIMULATION-RULES.md` §2 once rather than restated on
 every card that will want it.
+
+### Batch 21 — Arcana, Blade and Bone at level 7 (6 cards)
+
+The first of level 7. **Verified against the printed page** (SRD pp. 120-121 for
+Arcana's level 7 and Blade's, and p. 123 for Bone's - the same spread batch 18
+read for level 6).
+
+| Card | Disposition |
+|---|---|
+| **Arcana-Touched** (Ar 7) | Modelled, partial. +1 on Spellcast Rolls, plus a once-per-rest switch of the Hope and Fear Dice |
+| **Cloaking Blast** (Ar 7) | Modelled, partial. A Hope off a successful cast puts the caster out of reach until they next roll |
+| **Blade-Touched** (Bl 7) | Modelled, partial. +2 on attack rolls; the +4 Severe threshold is a value the sheet carries |
+| **Glancing Blow** (Bl 7) | Modelled, partial. A Stress turns a failed swing into weapon damage at half Proficiency |
+| **Bone-Touched** (Bn 7) | Modelled, partial. 3 Hope makes one landed attack fail; the +1 Agility is a value the sheet carries |
+| **Cruel Precision** (Bn 7) | Modelled, partial. Body Basher with the better of Finesse and Agility |
+
+**Level 7 is the *X*-Touched level**, and the batch's largest decision was not to
+build for it. Each of the nine cards is gated on "4 or more of the domain cards in
+your loadout are from the *X* domain", and nothing records which domain a card
+belongs to. Reading it off the module a card is defined in was proposed - the
+domain is already expressed by which file the card lives in - and the user ruled
+against the machinery: carrying the card is taken as proof the condition is met,
+since a player who takes it has built for it. It errs generous, it is declared as
+a gap on every Touched card, and the remaining six domains now inherit the answer.
+
+Three pieces of shared machinery:
+
+- **`spellcast_bonus`** - content that adds to a **Spellcast Roll** and nothing
+  else. `total_roll_bonus` is asked from `items/weapons.py` and
+  `content/spellcast.py` with nothing to tell the two apart, so Arcana-Touched's
+  "+1 to your Spellcast Rolls" registered there would have added itself to a
+  Wizard's Broadsword. One call site. It turned out to do second duty as the only
+  place content can learn that **a cast is happening at all**, which is what
+  Cloaking Blast reads for its trigger - `on_roll` fires for every action roll and
+  cannot tell a spell from a swing.
+- **`attack_failed`** - content on an **attacker** answering their own attack
+  failing, and the mirror of `attack_missed`. That hook belongs to whoever was
+  swung *at* - Redirect and Rapid Riposte both answer a miss made against you -
+  and is asked from the GM turn; this one is asked from `items/weapons.py`, where
+  a PC's own roll comes up short with the target still in hand. One word apart in
+  English and opposite in every other respect, so neither is folded into the other.
+- **`Condition.untargetable`**, with `FightState.cannot_be_targeted` and a filter
+  in `combat/policy.py`'s targeting rule. The exact opposite number of
+  `prevents_action`: one stops the holder acting, this stops anybody acting on
+  them.
+
+**Cloaking Blast is the first party content that reaches the GM's targeting
+rule.** Its printed text is line of sight and standing still, neither of which is
+tracked, so the user ruled the effect instead - and ruled it **stronger than
+Hidden**: while Cloaked the holder cannot be aimed at, where Hidden only hands
+rolls against them Disadvantage. Two things about it are worth carrying into any
+reading of the numbers. A cloak protects **an individual, not the party**: when
+every conscious PC is out of reach the targeting rule hands back the whole list
+rather than nothing, since an activation that finds nobody would need a rule the
+loop does not have. And the cloak breaks on **any** action roll rather than only
+an attack, because `made_an_attack` means "this action rolled" - which errs
+conservative, ending the cloak sooner than the page would.
+
+**Sage's Wild Fortress prints the same "can't be targeted" clause and keeps its
+declared gap.** The machinery to close it now exists, and closing it would be
+changing a ruling the user made separately rather than implementing this one.
+
+**Glancing Blow is the first card that pays out on the holder's own attack
+failing**, and it is Rapid Riposte's damage off the opposite trigger - the pool
+built through `adjust_damage_pool` so a Greatsword's *Massive* discards its lowest
+on a miss exactly as it would on a hit. Half a Proficiency **rounds up**, which is
+the user's rule and means the card can never come to no dice at all.
+
+**Two clauses were filed against the sheet rather than run**: Blade-Touched's +4
+Severe threshold, and Bone-Touched's +1 Agility. The second is the first *trait*
+to fall under the resolved-values rule, which until now had only covered
+thresholds, Evasion, Armor Score and slot counts.
+
+### Batch 22 — Codex, Grace and Midnight at level 7 (6 cards, 2 spells)
+
+**Verified against the printed page** (SRD p. 125 for Codex's level 7, p. 127 for
+Grace's, and p. 129 for Midnight's - all three on the right-hand page of their
+domain's spread, as batch 19 found for level 6).
+
+| Card | Disposition |
+|---|---|
+| **Codex-Touched** (Cx 7) | Modelled, partial. A Stress buys the caster's whole Proficiency on a Spellcast Roll, below a ceiling of 3 marked |
+| **Grace-Touched** (Gr 7) | Modelled, partial. An Armor Slot pays where a Stress would; an adversary's wound is taken as Stress instead |
+| **Midnight-Touched** (Mn 7) | Modelled, partial. A Hope instead of the GM's Fear at 0 Hope; a Stress adds the Fear Die to a landed swing |
+| **Vanishing Dodge** (Mn 7) | Modelled, partial. A failed physical attack buys Hidden until the PC's next action roll |
+| **Book of Homet** (Cx 7) | No combat effect - Pass Through and Plane Gate are both passage |
+| **Endless Charisma** (Gr 7) | No combat effect - dismissed on its trigger, a social action roll |
+
+Three pieces of shared machinery, and one signature change:
+
+- **`stress_instead_of_hp`** - party content that turns HP an adversary would mark
+  into Stress. Asked from `Adversary.take_damage` after both severity hooks and
+  before the marking, and party-wide, since the content belongs to a PC rather
+  than to whoever is being hit.
+- **`armor_instead_of_stress`** - content letting its holder pay a Stress cost with
+  an Armor Slot. The **second hook in the project asked with no `fight`**, for
+  `standard_damage_type`'s reason turned to the party's side: the answer is a
+  standing fact about a sheet, and `spend_stress` is called from dozens of places
+  that have no fight to pass.
+- **`fear_conversion`** - party content that stops the GM gaining a Fear. One call
+  site, in `_apply_duality_outcome` immediately before `gain_fear`, which is the
+  one place a PC's roll hands the GM anything. `apply_on_roll` fires a step earlier
+  and is only *told* how the roll came out.
+- **`damage_pool` now carries the attack roll**, defaulted to None. A mechanical
+  change touching its four existing registrants and three call sites.
+
+**Grace-Touched is the first card anywhere that reaches the *resource* a mark
+lands on** rather than its size, and it does it on both sides of the table at once
+- armor paying for the party's Stress, Stress paying for an adversary's HP. That
+is why it needed two hooks nothing else uses, and it is worth reading its numbers
+knowing the first clause touches **every** Stress cost on the sheet rather than
+one card.
+
+**Its second clause was the batch's real correction.** "When you would force a
+target to mark a number of Hit Points" was read as covering only effects that say
+"mark an HP" outright - of which the project has exactly one - and proposed as a
+gap on those grounds. The user's ruling is that it covers **damage**, which makes
+it a far larger card, with one scope: HP an adversary marks *willingly* for its own
+features is not somebody forcing it, so `will_spend_hp` is untouched. The general
+lesson is in SIMULATION-RULES.md beside the "everything that marks damage is an
+attack" row - do not narrow a trigger away from ordinary damage.
+
+**One mismatch is recorded rather than resolved.** Grace-Touched's HP-to-Stress
+policy was ruled partly on stressing an adversary out making them *Vulnerable*,
+and `Adversary.is_vulnerable` is always False here - nothing in the SRD makes an
+adversary Vulnerable of its own accord. The ruling stands as made and what it buys
+is still real: an adversary with no Stress free cannot pay for its Action features.
+
+**Midnight-Touched is the first card that stops the GM gaining a Fear.** Codex's
+*Sigil of Retribution* pays one over and several cards drain the pool by making
+the GM clear a condition; nothing had ever denied one at the moment it was
+generated. Its second clause is what put the attack roll on `damage_pool`: "the
+result of your Fear Die" is a **flat** amount that is only knowable from the roll,
+and of the two hooks that could otherwise answer, `extra_damage` sees the roll and
+can only return dice while `damage_pool` carried the modifier and could not see the
+roll.
+
+**Vanishing Dodge is the moment `WHEN_THEY_ATTACK` was really written for.**
+Cloaking Blast, which it was built for last batch, means "until you attack" and
+settles for "until your next action roll" as an approximation; this card prints
+"until the next time you make an action roll" exactly. It is also the third card on
+the missed-attack trigger after Redirect and Rapid Riposte, and the first to answer
+a miss with something other than damage.
+
+**Codex-Touched is the only Touched card whose bonus has a price**, and the only
+Stress cost in the project that does not ask `will_spend_stress` - the user ruled a
+ceiling of 3 marked instead, because a rider asked on *every* cast would otherwise
+run the track dry in a few spotlights.
 
 ## Consolidating `_spellcast`
 

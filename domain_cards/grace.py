@@ -36,6 +36,13 @@ Level 6 turns the domain inward. **Never Upstaged** banks the holder's own wound
 and pays them back five points apiece, and **Share the Burden** is the only card
 in the project that turns one resource straight into another - an ally's Stress
 becomes the caster's, and each slot moved is a Hope.
+
+Level 7 keeps doing that, in both directions at once. **Grace-Touched** lets an
+Armor Slot pay where a Stress would on the party's side, and turns an adversary's
+wound into Stress on the GM's - the first card anywhere to reach the *resource a
+mark lands on* rather than its size, which is why it needed two hooks nothing else
+uses. **Endless Charisma** is dismissed on its trigger, a social roll the
+simulator never makes.
 """
 
 import random
@@ -57,12 +64,14 @@ from content.registry import (
     Holder,
     action,
     adversary_target_override,
+    armor_instead_of_stress,
     damage_pool,
     free,
     hope_die_for,
     no_combat_effect,
     on_damaged,
     out_of_combat_ability,
+    stress_instead_of_hp,
 )
 from content.spellcast import spellcast
 from dice.d20 import roll_d20
@@ -630,7 +639,7 @@ def never_upstaged(holder: Holder, amount: int, hp_marked: int, fight: Fight) ->
     ],
 )
 def never_upstaged_repays(
-    holder: Holder, weapon, pool: DamagePool, fight: Fight = None
+    holder: Holder, weapon, pool: DamagePool, fight: Fight = None, roll=None
 ) -> DamagePool:
     """Never Upstaged, second half. Cash every token into the damage that just landed.
 
@@ -657,6 +666,114 @@ def never_upstaged_repays(
     bonus = tokens * NEVER_UPSTAGED_BONUS
     fight.note(f"{holder.name} answers in kind, cashing {tokens} for +{bonus} damage")
     return pool._replace(modifier=pool.modifier + bonus)
+
+
+# --- Grace-Touched ---------------------------------------------------------------
+
+GRACE_TOUCHED = "Grace-Touched"
+
+# An adversary this close to going down is finished rather than worn down: the HP
+# is what takes it off the field, and Stress does not. The user's ruling.
+GRACE_TOUCHED_FINISH_AT = 2
+
+TOUCHED_LOADOUT_GAP = (
+    "'When 4 or more of the domain cards in your loadout are from the Grace "
+    "domain' - the loadout is not counted. The user's ruling is that carrying the "
+    "card is taken as proof the condition is met, since a player who takes it has "
+    "built for it. Recorded as a simulation rule rather than checked"
+)
+
+
+@armor_instead_of_stress(
+    GRACE_TOUCHED,
+    unmodelled=[
+        TOUCHED_LOADOUT_GAP,
+        "Stress a PC is **forced** to mark - by Wild Flame, Troublemaker or an "
+        "adversary's feature - still overflows into an HP when the track is full, "
+        "rather than being paid with an Armor Slot. The substitution reaches "
+        "`spend_stress`, which is the voluntary cost, and not `mark_stress`, which "
+        "is the SRD's forced one. Whether 'instead of marking a Stress' covers "
+        "being made to mark one is genuinely ambiguous on the page, and this is "
+        "the narrower reading",
+    ],
+)
+def grace_touched(holder: Holder, amount: int = 1) -> bool:
+    """Grace-Touched (Grace, level 7), first clause.
+
+    SRD: "When 4 or more of the domain cards in your loadout are from the Grace
+    domain, gain the following benefits: you can mark an Armor Slot instead of
+    marking a Stress; when you would force a target to mark a number of Hit Points,
+    you can choose instead to force them to mark that number of Stress."
+
+    A standing permission rather than anything that fires, so this returns True and
+    lets `PlayerCharacter._pays_with_armor` decide when it is taken. **When** is
+    the user's ruling and lives there: only where the shared last-slot rule would
+    otherwise refuse the Stress, so armor is spent at the cliff rather than from
+    the first spotlight.
+
+    Worth knowing what that comes to across a sheet, since this reaches *every*
+    Stress cost the PC has rather than one card: a Grace character with armor free
+    keeps using Stress-priced cards past the point every other PC stops, and pays
+    for it in the resource that otherwise absorbs a hit per wound.
+    """
+    return True
+
+
+@stress_instead_of_hp(
+    GRACE_TOUCHED,
+    unmodelled=[
+        TOUCHED_LOADOUT_GAP,
+        "A hit worth more HP than the adversary has Stress slots free is split - "
+        "the slots fill and the remainder still marks HP. The card says 'that "
+        "number of Stress', which reads as all or nothing; the split follows the "
+        "user's ruling to fill Stress and then go back to HP, and never wastes "
+        "part of a hit",
+    ],
+)
+def grace_touched_converts(
+    caster: Holder, target, hp_to_mark: int, fight: Fight = None
+) -> int:
+    """Grace-Touched's second clause - a wound taken as Stress instead.
+
+    SIMULATION RULE - rules interpretation, ruled. **"Force a target to mark Hit
+    Points" covers damage.** Reading it as only the handful of effects that say
+    "mark an HP" outright - of which the project has one, Champion's Edge - was
+    proposed and the user corrected it: this is every HP the party causes an
+    adversary to mark. What it does not reach is HP an adversary spends *willingly*
+    on its own features, which is `will_spend_hp`'s business and nobody forcing
+    anything.
+
+    SIMULATION RULE - policy, ruled. Three states, in order:
+
+    * an adversary at `GRACE_TOUCHED_FINISH_AT` or fewer unmarked HP takes the
+      **HP**, because that is what ends it and Stress never will;
+    * otherwise, while it has Stress slots free, it takes the **Stress**;
+    * and once its track is full, back to HP.
+
+    Worth being plain about what the middle case buys here, because the reasoning
+    it was ruled on does not fully hold: an adversary's Stress pays for its Action
+    features and gates its desperation rule, so filling the track shuts those off -
+    but `Adversary.is_vulnerable` is **always False** in this simulator, so
+    stressing one out does *not* make it Vulnerable the way it would a PC. The
+    ruling stands as made; the Vulnerable half of it simply has nothing to land on
+    today.
+
+    Reads only what a player can see: the HP the hit is about to cost, and the
+    target's own tracks.
+    """
+    if fight is None or hp_to_mark <= 0:
+        return 0
+    if target.hp_unmarked <= GRACE_TOUCHED_FINISH_AT:
+        return 0
+
+    taking = min(hp_to_mark, target.stress_unmarked)
+    if taking <= 0:
+        return 0
+
+    fight.note(
+        f"{caster.name} turns {taking} of {target.name}'s wound into Stress"
+    )
+    return taking
 
 
 # --- Share the Burden --------------------------------------------------------
@@ -809,6 +926,19 @@ no_combat_effect(
     "in, which is the Floating Eye case exactly - and it makes no attack, grants "
     "no roll and touches nobody's numbers. At a table it is a scouting spell, and "
     "scouting is what happens before blades are out.",
+)
+
+no_combat_effect(
+    "Endless Charisma",
+    "After an action roll to persuade, lie, or garner favor, a Hope rerolls the "
+    "Hope or the Fear Die. The reroll itself is fully represented - it is exactly "
+    "Support Tank's mechanic, which the project already runs - so this is dismissed "
+    "on its **trigger** rather than on the size of its effect, the way Gifted "
+    "Tracker, Stealth Expertise and Know Thy Enemy are. The simulator makes attack "
+    "rolls, Spellcast Rolls and Reaction Rolls; persuading, lying and currying "
+    "favour are not among them, and the Presence Rolls it does make (Troublemaker, "
+    "Goad Them On) are taunts rather than any of the three. If a social or "
+    "negotiation step is ever added, this is a card waiting for it.",
 )
 
 out_of_combat_ability(

@@ -60,6 +60,7 @@ from .registry import (
     hope_die_for,
     remake_action_roll,
     total_roll_bonus,
+    total_spellcast_bonus,
 )
 
 __all__ = ["spellcast"]
@@ -105,7 +106,15 @@ def spellcast(
 
     helped = help_with_roll(caster, fight)
     modifier = (
-        caster.traits[rolling] + total_roll_bonus(caster, target, fight) + helped.bonus
+        caster.traits[rolling]
+        + total_roll_bonus(caster, target, fight)
+        # And content that adds to a **Spellcast Roll** and to nothing else -
+        # Arcana's Arcana-Touched. A hook of its own because `total_roll_bonus` is
+        # asked from the weapon swing too and cannot tell the two apart; see
+        # `spellcast_bonus`. This is also the one place content can learn that a
+        # cast is happening at all, which Cloaking Blast reads for its trigger.
+        + total_spellcast_bonus(caster, target, fight)
+        + helped.bonus
     )
     against = target.difficulty if difficulty is None else difficulty
     hope_die = hope_die_for(caster, fight)

@@ -26,6 +26,7 @@ from content import (
     death_move_prevented,
     extra_armor_slots,
     harden_damage,
+    marks_armor_instead_of_stress,
     party_damage_reduction,
     resistance_to,
     soften_damage,
@@ -242,6 +243,20 @@ class PlayerCharacter:
         Content asks the *holder*, never re-deriving this: the two sides answer
         differently (an adversary follows a desperation curve) and the caller
         should not have to know which kind of combatant it is holding.
+
+        **Content can offer a way round it**, and exactly one does: Grace's
+        *Grace-Touched* lets an Armor Slot pay where a Stress would. That is asked
+        through `_pays_with_armor` below rather than folded in here, so this stays
+        the one statement of the shared rule.
+        """
+        return self._standing_stress_rule(amount) or self._pays_with_armor(amount)
+
+    def _standing_stress_rule(self, amount: int) -> bool:
+        """The shared last-slot rule on its own, before any content reaches it.
+
+        Kept separate from `will_spend_stress` so that content offering a
+        substitute can ask what the rule *would* have said - which is the whole of
+        how the Armor Slot's scope is defined.
         """
         if not self.can_spend_stress(amount):
             return False
@@ -249,13 +264,42 @@ class PlayerCharacter:
             return True
         return self.is_near_death
 
+    def _pays_with_armor(self, amount: int) -> bool:
+        """Whether this Stress cost should come out of Armor Slots instead.
+
+        SIMULATION RULE - policy, ruled. Grace's *Grace-Touched* says only "you can
+        mark an Armor Slot instead of marking a Stress", with no rule for when. The
+        user's ruling scopes it to **exactly where the standing rule refuses**: the
+        substitution unlocks a cost the PC would otherwise decline rather than
+        replacing Stress generally, so armor keeps doing its job as the damage
+        sponge and is spent at the cliff instead of from the first spotlight.
+
+        Both refusals count, which is what makes the card worth carrying: the last
+        slot held back while the PC is healthy, and a Stress track that is already
+        full. A PC with no armor left simply has no substitute.
+        """
+        if self._standing_stress_rule(amount):
+            return False
+        if self.armor_unmarked < amount:
+            return False
+        return marks_armor_instead_of_stress(self, amount)
+
     def spend_stress(self, amount: int = 1) -> bool:
         """Pay a voluntary Stress cost; return whether it went through.
 
         Deliberately *not* gated on `will_spend_stress`: this is the payment, and
         whether the PC wants to make it is the caller's decision. Content that
         should hold the last slot back asks first.
+
+        **The Armor Slot substitution is not a willingness question**, which is why
+        it is honoured here rather than only in `will_spend_stress`. Several cards
+        call this directly without asking first - I Am Your Shield is one - and the
+        card says the slot may be marked *instead of* the Stress, so a PC whose
+        track is full pays and the cost goes through where it used to fail.
         """
+        if self._pays_with_armor(amount):
+            self.mark_armor_slot(amount)
+            return True
         if not self.can_spend_stress(amount):
             return False
         self.stress_marked += amount

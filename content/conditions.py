@@ -167,6 +167,20 @@ SILENCED = "Silenced"
 # than anything this name carries.
 SHELTERED = "Sheltered"
 
+# **Cloaked**, from Arcana's *Cloaking Blast*: a PC nobody can aim at until they
+# attack. Ruled by the user rather than read off the page, which describes staying
+# unseen when an adversary moves to where they would normally see you - line of
+# sight, which has no representation here. Their ruling is that it is **stronger
+# than Hidden**: where Hidden hands rolls against its holder Disadvantage, this
+# says the holder "cannot be targeted", full stop.
+#
+# So it is the first condition to use `untargetable`, and the first thing on the
+# party's side that reaches the GM's targeting rule at all. It is deliberately its
+# own name rather than a flavour of Hidden, because the two are worth different
+# amounts and a report should say which one is running. The user also flagged that
+# it is a Rogue feature elsewhere in the SRD, so a second registrant is expected.
+CLOAKED = "Cloaked"
+
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to
 # fire. The same vocabulary serves both, so a condition that costs something at a
@@ -174,6 +188,13 @@ SHELTERED = "Sheltered"
 WHEN_THEY_ACT = "when they act"
 ON_A_GM_TURN = "on a GM turn"
 BEFORE_AN_ACTION_ROLL = "before an action roll"
+
+# Narrower than WHEN_THEY_ACT, and announced only when the spotlight a PC just
+# spent actually contained an attack. Cloaking Blast needs the distinction - a
+# cloak survives a spotlight spent casting a shield or steadying an ally, and
+# breaks on the one spent swinging - and nothing else in the loop could tell the
+# two apart from inside a condition.
+WHEN_THEY_ATTACK = "when they attack"
 
 
 @dataclass(frozen=True)
@@ -241,6 +262,19 @@ class Condition:
     # weight the Green Ooze's `Slow` carries.
     prevents_action: bool = False
 
+    # Whether this condition puts its holder out of reach of being aimed at. Data
+    # rather than a callable, for `prevents_action`'s reason: it isn't something
+    # that *happens* at an announced moment but a standing fact about who an
+    # attacker may choose, read where that choice is made (`combat/policy.py`).
+    #
+    # Deliberately separate from `prevents_action` next door, which is its exact
+    # opposite number - one stops the holder acting, this stops anybody acting on
+    # them - and a condition can carry either without the other. Sage's *Wild
+    # Fortress* is the case that makes the pair worth having: its `SHELTERED`
+    # prints both halves, and only the first is modelled, which stays a declared
+    # gap on that card rather than being quietly closed here.
+    untargetable: bool = False
+
 
 def when_they_act(holder, fight, moment: str) -> bool:
     """Ends the next time the conditioned combatant takes the spotlight.
@@ -250,6 +284,32 @@ def when_they_act(holder, fight, moment: str) -> bool:
     it off - which is the point of being knocked over.
     """
     return moment == WHEN_THEY_ACT
+
+
+def when_they_attack(holder, fight, moment: str) -> bool:
+    """Ends the next time the conditioned PC's spotlight contains an action roll.
+
+    The SRD's "until you make an attack", which Cloaking Blast prints - and the
+    name says what the card means rather than what the loop can see. **The loop
+    cannot tell an attack roll from any other action roll**: `made_an_attack` on
+    an `AttackResult` means "this action rolled", and Healing Hands, Invisibility
+    and Zone of Protection all roll without attacking anybody. So a spotlight
+    spent on one of those breaks the cloak too, which is declared as a gap where
+    the content registers. It errs the conservative way - the cloak ends sooner
+    than the page would have it, never later.
+
+    It is still narrower than `when_they_act` next door, which fires on every
+    spotlight including one spent entirely on free abilities.
+
+    **Announced before a spotlight's outcome is spent**, which is what makes a
+    cloak applied *by* that outcome survive the spotlight it was applied on. The
+    order in `combat/fight.py` is: the move resolves, this moment is announced,
+    and only then does `apply_on_roll` run - so Cloaking Blast, whose trigger is
+    the roll having succeeded, always cloaks after the announcement rather than
+    into it. Without that ordering a cloak raised off an attack spell would end on
+    the very attack that raised it.
+    """
+    return moment == WHEN_THEY_ATTACK
 
 
 def until_they_clear_hp(marked_when_applied: int):

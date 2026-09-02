@@ -14,13 +14,29 @@ Cards from this domain that can't affect a fight are declared at the bottom.
 Level 6's **Telekinesis** is the first card anywhere that prints two rolls inside
 one action - see its docstring for why the second is rolled plainly rather than
 through `content/spellcast.py`.
+
+Level 7 is where every domain prints an *X*-Touched card, gated on holding four
+or more of that domain's cards. **Arcana-Touched** is the first, and the user's
+ruling is that carrying the card is taken as proof of the loadout - see
+SIMULATION-RULES.md. **Cloaking Blast** is the first party content anywhere that
+reaches the GM's *targeting* rule: its Cloaked condition says its holder cannot
+be aimed at, which is a stronger thing than Hidden and needed
+`Condition.untargetable` to say at all.
 """
 
 import random
+from dataclasses import replace
 
 from combat.results import AttackResult
 from content.aoe import Range, area_difficulty, targets_beaten, targets_in_area
-from content.conditions import ON_FIRE, WHEN_THEY_ACT, Condition, when_the_gm_pays
+from content.conditions import (
+    CLOAKED,
+    ON_FIRE,
+    WHEN_THEY_ACT,
+    Condition,
+    when_the_gm_pays,
+    when_they_attack,
+)
 from content.damage_types import DamageType, types_in
 from content.registry import (
     Fight,
@@ -30,12 +46,15 @@ from content.registry import (
     hope_die_for,
     move_rescind,
     no_combat_effect,
+    on_roll,
+    reroll,
+    spellcast_bonus,
     total_extra_damage,
 )
 from content.spellcast import spellcast
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
-from dice.duality import roll_duality
+from dice.duality import DualityOutcome, roll_duality
 
 # --- Rune Ward ---------------------------------------------------------------
 
@@ -895,6 +914,205 @@ def telekinesis(caster: Holder, target, fight: Fight) -> AttackResult | None:
     return AttackResult(
         attack_roll=grab, damage_roll=damage_roll, hp_marked=marked
     )
+
+
+# --- Arcana-Touched --------------------------------------------------------------
+
+ARCANA_TOUCHED = "Arcana-Touched"
+
+ARCANA_TOUCHED_SPELLCAST = 1
+
+# The gap every *X*-Touched card carries, written once here and repeated on the
+# other two in this batch. See SIMULATION-RULES.md for the ruling.
+TOUCHED_LOADOUT_GAP = (
+    "'When 4 or more of the domain cards in your loadout are from this domain' - "
+    "the loadout is not counted. The user's ruling is that carrying the card is "
+    "taken as proof the condition is met, since a player who takes it has built "
+    "for it. Recorded as a simulation rule rather than checked, and it errs "
+    "generous: a sheet naming the card in a mixed loadout runs it anyway"
+)
+
+
+@spellcast_bonus(ARCANA_TOUCHED, unmodelled=[TOUCHED_LOADOUT_GAP])
+def arcana_touched(caster: Holder, target, fight: Fight = None) -> int:
+    """Arcana-Touched (Arcana, level 7), first clause.
+
+    SRD: "When 4 or more of the domain cards in your loadout are from the Arcana
+    domain, gain the following benefits: +1 bonus to your Spellcast Rolls; once
+    per rest, you can switch the results of your Hope and Fear Dice."
+
+    **Spellcast Rolls and nothing else**, which is why this is on a hook of its
+    own rather than on `roll_bonus`: that one is asked from the weapon swing too,
+    and an Arcana caster who picks up a Broadsword should not be swinging it at
+    +1. See `spellcast_bonus`.
+
+    No policy - it costs nothing, has no limit and is simply on.
+    """
+    return ARCANA_TOUCHED_SPELLCAST
+
+
+@reroll(
+    ARCANA_TOUCHED,
+    unmodelled=[
+        TOUCHED_LOADOUT_GAP,
+        "The **die sizes** are not swapped with the results, only the results "
+        "themselves, which is what the card says. It can only matter alongside "
+        "Bone's Signature Move, the one thing that makes the two dice different "
+        "sizes - and there the swap is still safe, since a roll with Fear has the "
+        "smaller number on the Hope Die",
+    ],
+)
+def arcana_touched_switches(
+    holder: Holder, roller: Holder, roll, remake, fight: Fight = None
+):
+    """Arcana-Touched's second clause - the Hope and Fear Dice traded over.
+
+    SRD: "Once per rest, you can switch the results of your Hope and Fear Dice."
+
+    **The total does not move**, since it is the two dice added together, so
+    whether the roll succeeded is untouched. What changes is the *outcome*: a roll
+    with Fear becomes a roll with Hope. That is worth more than it looks - it
+    decides whether the PC banks a Hope or the GM banks a Fear, and whether the
+    party keeps the spotlight at all.
+
+    Registered on the `reroll` hook because that is the one place a resolved roll
+    can be replaced, and `remake` is deliberately unused: this is Support Tank's
+    shape, rewriting fields of the roll that was made rather than throwing fresh
+    dice. Scoped to its own holder with `holder is roller` - the card says *your*
+    dice.
+
+    SIMULATION RULE - policy, ruled. Spent on a **successful** roll with Fear.
+    That is where the switch buys the most: the party keeps the spotlight *and*
+    the Hope goes to the PC instead of the Fear going to the GM. Spending it on
+    any roll with Fear was offered and declined - on a failure the spotlight
+    passes regardless, so the switch is worth one Hope and one Fear rather than a
+    whole extra action for the party.
+    """
+    if fight is None or holder is not roller or roll is None:
+        return None
+    if not roll.is_success or roll.outcome is not DualityOutcome.FEAR:
+        return None
+    if not fight.use_once_per_rest(holder, ARCANA_TOUCHED):
+        return None
+
+    switched = replace(
+        roll,
+        hope_die_result=roll.fear_die_result,
+        fear_die_result=roll.hope_die_result,
+    )
+    fight.note(
+        f"{holder.name} switches their dice; the roll comes up with Hope ({switched})"
+    )
+    return switched
+
+
+# --- Cloaking Blast --------------------------------------------------------------
+
+CLOAKING_BLAST = "Cloaking Blast"
+
+# Set while a cast is in flight, so the on-roll hook can tell a Spellcast Roll
+# from a weapon swing - which is the only thing it needs and the only thing it
+# cannot otherwise see. Cleared by that hook whichever way the roll came out.
+CASTING = "Cloaking Blast cast in flight"
+
+
+@spellcast_bonus(CLOAKING_BLAST)
+def cloaking_blast_watches(caster: Holder, target, fight: Fight = None) -> int:
+    """Marks that a Spellcast Roll is being made, and adds nothing to it.
+
+    A bonus hook used as a *notice*, which is worth being plain about: this is
+    asked from `content/spellcast.py` and nowhere else, so being asked is exactly
+    the fact the card's trigger needs - "when you make a successful Spellcast Roll
+    to cast a different spell". `on_roll` fires for every action roll a PC makes
+    and could not tell a cast from a swing.
+
+    Returns 0 always. The card grants no bonus; it only needs to know.
+
+    "A **different** spell" comes for free: Cloaking Blast is a rider rather than
+    a spell of its own, so it never casts anything and the roll being watched is
+    always somebody else's spell.
+    """
+    if fight is not None:
+        fight.set_token(caster, CASTING, 1)
+    return 0
+
+
+@on_roll(
+    CLOAKING_BLAST,
+    unmodelled=[
+        "'You remain unseen if you are stationary when an adversary moves to "
+        "where they would normally see you', and 'when you move into or within "
+        "an adversary's line of sight' - both halves are position and line of "
+        "sight, neither of which is tracked. What is modelled is the user's "
+        "ruling on what being Cloaked is worth: the holder cannot be targeted "
+        "until they attack",
+        "A cloak on the **whole party** at once would leave an adversary with "
+        "nobody to swing at; `combat/policy.py` hands back the full list rather "
+        "than nothing, so the last cloak in such a party protects nobody. No card "
+        "can reach that state today",
+        "A move taken back by Premonition never reaches this hook, so the token "
+        "the cast left behind survives into the second attempt - a rescinded cast "
+        "followed by a weapon swing would cloak off the swing",
+        "'When you ... make an attack, you are no longer Cloaked' is read as any "
+        "spotlight that resolved into an **action roll**, because that is all the "
+        "loop can see - `AttackResult.made_an_attack` means 'this action rolled'. "
+        "So a spotlight spent on Healing Hands or Zone of Protection breaks the "
+        "cloak as well as one spent swinging. It errs the conservative way: the "
+        "cloak ends sooner than the page would have it, never later",
+    ],
+)
+def cloaking_blast(holder: Holder, roll, fight: Fight) -> None:
+    """Cloaking Blast (Arcana, level 7). A Hope buys a spell-caster one turn unseen.
+
+    SRD: "When you make a successful Spellcast Roll to cast a different spell, you
+    can spend a Hope to become *Cloaked*. While Cloaked, you remain unseen if you
+    are stationary when an adversary moves to where they would normally see you.
+    When you move into or within an adversary's line of sight or make an attack,
+    you are no longer Cloaked."
+
+    SIMULATION RULE - rules interpretation, ruled. **Cloaked means the holder
+    cannot be targeted**, until their next attack. The printed text is line of
+    sight and standing still, neither of which has any representation here, so the
+    user ruled the effect rather than the fiction - and ruled it **stronger than
+    Hidden**, which the simulator already models as Disadvantage on rolls against
+    its holder. It is the first thing on the party's side to reach the GM's
+    targeting rule, through `Condition.untargetable`.
+
+    SIMULATION RULE - policy. The Hope is spent whenever there is one to spend and
+    no cloak already stands, which is the standing default for a rider with a
+    single-Hope cost - Forceful Push's rule. No threshold of its own: one Hope for
+    a GM turn out of reach is not the shape of price Life Ward's gate exists for,
+    and there is no later cast worth saving it for.
+
+    The cloak is applied **after** the moment that would break it is announced -
+    see `combat/fight.py` - so a cloak raised off an attack spell survives that
+    spell and breaks on the caster's next action roll. What counts as "an attack"
+    there is the loop's approximation rather than the card's word; the gap above
+    says so.
+    """
+    if fight is None or not fight.token_count(holder, CASTING):
+        return
+
+    # Cleared whichever way the roll went, so a failed cast cannot leave a mark
+    # that a later weapon swing would read as a cast of its own.
+    fight.set_token(holder, CASTING, 0)
+
+    if roll is None or not roll.is_success:
+        return
+    if fight.has_condition(holder, CLOAKED) or not holder.can_spend_hope(1):
+        return
+
+    holder.spend_hope(1)
+    fight.apply_condition(
+        holder,
+        Condition(
+            name=CLOAKED,
+            end=when_they_attack,
+            source=holder,
+            untargetable=True,
+        ),
+    )
+    fight.note(f"{holder.name} spends a Hope and vanishes behind their own spell")
 
 
 # --- Assessed and dismissed --------------------------------------------------
