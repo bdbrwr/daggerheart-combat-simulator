@@ -34,10 +34,13 @@ RELIABLE_BONUS = 1
 
 
 @roll_bonus(qualified(WEAPON, "Reliable"))
-def reliable(attacker: Holder, target, fight: Fight) -> int:
+def reliable(attacker: Holder, target, fight: Fight, trait: str = "") -> int:
     """*Reliable*: +1 to attack rolls.
 
     Scoped to the weapon, so this reaches attacks made with it and nothing else.
+
+    `trait` is unused: the bonus belongs to the weapon and applies to every swing
+    of it, whichever trait the catalogue says it is swung with.
     """
     return RELIABLE_BONUS
 

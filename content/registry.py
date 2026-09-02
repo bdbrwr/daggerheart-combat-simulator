@@ -172,6 +172,13 @@ class Holder(Protocol):
     # adversary by its desperation curve - which is exactly why content asks the
     # holder rather than working it out.
     def will_spend_stress(self, amount: int = 1) -> bool: ...
+
+    # Stress a holder is *made* to mark, as opposed to chooses to pay. The two are
+    # different moves and the difference bites: a forced mark that won't fit falls
+    # through to HP on the party's side, where a voluntary cost simply cannot be
+    # paid. Sage's *Wild Surge* charges one on the way out of the form.
+    def mark_stress(self, amount: int = 1) -> None: ...
+
     def clear_stress(self, amount: int) -> None: ...
     def gain_hope(self, amount: int) -> None: ...
     def can_spend_hope(self, amount: int = 1) -> bool: ...
@@ -1609,16 +1616,27 @@ def difficulty_bonus(name: str, unmodelled: Iterable[str] = ()):
 def on_damaged(name: str, unmodelled: Iterable[str] = ()):
     """Register content that fires when its holder has just taken damage.
 
-    Signature: `(holder, amount, hp_marked, fight) -> None`. Distinct from
-    `severity_response` and `severity_increase`, which are asked *while* a hit is
-    being worked out and return the HP it should cost. This fires afterwards,
-    when the marking is done, for content that reacts rather than adjusts - the
-    Acid Burrower spraying blood on a Severe hit, the Construct exploding on its
-    last HP.
+    Signature: `(holder, amount, hp_marked, fight, marked_armor) -> None`.
+    Distinct from `severity_response` and `severity_increase`, which are asked
+    *while* a hit is being worked out and return the HP it should cost. This
+    fires afterwards, when the marking is done, for content that reacts rather
+    than adjusts - the Acid Burrower spraying blood on a Severe hit, the
+    Construct exploding on its last HP.
 
     Both the raw `amount` and the `hp_marked` it came to are passed, because the
     SRD triggers on both kinds: "takes Severe damage" is about the number rolled,
     "marks 2 or more HP" is about what it cost.
+
+    `marked_armor` says whether an **Armor Slot went in against this hit**, and it
+    is here because Valor's *Valor-Touched* triggers on the absence of one: "when
+    you mark 1 or more Hit Points **without marking an Armor Slot**, clear an Armor
+    Slot". Nothing else could answer it - by the time this hook runs the marking is
+    over, and reading `armor_unmarked == 0` afterwards gets it wrong for direct
+    damage, where slots are free and none was spent.
+
+    **Always False on the GM's side**, since adversaries have no Armor Slots at
+    all. Defaulted on every registrant, so the ten adversary features and the two
+    party cards that ignore it were untouched when it was added.
     """
 
     def register(function: Callable) -> Callable:
@@ -1849,9 +1867,22 @@ def hope_die(name: str, unmodelled: Iterable[str] = ()):
 def roll_bonus(name: str, unmodelled: Iterable[str] = ()):
     """Register content that adds to an action roll before it's made.
 
-    Signature: `(holder, target, fight) -> int`. Like `hope_die`, being asked is
-    the commitment - the roll follows immediately - so content that spends a
-    resource here has genuinely spent it.
+    Signature: `(holder, target, fight, trait) -> int`. Like `hope_die`, being
+    asked is the commitment - the roll follows immediately - so content that
+    spends a resource here has genuinely spent it.
+
+    `trait` is which of the holder's traits the roll is being made with, and it
+    is here for the reason `damage_pool` grew a `roll`: the SRD writes bonuses
+    that apply to one kind of roll rather than to all of them, and Sage's
+    *Sage-Touched* ("double your Agility or Instinct on a roll that uses that
+    trait") cannot be written at all without knowing which. Every call site names
+    it; content that doesn't care ignores it, which is all four of the existing
+    registrants.
+
+    **Duality rolls only**, and that is not a restriction so much as where this
+    hook already lived: it is asked from the PC-side roll sites and nowhere else,
+    and an adversary's d20 has no trait behind it to name. Defaulted on each
+    registrant, so a caller that has nothing to say passes nothing.
     """
 
     def register(function: Callable) -> Callable:
@@ -2442,7 +2473,9 @@ def hope_die_for(holder: Holder, fight: Fight) -> int:
     return DEFAULT_HOPE_DIE
 
 
-def total_roll_bonus(holder: Holder, target, fight: Fight, names=None) -> int:
+def total_roll_bonus(
+    holder: Holder, target, fight: Fight, names=None, trait: str = ""
+) -> int:
     """Everything that adds to this action roll, summed.
 
     Consulted at the moment the roll is made, by whichever option was chosen -
@@ -2455,13 +2488,18 @@ def total_roll_bonus(holder: Holder, target, fight: Fight, names=None) -> int:
     with the Broadsword, and summing it holder-wide would quietly add it to a
     Wizard's spell attacks too. So an attack passes the weapon's own feature
     names here, and calls this twice - once holder-wide, once for the weapon.
+
+    `trait` is which trait the roll is being made with, passed on unchanged to
+    every registrant - see `roll_bonus`. It is the same string the roll site
+    hands `roll_duality`, so a bonus and the roll it lands on can never disagree
+    about what is being rolled.
     """
     _discover()
     total = 0
     for name in holder.named_features if names is None else names:
         contribute = _registered(_roll_bonuses, name)
         if contribute is not None:
-            total += contribute(holder, target, fight)
+            total += contribute(holder, target, fight, trait)
     return total
 
 
@@ -3341,17 +3379,23 @@ def standard_attack_area(holder, fight=None):
     return None
 
 
-def apply_on_damaged(holder, amount: int, hp_marked: int, fight=None) -> None:
+def apply_on_damaged(
+    holder, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+) -> None:
     """Let content react to `holder` having just taken a hit.
 
     Called by both sides' `take_damage` once the marking is settled, so a feature
     keyed on "marks their last HP" sees the holder already down.
+
+    `marked_armor` says whether an Armor Slot went in against this hit, which only
+    the pipeline that marked it can know - see `on_damaged`. Defaulted to False,
+    which is the permanent answer on the GM's side: adversaries have no slots.
     """
     _discover()
     for name in holder.named_features:
         respond = _registered(_on_damaged, name)
         if respond is not None:
-            respond(holder, amount, hp_marked, fight)
+            respond(holder, amount, hp_marked, fight, marked_armor)
 
 
 def apply_on_attacked(

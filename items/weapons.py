@@ -174,7 +174,16 @@ def attack_with(
         # than quietly rolling a flat zero.
         attacker.traits[weapon.trait]
         + bonus
-        + total_roll_bonus(attacker, target, fight, names=weapon.named_features)
+        # The weapon's trait goes through to content as well as into the roll, so
+        # a card keyed on the trait being rolled - Sage's Sage-Touched - sees the
+        # same string the dice were thrown on.
+        + total_roll_bonus(
+            attacker,
+            target,
+            fight,
+            names=weapon.named_features,
+            trait=weapon.trait,
+        )
         # Content the *helper* carries - the Bone card Tactician lends one of its
         # own Experiences. A flat add, so it folds in here rather than into the
         # help pool, which resolves to its single best die.
@@ -188,6 +197,7 @@ def attack_with(
             advantage_state=advantage_state,
             hope_die=hope_die,
             help_dice=help_offered.dice,
+            trait=weapon.trait,
         )
 
     # Content that can re-make a resolved roll gets its say before anything

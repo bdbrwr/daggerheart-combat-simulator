@@ -403,14 +403,17 @@ def boost(holder: Holder, target, fight: Fight) -> AttackResult | None:
     holder.spend_stress(1)
     fight.note(f"{holder.name} boosts off an ally and comes down on {target.name}")
 
+    weapon = find_weapon(carried)
     fight.set_token(holder, BOOST_AERIAL, 1)
     try:
         return attack_with(
             holder,
-            find_weapon(carried),
+            weapon,
             target,
             AdvantageState.ADVANTAGE,
-            total_roll_bonus(holder, target, fight),
+            # Resolved off the weapon so the roll bonus is told which trait the
+            # swing rolls, the way `combat/policy.py`'s own weapon option is.
+            total_roll_bonus(holder, target, fight, trait=weapon.trait),
             total_damage_bonus(holder, target, fight),
             hope_die_for(holder, fight),
             fight,

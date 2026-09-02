@@ -321,6 +321,7 @@ def _reaction_roll(combatant, trait: str, difficulty: int, fight=None):
         advantage_state=(
             AdvantageState.DISADVANTAGE if disadvantaged else AdvantageState.NONE
         ),
+        trait=trait,
     )
 
 
@@ -582,7 +583,9 @@ ACID_BATH = qualified(ADVERSARY, "Acid Bath")
         "through anything",
     ],
 )
-def acid_bath(adversary, amount: int, hp_marked: int, fight=None) -> None:
+def acid_bath(
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+) -> None:
     """When this adversary takes Severe damage, everyone Close takes 1d10.
 
     SRD: "When the Burrower takes Severe damage, all creatures within Close range
@@ -797,7 +800,9 @@ RAMPAGING_FURY = qualified(ADVERSARY, "Rampaging Fury")
         "stands in for it",
     ],
 )
-def rampaging_fury(adversary, amount: int, hp_marked: int, fight=None) -> None:
+def rampaging_fury(
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+) -> None:
     """When this adversary marks 2 or more HP, rampage for 2d6+3 direct damage.
 
     SRD: "When the Ogre marks 2 or more HP, they can rampage. Move the Ogre to a
@@ -916,7 +921,9 @@ DEATH_QUAKE = qualified(ADVERSARY, "Death Quake")
 
 
 @on_damaged(DEATH_QUAKE)
-def death_quake(adversary, amount: int, hp_marked: int, fight=None) -> None:
+def death_quake(
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+) -> None:
     """When this adversary marks their last HP, explode for 1d12+2 at Very Close.
 
     SRD: "When the Construct marks their last HP, the magic powering them ruptures
@@ -1055,7 +1062,9 @@ def grab_and_drag(adversary, target, fight: Fight):
 
 
 @on_damaged(GRAB_AND_DRAG)
-def grab_and_drag_releases(adversary, amount: int, hp_marked: int, fight=None) -> None:
+def grab_and_drag_releases(
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+) -> None:
     """Severe damage to this adversary frees whoever it was holding.
 
     SRD: "Restrain them until the Defender takes Severe damage" - the printed way
@@ -1298,7 +1307,9 @@ MINION = qualified(ADVERSARY, "Minion")
         "dealt it - so a splash from another adversary would spread the same way",
     ],
 )
-def minion(adversary, amount: int, hp_marked: int, fight=None) -> None:
+def minion(
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+) -> None:
     """For every X damage dealt to this Minion, another of them goes down too.
 
     SRD: "The Rat is defeated when they take any damage. For every 3 damage a PC
@@ -2386,7 +2397,9 @@ def hold_them_down(adversary, target, fight: Fight):
 
 
 @on_damaged(HOLD_THEM_DOWN)
-def hold_them_down_releases(adversary, amount: int, hp_marked: int, fight=None) -> None:
+def hold_them_down_releases(
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+) -> None:
     """Major damage to this adversary frees everyone it was holding.
 
     Keyed on the damage *rolled* reaching the Major threshold, which is what
@@ -3267,7 +3280,9 @@ def envelop(adversary, target, fight: Fight):
 
 
 @on_damaged(ENVELOP)
-def envelop_releases(adversary, amount: int, hp_marked: int, fight=None) -> None:
+def envelop_releases(
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+) -> None:
     """Severe damage to this adversary frees whoever it has swallowed.
 
     "If the Ooze takes Severe damage, the target is freed" - the printed way out,
@@ -3299,7 +3314,9 @@ SPLIT_COUNT = 2
 
 
 @on_damaged(SPLIT)
-def split(adversary, amount: int, hp_marked: int, fight=None) -> None:
+def split(
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+) -> None:
     """At 3 marked HP, spend a Fear to become two fresh copies of something smaller.
 
     SRD: "When the Ooze has 3 or more HP marked, you can spend a Fear to split
@@ -3966,7 +3983,9 @@ DIG_TWO_GRAVES_HOPE_DIE = 4
         "declares",
     ],
 )
-def dig_two_graves(adversary, amount: int, hp_marked: int, fight=None) -> None:
+def dig_two_graves(
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+) -> None:
     """When this adversary is defeated, it swings once more for 1d4+8 and 1d4 Hope.
 
     SRD: "When the Knight is defeated, they make an attack against a target
@@ -4593,7 +4612,9 @@ def encumber(adversary, target, result, fight: Fight) -> None:
 
 
 @on_damaged(ENCUMBER)
-def encumber_releases(adversary, amount: int, hp_marked: int, fight=None) -> None:
+def encumber_releases(
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+) -> None:
     """Major damage to this adversary shakes every bramble token loose.
 
     "Or dealing Major or greater damage to the Swarm" - the other printed way

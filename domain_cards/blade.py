@@ -650,7 +650,9 @@ BLADE_TOUCHED_ATTACK = 2
         "at most one card from anywhere else",
     ],
 )
-def blade_touched(holder: Holder, target, fight: Fight = None) -> int:
+def blade_touched(
+    holder: Holder, target, fight: Fight = None, trait: str = ""
+) -> int:
     """Blade-Touched (Blade, level 7), the clause that isn't already on the sheet.
 
     SRD: "When 4 or more of the domain cards in your loadout are from the Blade
@@ -660,6 +662,11 @@ def blade_touched(holder: Holder, target, fight: Fight = None) -> int:
     No policy - it costs nothing, has no limit and is simply on. **+2 is the
     largest flat attack bonus any ported card grants**, which is a fact about the
     printed number rather than a claim about what it will do to a fight.
+
+    `trait` is unused. The card says *attack rolls*, which is a kind of roll
+    rather than a trait, so knowing which trait is being swung says nothing about
+    whether the bonus applies - the gap declared above is about telling an attack
+    from a cast, and the trait cannot tell them apart either.
     """
     return BLADE_TOUCHED_ATTACK
 

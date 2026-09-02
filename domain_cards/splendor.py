@@ -51,6 +51,7 @@ from content.registry import (
     on_hit,
     out_of_combat_ability,
     reroll,
+    severity_response,
     total_extra_damage,
 )
 from content.spellcast import spellcast
@@ -119,6 +120,7 @@ def healing_hands(caster: Holder, target, fight: Fight) -> AttackResult | None:
         difficulty=HEALING_HANDS_DIFFICULTY,
         hope_die=hope_die_for(caster, fight),
         help_dice=helped.dice,
+        trait=trait,
     )
     caster.spend_stress(1)
     cleared = 2 if roll.is_success else 1
@@ -860,6 +862,165 @@ def zone_of_protection_soaks(
         fight.set_token(caster, ZONE_DIE, value + 1)
         fight.note(f"The zone soaks {value} for {target.name}")
     return value
+
+
+# --- Healing Strike --------------------------------------------------------------
+
+HEALING_STRIKE = "Healing Strike"
+
+HEALING_STRIKE_HOPE = 2
+
+
+@on_hit(
+    HEALING_STRIKE,
+    unmodelled=[
+        "'an ally within Close range' - no positions are tracked, so the area "
+        "rule decides whether the ally is reached, rolled per trigger the way "
+        "Bone's Boost rolls for its own ally check",
+        "A card whose success is a **condition** rather than damage never reaches "
+        "this hook - `on_hit` is asked where a landed attack rolled damage - so a "
+        "Splendor PC who Shadowbinds heals nobody. The same gap Champion's Edge "
+        "and Rousing Strike declare",
+    ],
+)
+def healing_strike(attacker: Holder, target, result, fight: Fight) -> None:
+    """Healing Strike (Splendor, level 7). Two Hope turns a blow into a heal.
+
+    SRD: "When you deal damage to an adversary, you can spend 2 Hope to clear a
+    Hit Point on an ally within Close range."
+
+    Keyed on **damage dealt**, not on HP marked, exactly as the card says - so a
+    hit an adversary's thresholds swallowed still pays for the heal.
+
+    SIMULATION RULE - policy, ruled. **Healing Hands' floor**: the Hope is spent
+    only on an ally at `HURT_ENOUGH_TO_HEAL` or fewer unmarked HP, and it goes to
+    the worst off of them - the same two rules that card follows, read here rather
+    than a third number that could drift. Two Hope is most of a pool and a Hit
+    Point cleared off somebody at full health buys nothing the fight can measure.
+
+    An ally with no HP marked is skipped even at the floor, since `clear_hp` on a
+    clean track is the benefit-computes-to-zero case.
+    """
+    if fight is None or result is None or result.damage_roll is None:
+        return
+    if not attacker.can_spend_hope(HEALING_STRIKE_HOPE):
+        return
+
+    allies = [pc for pc in fight.conscious_party if pc is not attacker]
+    hurt = [
+        pc
+        for pc in allies
+        if pc.hp_marked > 0 and pc.hp_unmarked <= HURT_ENOUGH_TO_HEAL
+    ]
+    if not hurt:
+        return
+    # Drawn from only once there is somebody worth healing, so a party with
+    # nobody hurt never shifts the dice for the rest of the fight.
+    if random.random() >= chance_within(Range.CLOSE, len(allies)):
+        return
+
+    patient = min(hurt, key=lambda pc: pc.hp_unmarked)
+    attacker.spend_hope(HEALING_STRIKE_HOPE)
+    patient.clear_hp(1)
+    fight.note(
+        f"{attacker.name}'s blow feeds {patient.name}, clearing a Hit Point"
+    )
+
+
+# --- Splendor-Touched ------------------------------------------------------------
+
+SPLENDOR_TOUCHED = "Splendor-Touched"
+
+TOUCHED_LOADOUT_GAP = (
+    "'When 4 or more of the domain cards in your loadout are from the Splendor "
+    "domain' - the loadout is not counted. The user's ruling is that carrying the "
+    "card is taken as proof the condition is met, since a player who takes it has "
+    "built for it. Recorded as a simulation rule rather than checked"
+)
+
+
+@severity_response(
+    SPLENDOR_TOUCHED,
+    unmodelled=[
+        TOUCHED_LOADOUT_GAP,
+        "'+3 bonus to your Severe damage threshold' - a character sheet carries "
+        "its damage thresholds **already resolved**, so running the bonus here "
+        "would count it twice. The same reason Blade's Fortified Armor and Valor's "
+        "Rise Up are declared",
+        "HP marked by anything other than **damage** is out of reach. This hook is "
+        "asked from `take_damage` and nowhere else, so a PC whose HP is marked by "
+        "Stress that wouldn't fit, or by a feature saying 'mark an additional HP' "
+        "outright, cannot convert it - which is what the card's own 'incoming "
+        "damage' says anyway",
+    ],
+)
+def splendor_touched(
+    holder: Holder, amount: int, hp_to_mark: int, fight=None, damage_type=None
+) -> int:
+    """Splendor-Touched (Splendor, level 7). One wound taken somewhere else.
+
+    SRD: "When 4 or more of the domain cards in your loadout are from the Splendor
+    domain, gain the following benefits: +3 bonus to your Severe damage threshold;
+    once per long rest, when incoming damage would require you to mark a number of
+    Hit Points, you can choose to mark that much Stress or spend that much Hope
+    instead."
+
+    **The party-side mirror of Grace-Touched**, which turns HP an adversary would
+    mark into Stress. This is the same idea pointed at its own holder, and it
+    needed no new machinery: `severity_response` is already asked with the HP a hit
+    is about to cost, so the card pays the price itself and returns nothing left to
+    mark.
+
+    Asked **after** the free Armor Slot, so `hp_to_mark` is what the hit finally
+    costs rather than what it started at - which is the right number, since the
+    card converts what you "would mark".
+
+    SIMULATION RULE - policy, ruled. Three decisions, all the user's:
+
+    * **Only while near death** - `is_near_death`, 2 or fewer unmarked HP. One use
+      per long rest is a real cost, and converting a scratch early is the shape of
+      thing that leaves a party wishing they had it later.
+    * **Hope first.** Spent whenever the whole cost can be paid from the pool.
+    * **Stress only if it saves them**, which is `hp_to_mark >= hp_unmarked`: the
+      hit would otherwise put the PC down. Below that the Stress is worth more than
+      the HP, since a full Stress track is what makes a PC Vulnerable for the rest
+      of the fight.
+
+    So a Splendor PC one hit from the floor pays in Hope if they have it, marks
+    Stress if that is what keeps them standing, and otherwise takes the wound and
+    keeps the card.
+
+    The per-long-rest use is **checked before anything is paid and claimed only
+    when the conversion actually happens**, so a hit that finds neither pool able
+    to cover it costs nothing.
+    """
+    if fight is None or hp_to_mark <= 0:
+        return hp_to_mark
+    if not holder.is_near_death:
+        return hp_to_mark
+    if not fight.can_use_once_per_rest(holder, SPLENDOR_TOUCHED, long=True):
+        return hp_to_mark
+
+    if holder.can_spend_hope(hp_to_mark):
+        fight.use_once_per_rest(holder, SPLENDOR_TOUCHED, long=True)
+        holder.spend_hope(hp_to_mark)
+        fight.note(
+            f"{holder.name} spends {hp_to_mark} Hope, and the wound never lands"
+        )
+        return 0
+
+    # "Only if it makes them live" - the hit would otherwise be the last of their
+    # HP. `will_spend_stress` allows the last slot here without any special case,
+    # since the standing rule already unlocks it for a PC this close to the floor.
+    if hp_to_mark >= holder.hp_unmarked and holder.will_spend_stress(hp_to_mark):
+        fight.use_once_per_rest(holder, SPLENDOR_TOUCHED, long=True)
+        holder.spend_stress(hp_to_mark)
+        fight.note(
+            f"{holder.name} marks {hp_to_mark} Stress rather than fall"
+        )
+        return 0
+
+    return hp_to_mark
 
 
 out_of_combat_ability(

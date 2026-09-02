@@ -13,15 +13,12 @@ visible.
 
 ## Scope
 
-**Levels 1 to 6, all nine domains** - 117 cards, complete - plus **level 7 for
-Arcana, Blade, Bone, Codex, Grace and Midnight**. That is every card a level 6
-party of any class combination could hold, so a new party composition can be
-simulated without writing code first. Level 7 is in progress: twelve of its
-eighteen are in, and the table below is the only place the remaining six are
-visible.
+**Levels 1 to 7, all nine domains** - 135 cards, complete. That is every card a
+level 7 party of any class combination could hold, so a new party composition can
+be simulated without writing code first.
 
-The scope grew from levels 1-2, then to 3, then to 4, then to 5, then to 6, each
-time the previous one was finished, and is now growing into 7. Cards are ported
+The scope grew from levels 1-2, then to 3, then to 4, then to 5, then to 6, then
+to 7, each time the previous one was finished. Cards are ported
 **by level** rather than by domain: a level is the slice a party actually
 occupies, and finishing one means no loadout at that level can name a card nobody
 has written.
@@ -208,17 +205,33 @@ cards in that state, which is more than any other level.
 | **Codex** | ✅ Codex-Touched · 🚫 Book of Homet |
 | **Grace** | ✅ Grace-Touched · 🚫 Endless Charisma |
 | **Midnight** | ✅ Midnight-Touched · ✅ Vanishing Dodge |
-| **Sage** | ⬜ · ⬜ |
-| **Splendor** | ⬜ · ⬜ |
-| **Valor** | ⬜ · ⬜ |
+| **Sage** | ✅ Sage-Touched · ✅ Wild Surge |
+| **Splendor** | ✅ Splendor-Touched · ✅ Healing Strike |
+| **Valor** | ✅ Valor-Touched · ✅ Shrug It Off |
 
-**10 modelled, 2 no effect, 6 outstanding.**
+**16 modelled, 2 no effect, 0 outstanding.**
 
-**Level 7 is two thirds done.** Batches 21 (Arcana, Blade, Bone) and 22 (Codex,
-Grace, Midnight) cover twelve of eighteen; Sage, Splendor and Valor are untouched,
-so a level 7 party drawing from any of those three would name cards nobody has
-written. Until the level is finished, this table is the only place that gap is
-visible.
+**Levels 1 to 7 are complete across all nine domains** - 135 cards. Batches 21
+(Arcana, Blade, Bone), 22 (Codex, Grace, Midnight) and 23 (Sage, Splendor, Valor)
+cover the eighteen.
+
+**Every domain prints an *X*-Touched card at this level**, gated on holding four
+or more cards of that domain, and all nine are now in. The user's ruling is that
+carrying the card is proof of the loadout (SIMULATION-RULES.md), so none of them
+counts anything - and between them they reach more separate hooks than any other
+single level: a Spellcast bonus, an attack bonus, a trait doubling, a damage
+bonus, a Fear conversion, an outright negation, two resource substitutions and an
+Armor Slot refund.
+
+**Level 7 cost the most machinery of any level.** Batch 21 added
+`action_roll_advantage`, `spellcast_bonus`, `attack_failed` and
+`Condition.untargetable`; batch 22 added `stress_instead_of_hp`,
+`armor_instead_of_stress`, `fear_conversion` and the attack roll on `damage_pool`;
+batch 23 added **the rolled trait**, threaded into `roll_duality` and through
+`roll_bonus` for Sage-Touched, and **whether an Armor Slot was marked**, added to
+`on_damaged` for Valor-Touched. Both of the last two are facts the hooks could not
+previously see rather than new hooks, which is the cheaper shape when it is
+available.
 
 **Every domain prints an *X*-Touched card at this level**, gated on holding four
 or more of that domain's cards in the loadout - so nine of the eighteen turn on

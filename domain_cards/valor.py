@@ -72,6 +72,7 @@ from content.registry import (
     on_roll,
     out_of_combat_ability,
     reroll,
+    severity_response,
     total_damage_bonus,
     total_roll_bonus,
 )
@@ -212,14 +213,17 @@ def forceful_push(attacker: Holder, target, fight: Fight) -> AttackResult | None
     # Set around the swing and cleared afterwards, so the extra die can tell this
     # attack from every other one this PC makes. In a `finally` because an
     # exception mid-attack would otherwise leave the token set for the fight.
+    weapon = find_weapon(carrying)
     fight.set_token(attacker, PUSHING, 1)
     try:
         result = attack_with(
             attacker,
-            find_weapon(carrying),
+            weapon,
             target,
             AdvantageState.NONE,
-            total_roll_bonus(attacker, target, fight),
+            # Resolved off the weapon so the roll bonus is told which trait the
+            # swing rolls, the way `combat/policy.py`'s own weapon option is.
+            total_roll_bonus(attacker, target, fight, trait=weapon.trait),
             total_damage_bonus(attacker, target, fight),
             hope_die_for(attacker, fight),
             fight,
@@ -802,7 +806,13 @@ RISE_UP = "Rise Up"
         "feature whose whole effect is a number the sheet states",
     ],
 )
-def rise_up(holder: Holder, amount: int, hp_marked: int, fight: Fight = None) -> None:
+def rise_up(
+    holder: Holder,
+    amount: int,
+    hp_marked: int,
+    fight: Fight = None,
+    marked_armor: bool = False,
+) -> None:
     """Rise Up (Valor, level 6), second clause.
 
     SRD: "Gain a bonus to your Severe threshold equal to your Proficiency. When
@@ -829,6 +839,149 @@ def rise_up(holder: Holder, amount: int, hp_marked: int, fight: Fight = None) ->
 
     holder.clear_stress(1)
     fight.note(f"{holder.name} rises up, clearing a Stress")
+
+
+# --- Shrug It Off ----------------------------------------------------------------
+
+SHRUG_IT_OFF = "Shrug It Off"
+
+# The d6 the card rolls after every use, and the face at or below which it vaults
+# itself for good.
+SHRUG_IT_OFF_DIE = 6
+SHRUG_IT_OFF_VAULTS_AT = 3
+
+# Set on the holder once the card is in the vault, so nothing offers it again.
+SHRUG_IT_OFF_VAULTED = "Shrug It Off vaulted"
+
+
+@severity_response(
+    SHRUG_IT_OFF,
+    unmodelled=[
+        "The vault itself, beyond this card. A vaulted card could in principle be "
+        "bought back for its Recall Cost mid-fight, and the standing ruling is "
+        "that **only Arcana's Counterspell does** - so once this goes it stays "
+        "gone for the rest of the fight",
+        "Nothing carries between fights, so a card vaulted in one encounter is "
+        "back in the loadout for the next. Under sequenced encounters that would "
+        "want revisiting",
+    ],
+)
+def shrug_it_off(
+    holder: Holder, amount: int, hp_to_mark: int, fight=None, damage_type=None
+) -> int:
+    """Shrug It Off (Valor, level 7). Returns the HP the hit should now mark.
+
+    SRD: "When you would take damage, you can mark a Stress to reduce the severity
+    of the damage by one threshold. When you do, roll a d6. On a result of 3 or
+    lower, place this card in your vault."
+
+    **Get Back Up's effect with a coin flip attached.** That card reduces a Severe
+    hit by a threshold for a Stress and keeps working all fight; this one costs the
+    same, does the same, and has an even chance of being gone afterwards. So the
+    two stack on a Severe hit - both are asked, and between them a Severe hit can
+    come down from 3 HP to 1.
+
+    SIMULATION RULE - policy, ruled. **Severe damage only**, which is Get Back Up's
+    trigger read off the damage *amount* rather than the HP it would cost. The
+    standing "2 or more HP, or near death" rule that Counterspell, Arcane
+    Deflection and Bone-Touched share was offered and declined: half of every use
+    ends the card, so it is held for the hits that are worth losing it over.
+
+    Reading the trigger off `amount` rather than `hp_to_mark` matters when armor
+    has already softened the hit: under this reading it is still Severe damage - a
+    property of the number rolled - so the card still applies and the two
+    reductions stack. That is Get Back Up's reading, kept for the card that shares
+    its shape.
+
+    `damage_type` is ignored: the card names no type.
+
+    The Stress is the shared last-slot rule, as every PC Stress cost is. Nothing is
+    bought where the hit already marks nothing - the guard Get Back Up carries for
+    the same reason.
+    """
+    if fight is None or fight.token_count(holder, SHRUG_IT_OFF_VAULTED):
+        return hp_to_mark
+    if amount < holder.severe_threshold:
+        return hp_to_mark
+    if hp_to_mark <= 0:
+        return hp_to_mark  # armor already took it to nothing; don't buy nothing
+    if not holder.will_spend_stress(1):
+        return hp_to_mark
+
+    holder.spend_stress(1)
+    rolled = random.randint(1, SHRUG_IT_OFF_DIE)
+    if rolled <= SHRUG_IT_OFF_VAULTS_AT:
+        fight.set_token(holder, SHRUG_IT_OFF_VAULTED, 1)
+        fight.note(
+            f"{holder.name} shrugs it off, and the card goes to the vault ({rolled})"
+        )
+    else:
+        fight.note(f"{holder.name} shrugs it off, and keeps the card ({rolled})")
+    return hp_to_mark - 1
+
+
+# --- Valor-Touched ---------------------------------------------------------------
+
+VALOR_TOUCHED = "Valor-Touched"
+
+TOUCHED_LOADOUT_GAP = (
+    "'When 4 or more of the domain cards in your loadout are from the Valor "
+    "domain' - the loadout is not counted. The user's ruling is that carrying the "
+    "card is taken as proof the condition is met, since a player who takes it has "
+    "built for it. Recorded as a simulation rule rather than checked"
+)
+
+
+@on_damaged(
+    VALOR_TOUCHED,
+    unmodelled=[
+        TOUCHED_LOADOUT_GAP,
+        "'+1 bonus to your Armor Score' - a character sheet carries its Armor "
+        "Score **already resolved**, so running the bonus here would count it "
+        "twice. The same reason Valor's own Armorer and Bare Bones are declared",
+        "HP marked by anything other than **damage** doesn't reach this. "
+        "`on_damaged` is fired from `take_damage` alone, so a Hit Point marked by "
+        "Stress that wouldn't fit, or by a feature saying 'mark an additional HP' "
+        "outright, clears no Armor Slot",
+    ],
+)
+def valor_touched(
+    holder: Holder,
+    amount: int,
+    hp_marked: int,
+    fight: Fight = None,
+    marked_armor: bool = False,
+) -> None:
+    """Valor-Touched (Valor, level 7), the clause that isn't already on the sheet.
+
+    SRD: "When 4 or more of the domain cards in your loadout are from the Valor
+    domain, gain the following benefits: +1 bonus to your Armor Score; when you
+    mark 1 or more Hit Points without marking an Armor Slot, clear an Armor Slot."
+
+    **This is the card `on_damaged` grew a parameter for.** "Without marking an
+    Armor Slot" is a fact about how the hit was resolved, and by the time this hook
+    runs the marking is over - so the pipeline has to say. Inferring it from
+    `armor_unmarked == 0` was offered and declined: it is wrong against **direct**
+    damage, where the slots are free and none was spent, and there the card should
+    fire.
+
+    In practice the trigger is direct damage, an armor track already emptied, or a
+    hit the free slot could not soften - which is exactly the run of hits a Valor
+    PC is meant to come back from. It is a **refund, not a heal**: the HP is marked
+    either way, and what comes back is a slot to spend on the next one.
+
+    No policy to rule on. It costs nothing, has no limit and states its own
+    trigger, so it fires whenever that trigger happens and there is a marked slot
+    to clear. Skipped when there is none, which is the difference between clearing
+    something and clearing nothing rather than a threshold.
+    """
+    if fight is None or marked_armor or hp_marked < 1:
+        return
+    if holder.armor_marked <= 0:
+        return
+
+    holder.clear_armor_slot(1)
+    fight.note(f"{holder.name} takes it standing, and clears an Armor Slot")
 
 
 out_of_combat_ability(

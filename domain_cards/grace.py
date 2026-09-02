@@ -399,6 +399,7 @@ def invisibility(caster: Holder, target, fight: Fight) -> AttackResult | None:
         difficulty=INVISIBILITY_DIFFICULTY,
         hope_die=hope_die_for(caster, fight),
         help_dice=helped.dice,
+        trait=trait,
     )
     if not roll.is_success:
         return AttackResult(attack_roll=roll, damage_roll=None)
@@ -589,7 +590,13 @@ NEVER_UPSTAGED_BONUS = 5
 
 
 @on_damaged(NEVER_UPSTAGED)
-def never_upstaged(holder: Holder, amount: int, hp_marked: int, fight: Fight) -> None:
+def never_upstaged(
+    holder: Holder,
+    amount: int,
+    hp_marked: int,
+    fight: Fight,
+    marked_armor: bool = False,
+) -> None:
     """Never Upstaged (Grace, level 6), first half. Bank the wound as tokens.
 
     SRD: "When you mark 1 or more Hit Points from an attack, you can mark a Stress

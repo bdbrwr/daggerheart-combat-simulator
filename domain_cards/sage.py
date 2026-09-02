@@ -55,7 +55,9 @@ from content.registry import (
     free,
     no_combat_effect,
     out_of_combat_ability,
+    roll_bonus,
     severity_response,
+    spellcast_bonus,
     total_extra_damage,
 )
 from content.spellcast import spellcast
@@ -1100,6 +1102,204 @@ def _dome_falls(caster: Holder, fight: Fight) -> None:
         if shelter is not None and shelter.source is caster:
             fight.clear_condition(pc, SHELTERED)
             fight.note(f"The dome falls, and {pc.name} is back in the fight")
+
+
+# --- Sage-Touched ----------------------------------------------------------------
+
+SAGE_TOUCHED = "Sage-Touched"
+
+SAGE_TOUCHED_SPELLCAST = 2
+
+# "Double your Agility or Instinct" - the two traits the card names, and the only
+# ones the doubling reaches.
+SAGE_TOUCHED_TRAITS = ("agility", "instinct")
+
+# The gap every *X*-Touched card carries. Written out here rather than imported
+# from another domain's module, since one card must never import another's - the
+# same duplication Blade, Bone, Midnight and Grace already carry.
+TOUCHED_LOADOUT_GAP = (
+    "'When 4 or more of the domain cards in your loadout are from the Sage "
+    "domain' - the loadout is not counted. The user's ruling is that carrying the "
+    "card is taken as proof the condition is met, since a player who takes it has "
+    "built for it. Recorded as a simulation rule rather than checked"
+)
+
+
+@spellcast_bonus(SAGE_TOUCHED, unmodelled=[TOUCHED_LOADOUT_GAP])
+def sage_touched(caster: Holder, target, fight: Fight = None) -> int:
+    """Sage-Touched (Sage, level 7), first clause.
+
+    SRD: "When 4 or more of the domain cards in your loadout are from the Sage
+    domain, gain the following benefits: while you're in a natural environment,
+    you gain a +2 bonus to your Spellcast Rolls; once per rest, you can double
+    your Agility or Instinct when making a roll that uses that trait. You must
+    choose to do this before you roll."
+
+    SIMULATION RULE - interpretation, ruled. **Every fight counts as a natural
+    environment**, so the bonus is simply on. Nothing here represents terrain -
+    where a fight happens is not a fact the simulator holds - and the user's
+    ruling was to run the clause rather than declare it a gap. Declaring it, and
+    authoring a natural-environment flag on the encounter, were both offered and
+    declined. So this errs generous: a Sage fighting in a cellar gets the +2 here
+    and would not at a table.
+
+    **Spellcast Rolls and nothing else**, which is why this is on
+    `spellcast_bonus` rather than `roll_bonus` - that one is asked from the weapon
+    swing too, and a Sage who picks up a Broadsword should not be swinging it at
+    +2. Arcana-Touched's argument, with a bigger number.
+    """
+    return SAGE_TOUCHED_SPELLCAST
+
+
+@roll_bonus(
+    SAGE_TOUCHED,
+    unmodelled=[
+        "Two action rolls the hook is not asked at - Splendor's Healing Hands and "
+        "Grace's Invisibility both roll `roll_duality` by hand rather than through "
+        "the shared Spellcast shape, so a Sage carrying either would keep the "
+        "doubling for their next roll instead of spending it there. Valor's "
+        "Inevitable declares the same two",
+        "A **Reaction Roll** that uses Agility or Instinct is never offered it, "
+        "which is correct - the SRD's action rolls and reaction rolls are "
+        "different things and the card names the first",
+    ],
+)
+def sage_touched_doubles(
+    holder: Holder, target, fight: Fight = None, trait: str = ""
+) -> int:
+    """Sage-Touched's second clause - the trait, counted twice.
+
+    The roll already adds the trait once, so doubling it is a bonus of exactly the
+    trait again. **This is the card the trait had to be threaded through the roll
+    for**: `roll_bonus` used to be told who was rolling and what at, and never
+    which of the six traits was going into the total - so "a roll that uses that
+    trait" could not be asked at all.
+
+    "You must choose to do this before you roll" is this hook's own contract
+    rather than something that needed arranging: it is asked once, immediately
+    before the dice, and **being asked is the commitment**, so the per-rest use is
+    claimed here and a reroll re-makes the dice without charging again.
+
+    SIMULATION RULE - policy. The standing rule for a free once-per-rest, which
+    Deadly Focus and Premonition already follow: it fires on the **first** action
+    roll that uses either trait. Holding it for a better roll would mostly mean
+    not using it, and nothing about the roll being made says whether a bigger one
+    is coming.
+
+    Declines at a trait of zero or less rather than claiming the use for nothing -
+    the standing rule that a benefit computing to zero is not paid for, read off a
+    number printed on the character sheet.
+    """
+    if fight is None or trait not in SAGE_TOUCHED_TRAITS:
+        return 0
+
+    doubled = holder.traits.get(trait, 0)
+    if doubled <= 0:
+        return 0
+    if not fight.use_once_per_rest(holder, SAGE_TOUCHED):
+        return 0
+
+    fight.note(f"{holder.name} draws on the wild, doubling their {trait} (+{doubled})")
+    return doubled
+
+
+# --- Wild Surge ------------------------------------------------------------------
+
+WILD_SURGE = "Wild Surge"
+
+# The die sitting on the card, held as a token carrying its current face. It goes
+# down showing 1 and climbs by one every roll it pays out on.
+WILD_SURGE_DIE = "Wild Surge die"
+WILD_SURGE_MAX = 6
+
+
+@free(WILD_SURGE)
+def wild_surge(holder: Holder, fight: Fight) -> bool:
+    """Wild Surge (Sage, level 7). A Stress buys a die that grows on every roll.
+
+    SRD: "Once per long rest, mark a Stress to channel the natural world around
+    you and enhance yourself. Describe how your appearance changes, then place a
+    d6 on this card with the 1 value facing up. While the Wild Surge Die is
+    active, you add its value to every action roll you make. After you add its
+    value to a roll, increase the Wild Surge Die's value by one. When the die's
+    value would exceed 6 or you take a rest, this form drops and you must mark an
+    additional Stress."
+
+    **No roll**, so it is a free ability: the Stress is the whole cost and the
+    caster still takes their action roll in the same spotlight - which means the
+    surge can pay out on the very roll it was raised for.
+
+    SIMULATION RULE - policy, ruled. **Raised at the first spotlight the Stress
+    allows.** The die is worth +1 through +6 across six action rolls, twenty-one
+    points in total, and every spotlight spent unsurged is one of those rolls
+    thrown away - so there is no moment worth waiting for. `will_spend_stress` is
+    the shared last-slot rule, as every PC Stress cost is.
+
+    Once per **long** rest, so a party pushed through a second encounter without
+    one walks in with it already spent.
+    """
+    if fight is None or fight.token_count(holder, WILD_SURGE_DIE):
+        return False
+    if not holder.will_spend_stress(1):
+        return False
+    if not fight.use_once_per_rest(holder, WILD_SURGE, long=True):
+        return False
+
+    holder.spend_stress(1)
+    fight.set_token(holder, WILD_SURGE_DIE, 1)
+    fight.note(f"{holder.name} surges with the wild, and the die goes down at 1")
+    return True
+
+
+@roll_bonus(
+    WILD_SURGE,
+    unmodelled=[
+        "'every action roll you make' reaches the three shared roll sites and not "
+        "the two cards that roll `roll_duality` by hand - Splendor's Healing Hands "
+        "and Grace's Invisibility. A Sage carrying either would neither get the "
+        "bonus there nor tick the die, which is the same gap Sage-Touched and "
+        "Inevitable declare",
+        "A Reaction Roll neither takes the bonus nor advances the die. That is the "
+        "reading rather than an omission - the card says *action roll*, and the "
+        "SRD keeps the two apart",
+    ],
+)
+def wild_surge_climbs(
+    holder: Holder, target, fight: Fight = None, trait: str = ""
+) -> int:
+    """The Wild Surge Die's value, added and then advanced.
+
+    The order is the card's: the roll gets the value the die is *currently*
+    showing, and the die goes up afterwards. So the sixth roll it pays out on gets
+    +6 and is the last - the seventh would need a 7, which is what "would exceed
+    6" names, and the form drops there.
+
+    The Stress the form costs on the way out is **forced**, not spent, so a PC
+    with no free slot marks an HP for it and can be dropped by their own surge
+    ending. That is what the page says, and it is the whole risk the card carries.
+
+    `trait` is unused: the die adds to any action roll, and the card names none.
+
+    Being asked is the commitment, the contract every pre-roll hook keeps - which
+    here means the die advances on the roll it was asked for even if a reroll
+    later replaces the dice.
+    """
+    if fight is None:
+        return 0
+
+    value = fight.token_count(holder, WILD_SURGE_DIE)
+    if value <= 0:
+        return 0
+
+    if value + 1 > WILD_SURGE_MAX:
+        fight.set_token(holder, WILD_SURGE_DIE, 0)
+        holder.mark_stress(1)
+        fight.note(
+            f"{holder.name}'s wild surge burns out at +{value}, costing them a Stress"
+        )
+    else:
+        fight.set_token(holder, WILD_SURGE_DIE, value + 1)
+    return value
 
 
 # Dismissals are the user's call, not the assistant's.

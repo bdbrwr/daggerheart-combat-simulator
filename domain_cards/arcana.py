@@ -487,6 +487,7 @@ def counterspell(
         modifier=caster.traits[trait],
         difficulty=attacker.difficulty,
         hope_die=hope_die_for(caster, fight),
+        trait=trait,
     )
     fight.set_token(caster, COUNTERSPELL_VAULTED, 1)
 
@@ -889,7 +890,9 @@ def telekinesis(caster: Holder, target, fight: Fight) -> AttackResult | None:
     # The additional Spellcast Roll. Rolled here rather than through
     # `content/spellcast.py` on purpose - see the declared gaps: that helper asks
     # three commitment hooks, and this is the second roll of one action.
-    throw = roll_duality(modifier=caster.traits[trait], difficulty=target.difficulty)
+    throw = roll_duality(
+        modifier=caster.traits[trait], difficulty=target.difficulty, trait=trait
+    )
     if not throw.is_success:
         fight.note(
             f"{caster.name} hurls {lifted.name} at {target.name} and misses ({throw})"

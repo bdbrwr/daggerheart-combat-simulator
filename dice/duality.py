@@ -50,6 +50,21 @@ class DualityRollResult:
     hope_die_sides: int = 12
     fear_die_sides: int = 12
 
+    # Which of the character's traits was rolled - "agility", "presence", the
+    # Spellcast trait a caster rolls with. A raw input like the die sizes above,
+    # not a derived value, and recorded for the same reason: the class records
+    # every part of what was thrown, and until now it recorded the modifier
+    # without recording where the modifier came from.
+    #
+    # **Duality rolls only.** A d20 roll has no trait to name - adversaries carry
+    # none - so `D20RollResult` deliberately has no twin of this field.
+    #
+    # Empty where there is no trait to name, which is a real answer rather than a
+    # gap - a test building a result by hand has no character behind it at all.
+    #
+    # Defaulted, so nothing that builds one of these has to change.
+    trait: str = ""
+
     @property
     def outcome(self) -> DualityOutcome:
         """HOPE, FEAR, or CRIT depending on which die is higher (or tied)."""
@@ -121,7 +136,8 @@ def roll_duality(
     advantage_state: AdvantageState = AdvantageState.NONE,
     help_dice: list[int] | None = None,
     hope_die = 12,
-    fear_die = 12
+    fear_die = 12,
+    trait: str = "",
 ) -> DualityRollResult:
     """Roll Hope + Fear duality dice and resolve Advantage/Disadvantage/Help.
 
@@ -132,6 +148,12 @@ def roll_duality(
         help_dice: Die sizes of any allies helping (e.g. [6, 8] for a d6 anda d8 helper); only the single best result is applied.
         hope_die: Die size for the Hope die (default d12).
         fear_die: Die size for the Fear die (default d12).
+        trait: Which character trait is being rolled - "agility", "presence",
+            whatever a caster's Spellcast trait is. It changes nothing about the
+            dice; it is recorded on the result so that a roll says which kind of
+            roll it was. Every site that rolls a trait names it, and the ones
+            that have none to name (a hand-built result in a test) leave it
+            empty. There is no d20 equivalent: adversaries carry no traits.
 
     Returns:
         A DualityRollResult with every raw die roll recorded.
@@ -158,4 +180,5 @@ def roll_duality(
         difficulty=difficulty,
         hope_die_sides=hope_die,
         fear_die_sides=fear_die,
+        trait=trait,
     )

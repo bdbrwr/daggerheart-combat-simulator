@@ -776,11 +776,17 @@ def _fireball_lands_on(creature, damage: int, fight: Fight) -> int:
     the best trait for a PC. `roll_d20` and `roll_duality` are called directly
     rather than through a helper of their own: there is exactly one way to roll
     each in this codebase and this is a second site that needs them.
+
+    The best trait is picked **by name** rather than by value, so the roll can
+    record which trait it was made on alongside the modifier it contributed. Two
+    traits tied at the top give the same number either way, so which of them the
+    roll is labelled with changes nothing about the save.
     """
     traits = getattr(creature, "traits", None)
     if traits:
+        best = max(traits, key=lambda name: traits[name])
         save = roll_duality(
-            modifier=max(traits.values()), difficulty=FIREBALL_DIFFICULTY
+            modifier=traits[best], difficulty=FIREBALL_DIFFICULTY, trait=best
         )
     else:
         save = roll_d20(evasion=FIREBALL_DIFFICULTY)
@@ -1050,6 +1056,7 @@ def repudiate(
         modifier=caster.traits[trait],
         difficulty=attacker.difficulty,
         hope_die=hope_die_for(caster, fight),
+        trait=trait,
     )
     if not reaction.is_success:
         fight.note(f"{caster.name}'s repudiation fails ({reaction})")

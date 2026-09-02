@@ -107,7 +107,11 @@ def spellcast(
     helped = help_with_roll(caster, fight)
     modifier = (
         caster.traits[rolling]
-        + total_roll_bonus(caster, target, fight)
+        # The trait being rolled goes through to content as well as into the
+        # roll - a card keyed on it (Sage's Sage-Touched) has to see the same
+        # string the dice are thrown on, and Grace's Troublemaker rolling
+        # Presence is exactly the case where a cast and a swing differ.
+        + total_roll_bonus(caster, target, fight, trait=rolling)
         # And content that adds to a **Spellcast Roll** and to nothing else -
         # Arcana's Arcana-Touched. A hook of its own because `total_roll_bonus` is
         # asked from the weapon swing too and cannot tell the two apart; see
@@ -132,6 +136,7 @@ def spellcast(
             advantage_state=advantage_state,
             hope_die=hope_die,
             help_dice=helped.dice,
+            trait=rolling,
         )
 
     # Offered to the party's reroll content before anything reads the result, so

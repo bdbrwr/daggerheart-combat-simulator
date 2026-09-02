@@ -565,7 +565,15 @@ class PlayerCharacter:
 
         hp_to_mark = self.severity_of(amount)
 
+        # Remembered rather than re-derived afterwards, because by the time the
+        # damage responses have run there is no way to tell a hit that spent a
+        # slot from one that arrived at a PC with none free - and `direct` damage
+        # leaves slots untouched with plenty still free. Valor's *Valor-Touched*
+        # triggers on exactly that absence; see `on_damaged`.
+        marked_armor = False
+
         if not direct and self.should_mark_armor_slot():
+            marked_armor = True
             self.mark_armor_slot(1)
             hp_to_mark = max(hp_to_mark - 1, 0)
 
@@ -589,7 +597,7 @@ class PlayerCharacter:
         hp_to_mark = harden_damage(self, amount, hp_to_mark, fight, kind)
 
         self.mark_hp_and_check_death(hp_to_mark, fight)
-        apply_on_damaged(self, amount, hp_to_mark, fight)
+        apply_on_damaged(self, amount, hp_to_mark, fight, marked_armor)
 
         # And content another PC carries that watches the *party* take damage,
         # rather than only its own holder - the Codex spell Sigil of Retribution,

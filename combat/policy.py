@@ -406,6 +406,7 @@ def _search_for_hidden(pc: PlayerCharacter, state: FightState) -> AttackResult |
                 ),
                 hope_die=hope_die_for(pc, state),
                 help_dice=help_offered.dice,
+                trait=trait,
             )
 
         made = remake_action_roll(pc, roll(), roll, state)
@@ -462,13 +463,19 @@ def _make_the_roll(
         shape takes it as an argument. What the weapon *does* beyond its numbers
         is its own features, which items/weapons.py dispatches scoped to the
         weapon - nothing here knows any of them.
+
+        The weapon is resolved before the dispatch rather than inside the call,
+        because the holder-wide roll bonus has to be told **which trait** the
+        swing rolls, and the weapon is what says so.
         """
+        swung = find_weapon(attacker.primary_weapon)
         return attack_with(
             attacker,
-            find_weapon(attacker.primary_weapon),
+            swung,
             at,
             AdvantageState.NONE,
-            _experience_bonus(attacker, fight) + total_roll_bonus(attacker, at, fight),
+            _experience_bonus(attacker, fight)
+            + total_roll_bonus(attacker, at, fight, trait=swung.trait),
             total_damage_bonus(attacker, at, fight),
             hope_die_for(attacker, fight),
             fight,

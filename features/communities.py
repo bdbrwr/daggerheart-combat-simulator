@@ -67,8 +67,13 @@ def know_the_tide_gain(holder: Holder, roll, fight: Fight) -> None:
 
 
 @roll_bonus("Seaborne")
-def know_the_tide_spend(holder: Holder, target, fight: Fight) -> int:
+def know_the_tide_spend(
+    holder: Holder, target, fight: Fight, trait: str = ""
+) -> int:
     """Seaborne's *Know the Tide*, second half: spend any number of tokens for +1 each.
+
+    `trait` is unused: the tokens buy a bonus to any roll, and the card names no
+    trait to restrict them to.
 
     SIMULATION RULE - policy. Spends everything held. The rules let a player
     hold tokens back for a roll that matters more, but a simulator has no way to

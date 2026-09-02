@@ -767,7 +767,13 @@ def _casts_with_magic(adversary) -> bool:
 
 
 @on_damaged(HUSH)
-def hush_breaks(holder: Holder, amount: int, hp_marked: int, fight: Fight) -> None:
+def hush_breaks(
+    holder: Holder,
+    amount: int,
+    hp_marked: int,
+    fight: Fight,
+    marked_armor: bool = False,
+) -> None:
     """Major damage to the caster tears the suppression apart.
 
     The card's third ender, and the only one in the project that lets a condition

@@ -113,11 +113,14 @@ SCHOOL_OF_KNOWLEDGE_GAPS = [
 
 
 @roll_bonus("School of Knowledge", unmodelled=SCHOOL_OF_KNOWLEDGE_GAPS)
-def adept(wizard: Holder, target, fight: Fight) -> int:
+def adept(wizard: Holder, target, fight: Fight, trait: str = "") -> int:
     """School of Knowledge's *Adept*.
 
     SRD: when you Utilize an Experience, you can mark a Stress instead of
     spending a Hope. If you do, double your Experience modifier for that roll.
+
+    `trait` is unused: an Experience applies to whatever roll it is argued into,
+    and the feature names no trait.
 
     SIMULATION RULE - policy. The two ways of paying for an Experience are split
     by the Hope floor rather than weighed against each other: `combat/policy.py`
@@ -217,12 +220,17 @@ def companion(ranger: Holder, target, fight: Fight) -> AttackResult | None:
     # Asked only once the command is going ahead, so nothing is spent toward a
     # roll that isn't being made - and outside the closure, so a reroll doesn't
     # charge for the bonuses twice.
-    modifier = ranger.traits[trait] + total_roll_bonus(ranger, target, fight)
+    modifier = ranger.traits[trait] + total_roll_bonus(
+        ranger, target, fight, trait=trait
+    )
     hope_die = hope_die_for(ranger, fight)
 
     def roll():
         return roll_duality(
-            modifier=modifier, difficulty=target.difficulty, hope_die=hope_die
+            modifier=modifier,
+            difficulty=target.difficulty,
+            hope_die=hope_die,
+            trait=trait,
         )
 
     # Offered to the reroll hook so it reaches the companion's Spellcast Roll too.
@@ -287,12 +295,16 @@ def _press_the_advantage(
         return commanded
 
     fight.note(f"{ranger.name} presses the companion's advantage")
+    # Resolved before the dispatch rather than inside the call, so the
+    # holder-wide roll bonus can be told which trait the swing rolls - the same
+    # arrangement `combat/policy.py`'s weapon option uses.
+    swung = find_weapon(ranger.primary_weapon)
     return attack_with(
         ranger,
-        find_weapon(ranger.primary_weapon),
+        swung,
         target,
         AdvantageState.ADVANTAGE,
-        total_roll_bonus(ranger, target, fight),
+        total_roll_bonus(ranger, target, fight, trait=swung.trait),
         total_damage_bonus(ranger, target, fight),
         hope_die_for(ranger, fight),
         fight,
