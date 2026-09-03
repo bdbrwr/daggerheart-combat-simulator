@@ -632,7 +632,10 @@ class Adversary:
         # Fired last, with the marking settled, so content keyed on "marks their
         # last HP" sees an adversary that is already down - which is what the
         # Construct's Death Quake needs to be true.
-        apply_on_damaged(self, amount, hp_to_mark, fight)
+        # `marked_armor` is permanently False here - adversaries have no Armor
+        # Slots - and the type is the one resolved at the top of this method, so
+        # this hook and the two severity hooks above always read the same hit.
+        apply_on_damaged(self, amount, hp_to_mark, fight, False, kind)
 
         # An adversary that has just died takes its holds with it. A condition
         # whose only printed way out is something happening to *this* adversary -

@@ -181,6 +181,26 @@ SHELTERED = "Sheltered"
 # it is a Rogue feature elsewhere in the SRD, so a second registrant is expected.
 CLOAKED = "Cloaked"
 
+# **Frenzied**, from Blade's *Frenzy*: "once per long rest, you can go into a
+# Frenzy until there are no more adversaries within sight. While *Frenzied*, you
+# can't use Armor Slots, and you gain a +10 bonus to your damage rolls and a +8
+# bonus to your Severe damage threshold."
+#
+# A condition rather than a token on the holder, which is the user's ruling and
+# the same call they made for Cloaked: the page gives the state a name and then
+# refers back to it, so the rest of the game can talk about it. All three of the
+# card's clauses read this name back, and the play-by-play says what a PC is.
+#
+# It carries **no `end`**, which is how "until there are no more adversaries
+# within sight" is expressed - a fight ends with the field cleared either way, so
+# the state runs to the end of it. That makes this the first condition on a PC
+# that is deliberately permanent for the fight.
+#
+# It is also the first user of `denies_armor`, which is the only one of the three
+# clauses that needed anything new; the other two are a damage bonus and a
+# damage response.
+FRENZIED = "Frenzied"
+
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to
 # fire. The same vocabulary serves both, so a condition that costs something at a
@@ -274,6 +294,23 @@ class Condition:
     # prints both halves, and only the first is modelled, which stays a declared
     # gap on that card rather than being quietly closed here.
     untargetable: bool = False
+
+    # Whether this condition stops its holder marking Armor Slots against damage.
+    # Data rather than a callable, for the reason its three neighbours are: it
+    # isn't something that *happens* at an announced moment but a standing fact
+    # about what the damage pipeline may do, read where that is decided
+    # (`PlayerCharacter.take_damage`, through `FightState.armor_is_denied`).
+    #
+    # Blade's *Frenzy* is the first and only user - "while Frenzied, you can't use
+    # Armor Slots" is what the card pays for its +10 damage with. A **field rather
+    # than a content hook**, because the answer belongs to the state the holder is
+    # in rather than to a piece of content that has to be consulted; the same
+    # argument that made `prevents_action` a field when Stunned arrived.
+    #
+    # It reaches the free slot and, through it, anything that marks *additional*
+    # slots off the back of one - so Bone's Brace is correctly unusable while
+    # Frenzied without knowing this exists.
+    denies_armor: bool = False
 
 
 def when_they_act(holder, fight, moment: str) -> bool:

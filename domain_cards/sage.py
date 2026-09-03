@@ -31,6 +31,13 @@ neither of its cards is dismissed: *Conjured Steeds* and *Forager* are both file
 *out of combat*, which is the state for an effect that is real and representable
 and simply happens between fights. Sage is the first domain to have two cards in
 that state at one level.
+
+Level 8 turns the domain outward. **Forest Sprites** gives every one of its
+benefits to somebody else, twice over, and needed two party-wide hooks that had no
+twin before - a flat bonus on an ally's roll, and a second Armor Slot for an
+ally's hit. **Rejuvenation Barrier** is the first party-wide *resistance*, and it
+is expressed as a reduction rather than a real one, since resistance is
+holder-scoped and this barrier belongs to whoever cast it.
 """
 
 import random
@@ -44,13 +51,15 @@ from content.aoe import (
     targets_in_area,
 )
 from content.conditions import RESTRAINED, SHELTERED, Condition, when_the_gm_pays
-from content.damage_types import DamageType
+from content.damage_types import DamageType, types_in
 from content.grimoire import Grimoire
 from content.registry import (
     Fight,
     Holder,
     action,
     ally_damage_reduction,
+    ally_extra_armor_slot,
+    ally_roll_bonus,
     extra_damage,
     free,
     no_combat_effect,
@@ -1300,6 +1309,271 @@ def wild_surge_climbs(
     else:
         fight.set_token(holder, WILD_SURGE_DIE, value + 1)
     return value
+
+
+# --- Forest Sprites --------------------------------------------------------------
+
+FOREST_SPRITES = "Forest Sprites"
+
+FOREST_SPRITES_DIFFICULTY = 13
+
+# How many sprites are still standing, held on the caster. Each grants exactly one
+# benefit and then vanishes, so this is a pool of charges rather than a flag.
+SPRITES_STANDING = "Forest Sprites standing"
+
+FOREST_SPRITES_ATTACK_BONUS = 3
+
+# Hope is what several other cards and every Experience is bought with, so the
+# spell empties the pool down to this rather than through it. Ruled - Arcane
+# Barrage's floor, read here for the second time rather than a new number.
+FOREST_SPRITES_HOPE_FLOOR = 2
+
+
+@action(
+    FOREST_SPRITES,
+    unmodelled=[
+        "'who appear at points you choose within Far range' and 'within Melee "
+        "range of a sprite' - no positions are tracked, so where a sprite stands "
+        "is not a choice the caster makes and being beside one is not a fact the "
+        "simulator holds. A standing sprite pays out to whoever next triggers it, "
+        "which is more generous than the page: at a table a badly placed sprite "
+        "helps nobody",
+        "'or taking any damage' - a sprite can only be spent by granting a "
+        "benefit here. Nothing targets one, since a sprite is not a combatant, so "
+        "the second way they vanish never happens",
+    ],
+)
+def forest_sprites(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Forest Sprites (Sage, level 8). A Hope apiece for a field of one-shot helpers.
+
+    SRD: "Make a Spellcast Roll (13). On a success, spend any number of Hope to
+    create an equal number of small forest sprites who appear at points you choose
+    within Far range, providing the following benefits: your allies gain a +3 bonus
+    to attack rolls against adversaries within Melee range of a sprite; an ally who
+    marks an Armor Slot while within Melee range of a sprite can mark an additional
+    Armor Slot. A sprite vanishes after granting a benefit or taking any damage."
+
+    **Every benefit this card grants goes to somebody else** - "your allies", both
+    times - which is why it needed two party-wide hooks that had no twin before:
+    `ally_roll_bonus` for the +3 and `ally_extra_armor_slot` for the slot. Battle
+    Cry needed the third one of that shape, and between them the party side can now
+    reach an ally's roll and an ally's armor.
+
+    A flat Difficulty of 13, printed on the card: the sprites are conjured rather
+    than aimed at anybody. The roll still goes through `content/spellcast.py`, so
+    it is a real action roll and its Hope or Fear moves the spotlight.
+
+    SIMULATION RULE - policy, ruled. **Hope is spent down to a floor of 2**, which
+    is Arcane Barrage's rule: the pool is what every Experience and several other
+    cards are bought with, and this spell would otherwise swallow all of it.
+    Spending every Hope, a fixed three, and casting only above 5 were all offered
+    and declined.
+
+    Declines while sprites are still standing, so the caster does not spend a
+    second cast topping up a field they already have.
+    """
+    if fight is None:
+        return None
+    if fight.token_count(caster, SPRITES_STANDING):
+        return None
+
+    spare = caster.hope_marked - FOREST_SPRITES_HOPE_FLOOR
+    if spare <= 0:
+        return None
+
+    attack_roll = spellcast(
+        caster, target, fight, difficulty=FOREST_SPRITES_DIFFICULTY
+    )
+    if attack_roll is None:
+        return None
+    if not attack_roll.is_success:
+        fight.note(f"{caster.name} calls, and nothing answers ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    caster.spend_hope(spare)
+    fight.set_token(caster, SPRITES_STANDING, spare)
+    fight.note(f"{caster.name} spends {spare} Hope; {spare} forest sprites appear")
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+@ally_roll_bonus(FOREST_SPRITES)
+def forest_sprites_guide(
+    holder: Holder, attacker, target, fight: Fight = None, trait: str = ""
+) -> int:
+    """The +3 a sprite hands one ally's swing, and the sprite spent doing it.
+
+    Registered on the same name as the action above - the arrangement one card uses
+    to reach several hooks. `attacker is not holder` is the card's own word: *your
+    allies*, so the Druid who conjured them swings unaided.
+
+    Being asked is the commitment, which is this hook's contract and exactly what
+    the card needs: "a sprite vanishes after granting a benefit", so the charge is
+    spent here rather than waiting to be told the roll happened.
+    """
+    if fight is None or attacker is holder:
+        return 0
+    if not fight.spend_tokens(holder, SPRITES_STANDING, 1):
+        return 0
+
+    fight.note(f"A sprite guides {attacker.name}'s blow (+{FOREST_SPRITES_ATTACK_BONUS})")
+    return FOREST_SPRITES_ATTACK_BONUS
+
+
+@ally_extra_armor_slot(FOREST_SPRITES)
+def forest_sprites_shield(
+    holder: Holder,
+    target,
+    amount: int,
+    hp_to_mark: int,
+    fight: Fight = None,
+    damage_type=None,
+) -> int:
+    """The second Armor Slot a sprite buys an ally, and the sprite spent on it.
+
+    Being asked means a free slot has already gone in - the hook's contract, and
+    the card's trigger read literally ("an ally who marks an Armor Slot").
+
+    SIMULATION RULE - policy. The Brace rule: the sprite is spent only where the
+    extra slot would actually save an HP, since the free slot has already taken a
+    band off and a second one on a hit already marking nothing buys nothing. That
+    is the standing zero-benefit rule, read off the announced damage and the
+    target's printed thresholds.
+
+    Scoped to allies, like the +3 above, because the card says so both times.
+    """
+    if fight is None or target is holder or hp_to_mark <= 0:
+        return 0
+    if not fight.spend_tokens(holder, SPRITES_STANDING, 1):
+        return 0
+
+    fight.note(f"A sprite takes the blow with {target.name}, buying a second slot")
+    return 1
+
+
+# --- Rejuvenation Barrier --------------------------------------------------------
+
+REJUVENATION_BARRIER = "Rejuvenation Barrier"
+
+REJUVENATION_DIFFICULTY = 15
+REJUVENATION_DIE = 4
+
+# Set on the caster while the barrier stands. It follows them and has no printed
+# ender, so it lasts the fight.
+BARRIER_STANDING = "Rejuvenation Barrier standing"
+
+
+@action(
+    REJUVENATION_BARRIER,
+    unmodelled=[
+        "'from **outside** the barrier' - the resistance is printed to apply only "
+        "to damage crossing it, and nothing records where an attack came from. So "
+        "every physical hit is halved, which errs generous",
+        "'when you move, the barrier follows you' - no positions are tracked, so "
+        "the barrier is never anywhere in particular and never has to keep up",
+    ],
+)
+def rejuvenation_barrier(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Rejuvenation Barrier (Sage, level 8). A dome that heals once and then holds.
+
+    SRD: "Make a Spellcast Roll (15). Once per rest on a success, create a
+    temporary barrier of protective energy around you at Very Close range. You and
+    all allies within the barrier when this spell is cast clear 1d4 Hit Points.
+    While the barrier is up, you and all allies within have resistance to physical
+    damage from outside the barrier. When you move, the barrier follows you."
+
+    **Two halves with very different shapes.** The clear happens once, to whoever
+    is inside at the moment of casting; the resistance runs for the rest of the
+    fight and is asked per hit. Who is inside is the standing positional answer -
+    `chance_within` over the party, rolled at each question, which is Zone of
+    Protection's ruling of the same shape.
+
+    SIMULATION RULE - policy, ruled. **Cast as early as the option shuffle
+    allows**, which is Zone of Protection's rule for the same reason: the
+    resistance is the larger half and runs until the fight ends, so a spotlight
+    spent uncast throws part of it away. Waiting for somebody with HP marked, and
+    for the Healing Field floor of two, were both offered and declined - the cost
+    is that the 1d4 is sometimes rolled on a party at full health, where `clear_hp`
+    clamps it to nothing.
+
+    The 1d4 is rolled **per person**, the way Rousing Strike's is: the card gives
+    each creature inside a clear of its own rather than one shared number.
+
+    Once per rest on a **success**, which the card prints - so a failed cast costs
+    the spotlight and leaves the card available.
+    """
+    if fight is None or fight.token_count(caster, BARRIER_STANDING):
+        return None
+    if not fight.can_use_once_per_rest(caster, REJUVENATION_BARRIER):
+        return None
+
+    attack_roll = spellcast(
+        caster, target, fight, difficulty=REJUVENATION_DIFFICULTY
+    )
+    if attack_roll is None:
+        return None
+    if not attack_roll.is_success:
+        fight.note(f"{caster.name}'s barrier fails to form ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    fight.use_once_per_rest(caster, REJUVENATION_BARRIER)
+    fight.set_token(caster, BARRIER_STANDING, 1)
+
+    inside = [caster] + [
+        pc
+        for pc in fight.conscious_party
+        if pc is not caster
+        and random.random() < chance_within(Range.VERY_CLOSE, len(fight.conscious_party) - 1)
+    ]
+    for pc in inside:
+        cleared = random.randint(1, REJUVENATION_DIE)
+        pc.clear_hp(cleared)
+    fight.note(
+        f"{caster.name} raises a rejuvenation barrier over {len(inside)} of the party"
+    )
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+@ally_damage_reduction(
+    REJUVENATION_BARRIER,
+    unmodelled=[
+        "The halving is expressed as a **reduction** rather than as a true "
+        "resistance, because `damage_resistance` is holder-scoped and this barrier "
+        "belongs to somebody else. Two consequences, both declared rather than "
+        "hidden: it sums with other reductions instead of following the SRD's "
+        "'strongest single resistance' rule, and it lands after any real resistance "
+        "the target carries rather than being reconciled with it",
+    ],
+)
+def rejuvenation_barrier_holds(
+    holder: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """Half of a physical hit, taken off anybody standing inside the barrier.
+
+    Registered on the same name as the action above. Physical only, as the card
+    says; magic passes straight through.
+
+    Returned as the **difference** rather than the half, so what survives is
+    `amount // 2` - the same figure `reduced` produces for a real resistance, since
+    both round the surviving half down.
+
+    Membership is rolled per hit, which is Zone of Protection's ruling: the barrier
+    is a place rather than a list of occupants, so the same PC can be inside it for
+    one blow and outside for the next. The caster is inside always - it is centred
+    on them.
+    """
+    if fight is None or not fight.token_count(holder, BARRIER_STANDING):
+        return 0
+    if DamageType.PHYSICAL not in types_in(damage_type):
+        return 0
+
+    if target is not holder:
+        others = len(fight.conscious_party) - 1
+        if random.random() >= chance_within(Range.VERY_CLOSE, others):
+            return 0
+
+    sheltered = amount - amount // 2
+    fight.note(f"{target.name} is inside the barrier, and it takes {sheltered}")
+    return sheltered
 
 
 # Dismissals are the user's call, not the assistant's.

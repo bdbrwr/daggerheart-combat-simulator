@@ -40,6 +40,13 @@ nothing can miss. **Fireball** is the first *party* spell that can hurt the
 party: "all creatures within Very Close range" is read the way the adversary
 features already read it, so an ally standing next to the target saves against
 it too.
+
+Level 8 is the domain's third whole card to reach no fight, and the **Book of
+Vyola** is worth reading the dismissal of: one of its spells is information, and
+the other - *Shared Clarity*, which pools two PCs' Stress tracks - is real,
+representable and ruled to make no difference across a high-N run. **Safe Haven**
+is filed as out of combat rather than dismissed, because the downtime move it
+grants is one of the larger things a party can buy.
 """
 
 import random
@@ -67,6 +74,7 @@ from content.registry import (
     free,
     hope_die_for,
     no_combat_effect,
+    out_of_combat_ability,
     spellcast_bonus,
     total_extra_damage,
 )
@@ -1653,4 +1661,68 @@ no_combat_effect(
     "range the domain prints - the Teleport case, and dismissed for the same "
     "reason: an encounter is one place, and leaving it is not something the "
     "simulator represents.",
+)
+
+
+# --- Book of Vyola ---------------------------------------------------------------
+#
+# The third book in the domain with nothing implemented, after Vagras and Homet,
+# and declared the same way: the *book* carries its own declaration alongside its
+# two spells, because a Grimoire with no spell registered would report the card as
+# unimplemented - the wrong answer for something read and assessed.
+#
+# Worth recording that its two spells are dismissed for **different** reasons, and
+# that the second was a real decision rather than an obvious one.
+
+no_combat_effect(
+    "Book of Vyola",
+    "Neither spell reaches a fight. Memory Delve buys information about a target's "
+    "past; Shared Clarity pairs two willing creatures so either can take a Stress "
+    "the other would mark, which is a real and fully represented effect that the "
+    "user ruled makes no difference across a high-N run. Declared under the book's "
+    "own name as well as per spell, so the card never reads as work nobody has "
+    "done.",
+)
+no_combat_effect(
+    "Memory Delve",
+    "A Spellcast Roll against a target within Far range; on a success the caster "
+    "peers into their mind and the GM describes any memories pertaining to a "
+    "question asked. Information about a target's past, which is the Telepathy, "
+    "Recant and Divination case - nothing about a fight's outcome turns on what an "
+    "adversary remembers, and the spell makes no attack and moves no number.",
+)
+no_combat_effect(
+    "Shared Clarity",
+    "Once per long rest, a Hope pairs two willing creatures until their next rest; "
+    "when one of them would mark Stress, the pair choose between them who marks "
+    "it. Stress is tracked closely here, so the dismissal is not about the "
+    "resource being invisible: it is that the effect is **symmetrical**, and so "
+    "has nothing in an outcome to touch. The pair mark the same total Stress "
+    "either way, and all the card decides is which of the two tracks fills first. "
+    "That is the user's ruling, in their words - it does nothing across a high-N "
+    "run. Worth naming what was declined "
+    "alongside it, since the machinery was costed: `PlayerCharacter.spend_stress` "
+    "is called from dozens of places with no fight in hand, so the partner cannot "
+    "be found from there, and both ways of fixing that - an optional `fight` "
+    "threaded through the Stress path, and a required one - were offered and "
+    "declined.",
+)
+
+
+# --- Safe Haven ------------------------------------------------------------------
+
+out_of_combat_ability(
+    "Safe Haven",
+    "A few minutes of calm and 2 Hope summon a large interdimensional home behind "
+    "a door within Close range, which only creatures of the caster's choice can "
+    "enter and whose entrance can be made invisible; taking a rest inside it grants "
+    "an additional downtime move. **Not a dismissal.** The extra downtime move is "
+    "real, fully representable and one of the larger things a party can buy - a "
+    "long rest move clears every marked HP or every Stress - which is precisely why "
+    "this is not filed as having no combat effect. What it is not is a combat move: "
+    "'a few minutes of calm to focus' is a condition a fight never meets, so the "
+    "card belongs to the sequenced-encounter machinery that does not exist yet. "
+    "Mending Touch's and Recovery's state, and the shelter half is the Blink Out "
+    "case sitting underneath it - no positions are tracked, so leaving a fight is "
+    "not something the simulator represents either.",
 )

@@ -25,14 +25,26 @@ Level 6 is the domain at its most restorative and needed no new machinery for it
 anywhere that can lift a condition without naming one - which is what put
 `conditions_on` on the fight state. **Zone of Protection** is a ward that gets
 *better* the more it works: it soaks 1, then 2, and on up to 6 before it goes out.
+
+Level 8 gives the domain its largest ward and its largest attack. **Shield Aura**
+is the first card that changes an *ally's* threshold bands - Rune Ward reaches
+somebody else's hit but only as a number, and moving a band is a different thing -
+which is what `ally_severity_response` exists for. **Stunning Sunlight** is Chain
+Lightning's shape with nobody escaping: a save is 3d20+3 rather than nothing.
 """
 
 import random
 from dataclasses import replace
 
 from combat.results import AttackResult
-from content.aoe import Range, chance_within, targets_in_area
-from content.conditions import VULNERABLE, Condition, when_the_gm_pays
+from content.aoe import (
+    Range,
+    area_difficulty,
+    chance_within,
+    targets_beaten,
+    targets_in_area,
+)
+from content.conditions import STUNNED, VULNERABLE, Condition, when_the_gm_pays
 from content.damage_types import DamageType
 from content.help import help_with_roll
 from content.registry import (
@@ -41,6 +53,7 @@ from content.registry import (
     Holder,
     action,
     ally_damage_reduction,
+    ally_severity_response,
     damage_pool,
     damage_scaling,
     damage_typing,
@@ -55,6 +68,7 @@ from content.registry import (
     total_extra_damage,
 )
 from content.spellcast import spellcast
+from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import DualityOutcome, roll_duality
 
@@ -1021,6 +1035,238 @@ def splendor_touched(
         return 0
 
     return hp_to_mark
+
+
+# --- Shield Aura -----------------------------------------------------------------
+
+SHIELD_AURA = "Shield Aura"
+
+# Who is wearing the aura, as a token on them. On the target rather than the
+# caster, because the hook that reads it is asked about whoever is being hit -
+# Rune Ward's arrangement.
+SHIELD_AURA_WORN = "Shield Aura worn"
+
+
+@free(
+    SHIELD_AURA,
+    unmodelled=[
+        "'a target within Very Close range' - no positions are tracked, so any "
+        "conscious ally can be warded. Unlike Rune Ward and Life Ward this one is "
+        "not answered by the area rule either, since the aura is cast rather than "
+        "handed over and nothing rolls for whether the caster can reach",
+    ],
+)
+def shield_aura(caster: Holder, fight: Fight) -> bool:
+    """Shield Aura (Splendor, level 8). A Stress buys somebody else a thicker armor.
+
+    SRD: "Mark a Stress to cast a protective aura on a target within Very Close
+    range. When the target marks an Armor Slot, they reduce the severity of the
+    attack by an additional threshold. If this spell causes a creature who would be
+    damaged to instead mark no Hit Points, the effect ends. You can only hold Shield
+    Aura on one creature at a time."
+
+    **No roll**, so it is a free ability: the Stress is the whole cost and the
+    caster still takes their action roll in the same spotlight.
+
+    **The first card that changes an *ally's* threshold bands**, and the reason
+    `ally_severity_response` exists. `ally_damage_reduction` next door reaches
+    somebody else's hit but works on the raw number, which is right for Rune Ward's
+    1d8 and wrong here: subtracting enough to cross a band would also change the
+    figure every other reader sees, so an ally's Get Back Up would stop firing.
+
+    SIMULATION RULE - policy, ruled. **The frailest conscious ally, as early as the
+    shared Stress rule allows.** Rune Ward's holder rule for who - the least
+    unmarked HP, never the caster, since the card says "a target" and the caster
+    has their own cards - and no gate on when, because the aura is worth most
+    before anything has landed. Life Ward's near-death gate and putting it on
+    whoever has the most Armor Slots left were both offered and declined.
+
+    Declines while an aura already stands, which the card requires outright: it
+    holds on one creature at a time.
+    """
+    if fight is None:
+        return False
+    if any(fight.token_count(pc, SHIELD_AURA_WORN) for pc in fight.conscious_party):
+        return False
+
+    allies = [pc for pc in fight.conscious_party if pc is not caster]
+    if not allies:
+        return False
+    if not caster.will_spend_stress(1):
+        return False
+
+    warded = min(allies, key=lambda pc: pc.hp_unmarked)
+    caster.spend_stress(1)
+    fight.set_token(warded, SHIELD_AURA_WORN, 1)
+    fight.note(f"{caster.name} casts a shield aura over {warded.name}")
+    return True
+
+
+@ally_severity_response(SHIELD_AURA)
+def shield_aura_thickens(
+    holder: Holder,
+    target,
+    amount: int,
+    hp_to_mark: int,
+    fight: Fight = None,
+    damage_type=None,
+    marked_armor: bool = False,
+) -> int:
+    """The extra threshold the aura buys. Returns the HP the hit should now mark.
+
+    Registered on the same name as the free ability above, the arrangement one card
+    uses to reach two hooks.
+
+    **`marked_armor` is the card's trigger read literally** - "when the target
+    marks an Armor Slot" - and it is the reason this hook carries the flag where
+    its holder-scoped twin does not. So the aura never answers direct damage, a hit
+    on a PC with no slots free, or one on a PC a condition has denied their armor:
+    in all three no slot was marked and there is nothing to be additional to.
+
+    "If this spell causes a creature who would be damaged to instead mark no Hit
+    Points, the effect ends" is the card's own ender, and it is read exactly: the
+    aura ends when *its* threshold is what took the hit to nothing, which is the
+    case below where `hp_to_mark` was 1 before it and 0 after. A hit that was
+    already marking nothing is not caused by this spell, so it neither ends the
+    aura nor is charged for.
+    """
+    if fight is None or not marked_armor:
+        return hp_to_mark
+    if not fight.token_count(target, SHIELD_AURA_WORN):
+        return hp_to_mark
+    if hp_to_mark <= 0:
+        return hp_to_mark
+
+    softened = hp_to_mark - 1
+    if softened <= 0:
+        fight.set_token(target, SHIELD_AURA_WORN, 0)
+        fight.note(f"{target.name}'s shield aura takes the blow to nothing, and fades")
+    else:
+        fight.note(f"{target.name}'s shield aura drops the blow a threshold")
+    return softened
+
+
+# --- Stunning Sunlight -----------------------------------------------------------
+
+STUNNING_SUNLIGHT = "Stunning Sunlight"
+
+# The Reaction Roll the card prints, and the two damage pools either side of it.
+SUNLIGHT_DIFFICULTY = 14
+SUNLIGHT_SAVED_DICE = 3
+SUNLIGHT_SAVED_DIE = 20
+SUNLIGHT_SAVED_MODIFIER = 3
+SUNLIGHT_STRUCK_DICE = 4
+SUNLIGHT_STRUCK_DIE = 20
+SUNLIGHT_STRUCK_MODIFIER = 5
+
+
+@action(
+    STUNNING_SUNLIGHT,
+    unmodelled=[
+        "'against all adversaries **in front of you** within Far range' - no "
+        "positions are tracked, so the area rule decides how many the rays catch "
+        "and nothing is behind the caster",
+    ],
+)
+def stunning_sunlight(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Stunning Sunlight (Splendor, level 8). A Hope apiece to burn the Far band.
+
+    SRD: "Make a Spellcast Roll to unleash powerful rays of burning sunlight
+    against all adversaries in front of you within Far range. On a success, spend
+    any number of Hope and force that many targets you succeeded against to make a
+    Reaction Roll (14). Targets who succeed take 3d20+3 magic damage. Targets who
+    fail take 4d20+5 magic damage and are temporarily *Stunned*."
+
+    One Spellcast Roll against the whole area, each adversary checked against its
+    own Difficulty - the Wild Flame shape. The second gate is Chain Lightning's:
+    beating an adversary only earns it a Reaction Roll, a flat d20 with no modifier
+    since adversaries have no traits.
+
+    **Nothing it reaches escapes damage**, which is what separates it from Chain
+    Lightning - a save is 3d20+3 rather than nothing at all. So no Hope is ever
+    spent for no result, which is why there is no floor beyond having somebody to
+    spend it on.
+
+    SIMULATION RULE - policy, ruled. **Every banked Hope**, one per target, so the
+    spell reaches as many of the ones it beat as the pool can pay for. Arcane
+    Barrage's floor of 2, a cap of two targets, and the Fire Flies gate were all
+    offered and declined.
+
+    The damage is rolled **once per band** and reused, the reading
+    `Adversary.area_attack` already takes: everything that saved takes the same
+    3d20+3 and everything that failed the same 4d20+5.
+
+    *Stunned* is the condition Hypnotic Shimmer brought in, and the card prints the
+    same rule, so nothing had to be ruled: it stops the adversary acting until the
+    GM pays a Fear to clear it.
+    """
+    if fight is None or caster.hope_marked <= 0:
+        return None
+
+    area = targets_in_area(Range.FAR, fight.living_adversaries)
+    if not area:
+        return None
+
+    attack_roll = spellcast(caster, target, fight, difficulty=area_difficulty(area))
+    if attack_roll is None:
+        return None
+
+    beaten = targets_beaten(attack_roll, area)
+    if not beaten:
+        fight.note(f"{caster.name}'s sunlight finds nobody ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    # One Hope per target, capped by what the roll actually caught - Hope spent on
+    # a target that was never beaten would buy nothing.
+    burned = min(caster.hope_marked, len(beaten))
+    caster.spend_hope(burned)
+    caught = beaten[:burned]
+
+    saved = roll_damage(
+        dice_groups=[DiceGroup(count=SUNLIGHT_SAVED_DICE, sides=SUNLIGHT_SAVED_DIE)]
+        + total_extra_damage(caster, target, attack_roll, fight),
+        modifier=SUNLIGHT_SAVED_MODIFIER,
+        is_critical=attack_roll.is_critical,
+    )
+    struck = roll_damage(
+        dice_groups=[DiceGroup(count=SUNLIGHT_STRUCK_DICE, sides=SUNLIGHT_STRUCK_DIE)],
+        modifier=SUNLIGHT_STRUCK_MODIFIER,
+        is_critical=attack_roll.is_critical,
+    )
+
+    marked = 0
+    stunned = 0
+    for adversary in caught:
+        # A flat d20 against the printed Difficulty; see `dice/d20.py` for why the
+        # number is passed as `evasion`.
+        if roll_d20(evasion=SUNLIGHT_DIFFICULTY).is_success:
+            marked += adversary.take_damage(
+                saved.total, fight, damage_type=DamageType.MAGIC
+            )
+            continue
+
+        marked += adversary.take_damage(
+            struck.total, fight, damage_type=DamageType.MAGIC
+        )
+        if not adversary.is_defeated:
+            fight.apply_condition(
+                adversary,
+                Condition(
+                    name=STUNNED,
+                    end=when_the_gm_pays,
+                    source=caster,
+                    prevents_action=True,
+                ),
+            )
+            stunned += 1
+
+    fight.note(
+        f"{caster.name} burns {len(caught)} in sunlight for {burned} Hope; "
+        f"{stunned} are Stunned"
+    )
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=struck, hp_marked=marked
+    )
 
 
 out_of_combat_ability(

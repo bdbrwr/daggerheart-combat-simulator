@@ -44,6 +44,13 @@ first card anywhere that stops the GM gaining a Fear, and the first to read the
 Fear Die's own result as damage - which is what gave `damage_pool` the attack roll.
 **Vanishing Dodge** is the third card on the missed-attack trigger after Redirect
 and Rapid Riposte, and the first to answer a miss with something other than damage.
+
+Level 8 splits the same way level 6 did, but only halfway. **Spellcharge** turns
+magic damage taken into damage dealt, and is the first card anywhere that needed
+`on_damaged` to know what **type** the hit was. **Shadowhunter** is dismissed on
+its trigger - low light and darkness, which the simulator holds no fact about -
+and it is worth reading that dismissal carefully, since the effect it turns off is
+one of the largest in the domain.
 """
 
 from combat.results import AttackResult
@@ -68,6 +75,7 @@ from content.registry import (
     attack_advantage,
     attack_missed,
     damage_pool,
+    extra_damage,
     fear_conversion,
     free,
     no_combat_effect,
@@ -773,6 +781,7 @@ def hush_breaks(
     hp_marked: int,
     fight: Fight,
     marked_armor: bool = False,
+    damage_type=None,
 ) -> None:
     """Major damage to the caster tears the suppression apart.
 
@@ -951,8 +960,128 @@ def vanishing_dodge(holder: Holder, attacker, roll, fight: Fight = None) -> None
     fight.note(f"{holder.name} slips into shadow as the blow goes wide")
 
 
+# --- Spellcharge -----------------------------------------------------------------
+
+SPELLCHARGE = "Spellcharge"
+
+# The pool, held on the caster. A count rather than a flag, and capped at the
+# caster's Spellcast trait, which is what the card prints.
+SPELLCHARGE_TOKENS = "Spellcharge tokens"
+
+SPELLCHARGE_DIE = 6
+
+
+@on_damaged(
+    SPELLCHARGE,
+    unmodelled=[
+        "Magic damage that marks **no** HP banks nothing, which is the card read "
+        "literally - 'tokens equal to the number of Hit Points you marked'. So a "
+        "magic hit an Armor Slot swallowed whole charges the card with nothing, "
+        "the same way Never Upstaged banks nothing off one",
+    ],
+)
+def spellcharge(
+    holder: Holder,
+    amount: int,
+    hp_marked: int,
+    fight: Fight = None,
+    marked_armor: bool = False,
+    damage_type=None,
+) -> None:
+    """Spellcharge (Midnight, level 8), first half - the pool magic damage fills.
+
+    SRD: "When you take magic damage, place tokens equal to the number of Hit
+    Points you marked on this card. You can store a number of tokens equal to your
+    Spellcast trait. When you make a successful attack against a target, you can
+    spend any number of tokens to add a **d6** for each token spent to your damage
+    roll."
+
+    **The first registrant that needed `on_damaged` to carry the damage type**,
+    and the reason it does. The trigger names the type and the payload names the
+    HP finally marked, and this is the only hook that has both: `severity_response`
+    sees the type while the figure is still being settled, and this one saw the
+    settled figure and no type. Reading the type off the spotlighted adversary's
+    printed attack instead would be wrong for any feature that states its own -
+    the inference `marked_armor` was added to avoid.
+
+    Capped at the caster's Spellcast trait, as the card says. A PC with no
+    Spellcast trait, or one of zero or less, stores nothing and the card is inert -
+    the same reading Unleash Chaos and Preservation Blast take of a card whose size
+    is drawn from a trait.
+
+    No policy to rule on for this half: the card states its own trigger and the
+    tokens cost nothing to bank.
+    """
+    if fight is None or hp_marked <= 0:
+        return
+    if DamageType.MAGIC not in types_in(damage_type):
+        return
+
+    trait = getattr(holder, "spellcast_trait", "")
+    if not trait or trait not in holder.traits:
+        return
+    capacity = holder.traits[trait]
+    if capacity <= 0:
+        return
+
+    stored = min(fight.token_count(holder, SPELLCHARGE_TOKENS) + hp_marked, capacity)
+    fight.set_token(holder, SPELLCHARGE_TOKENS, stored)
+    fight.note(f"{holder.name}'s spellcharge holds {stored}")
+
+
+@extra_damage(SPELLCHARGE)
+def spellcharge_discharges(
+    holder: Holder, target, roll, fight: Fight = None
+) -> list:
+    """Spellcharge's second half - the pool spent on a landed attack.
+
+    Registered on the same name as the collector above, which is how one card
+    reaches two hooks - Ferocity's, Boost's and Signature Move's arrangement.
+
+    SIMULATION RULE - policy, ruled. **Every token on every landing attack**, which
+    is Unleash Chaos's rule for the same "spend any number" wording. So the pool
+    empties as soon as there is an attack to spend it on and refills the next time
+    magic lands; nothing is left banked when a fight ends. Holding until the pool
+    was full, and spending the fewest that could cross a threshold band, were both
+    offered and declined.
+
+    Asked from inside the damage roll of an attack that has already succeeded, so
+    "when you make a successful attack" comes for free and the dice cross the
+    target's thresholds exactly once. It is holder-scoped and asked wherever a PC's
+    content rolls damage, so unlike a weapon-only rider this also reaches a
+    Grimoire spell's damage - which is what "a successful attack" says.
+
+    `discardable=False`, like every die a feature adds to somebody else's roll.
+    """
+    if fight is None:
+        return []
+
+    tokens = fight.spend_tokens(
+        holder, SPELLCHARGE_TOKENS, fight.token_count(holder, SPELLCHARGE_TOKENS)
+    )
+    if not tokens:
+        return []
+
+    fight.note(f"{holder.name} discharges {tokens}d6 into the blow")
+    return [DiceGroup(count=tokens, sides=SPELLCHARGE_DIE, discardable=False)]
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
+no_combat_effect(
+    "Shadowhunter",
+    "While shrouded in low light or darkness, +1 to Evasion and attack rolls made "
+    "with advantage. **Dismissed on its trigger, not on the size of its effect** - "
+    "which is the Gifted Tracker reading, and worth being plain about because the "
+    "effect is one of the largest in the domain. Advantage on every attack roll "
+    "would be enormous; what has no representation here is *when* it applies. "
+    "Nothing records how a fight is lit, exactly as nothing records what the party "
+    "tracked, and the simulator holds no fact about where an encounter happens. "
+    "Reading it as always on - the ruling Sage-Touched's natural-environment "
+    "clause got - was offered and declined, as was gating it on the holder being "
+    "Hidden. If an encounter ever grows a 'this fight is in darkness' field, this "
+    "is the card waiting for it.",
+)
 no_combat_effect(
     "Stealth Expertise",
     "A Stress turns a roll with Fear into a roll with Hope while attempting to "

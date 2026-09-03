@@ -584,7 +584,7 @@ ACID_BATH = qualified(ADVERSARY, "Acid Bath")
     ],
 )
 def acid_bath(
-    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False, damage_type=None
 ) -> None:
     """When this adversary takes Severe damage, everyone Close takes 1d10.
 
@@ -801,7 +801,7 @@ RAMPAGING_FURY = qualified(ADVERSARY, "Rampaging Fury")
     ],
 )
 def rampaging_fury(
-    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False, damage_type=None
 ) -> None:
     """When this adversary marks 2 or more HP, rampage for 2d6+3 direct damage.
 
@@ -922,7 +922,7 @@ DEATH_QUAKE = qualified(ADVERSARY, "Death Quake")
 
 @on_damaged(DEATH_QUAKE)
 def death_quake(
-    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False, damage_type=None
 ) -> None:
     """When this adversary marks their last HP, explode for 1d12+2 at Very Close.
 
@@ -1063,7 +1063,7 @@ def grab_and_drag(adversary, target, fight: Fight):
 
 @on_damaged(GRAB_AND_DRAG)
 def grab_and_drag_releases(
-    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False, damage_type=None
 ) -> None:
     """Severe damage to this adversary frees whoever it was holding.
 
@@ -1308,7 +1308,7 @@ MINION = qualified(ADVERSARY, "Minion")
     ],
 )
 def minion(
-    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False, damage_type=None
 ) -> None:
     """For every X damage dealt to this Minion, another of them goes down too.
 
@@ -2398,7 +2398,7 @@ def hold_them_down(adversary, target, fight: Fight):
 
 @on_damaged(HOLD_THEM_DOWN)
 def hold_them_down_releases(
-    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False, damage_type=None
 ) -> None:
     """Major damage to this adversary frees everyone it was holding.
 
@@ -3281,7 +3281,7 @@ def envelop(adversary, target, fight: Fight):
 
 @on_damaged(ENVELOP)
 def envelop_releases(
-    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False, damage_type=None
 ) -> None:
     """Severe damage to this adversary frees whoever it has swallowed.
 
@@ -3315,7 +3315,7 @@ SPLIT_COUNT = 2
 
 @on_damaged(SPLIT)
 def split(
-    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False, damage_type=None
 ) -> None:
     """At 3 marked HP, spend a Fear to become two fresh copies of something smaller.
 
@@ -3984,7 +3984,7 @@ DIG_TWO_GRAVES_HOPE_DIE = 4
     ],
 )
 def dig_two_graves(
-    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False, damage_type=None
 ) -> None:
     """When this adversary is defeated, it swings once more for 1d4+8 and 1d4 Hope.
 
@@ -4613,7 +4613,7 @@ def encumber(adversary, target, result, fight: Fight) -> None:
 
 @on_damaged(ENCUMBER)
 def encumber_releases(
-    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False, damage_type=None
 ) -> None:
     """Major damage to this adversary shakes every bramble token loose.
 

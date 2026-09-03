@@ -36,11 +36,13 @@ from content import (
     dealt_damage_type,
     remake_action_roll,
     total_ally_extra_damage,
+    total_ally_roll_bonus,
     total_extra_damage,
     total_roll_bonus,
 )
 from content.help import help_with_roll
 from content.registry import (
+    ally_granted_attack_advantage,
     apply_attack_failed,
     apply_before_attacked,
     apply_on_attacked,
@@ -137,6 +139,16 @@ def attack_with(
         advantage_state, granted_action_roll_advantage(attacker, target, fight)
     )
 
+    # And content **another PC** carries that aids this one's swing - the Blade
+    # card Battle Cry, whose rousing call hands the whole party advantage until
+    # somebody fails with Fear. The party-wide twin of the holder-scoped hook
+    # above, and it has to be a separate one for the reason Parallela needed
+    # `ally_on_hit`: a card scoped to its own holder can never reach an ally.
+    # Folded rather than overwriting, like everything else here.
+    advantage_state = combined(
+        advantage_state, ally_granted_attack_advantage(attacker, target, fight)
+    )
+
     # A condition can hobble the trait this weapon rolls - the Archer Guard's
     # Hobbling Shot leaves its target with disadvantage on Agility Rolls. Folded
     # in rather than overwriting, so a PC attacking with Advantage and hobbled at
@@ -188,6 +200,12 @@ def attack_with(
         # own Experiences. A flat add, so it folds in here rather than into the
         # help pool, which resolves to its single best die.
         + help_offered.bonus
+        # And a flat bonus **another PC's** content puts on this swing - Sage's
+        # Forest Sprites, whose sprites hand an ally +3 and then vanish. The flat
+        # twin of the party-wide advantage hook above; see `ally_roll_bonus`.
+        # Outside the closure with everything else, since being asked is the
+        # commitment and a reroll must not spend a sprite twice.
+        + total_ally_roll_bonus(attacker, target, fight, weapon.trait)
     )
 
     def roll():

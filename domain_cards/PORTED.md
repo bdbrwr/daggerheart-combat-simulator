@@ -13,12 +13,13 @@ visible.
 
 ## Scope
 
-**Levels 1 to 7, all nine domains** - 135 cards, complete. That is every card a
-level 7 party of any class combination could hold, so a new party composition can
-be simulated without writing code first.
+**Levels 1 to 8, all nine domains** - 153 cards, complete. That is every card a
+level 8 party of any class combination could hold, so a new party composition can
+be simulated without writing code first. What is left of the SRD is levels 9 and
+10.
 
 The scope grew from levels 1-2, then to 3, then to 4, then to 5, then to 6, then
-to 7, each time the previous one was finished. Cards are ported
+to 7, then to 8, each time the previous one was finished. Cards are ported
 **by level** rather than by domain: a level is the slice a party actually
 occupies, and finishing one means no loadout at that level can name a card nobody
 has written.
@@ -244,6 +245,53 @@ reason: each prints a list of bonuses, and at least one entry in every list is a
 number a character sheet already carries. Blade's Severe threshold, Bone's
 Agility, Codex's vault swap - the pattern is the level's, not any one card's.
 
+## Level 8
+
+| Domain | Level 8 |
+|---|---|
+| **Arcana** | ✅ Arcane Reflection · ✅ Confusing Aura |
+| **Blade** | ✅ Battle Cry · ✅ Frenzy |
+| **Bone** | ✅ Breaking Blow · 🚫 Wrangle |
+| **Codex** | 🚫 Book of Vyola · ⏸ Safe Haven |
+| **Grace** | 🚫 Astral Projection · ✅ Mass Enrapture |
+| **Midnight** | 🚫 Shadowhunter · ✅ Spellcharge |
+| **Sage** | ✅ Forest Sprites · ✅ Rejuvenation Barrier |
+| **Splendor** | ✅ Shield Aura · ✅ Stunning Sunlight |
+| **Valor** | ✅ Full Surge · ✅ Ground Pound |
+
+**13 modelled, 4 no effect, 1 out of combat, 0 outstanding.**
+
+**Levels 1 to 8 are complete across all nine domains** - 153 cards. Batches 24
+(Arcana, Blade, Bone), 25 (Codex, Grace, Midnight) and 26 (Sage, Splendor, Valor)
+cover the eighteen. Codex's *Book of Vyola* is a Grimoire and carries two spells,
+so its one card is three declarations.
+
+**Level 8 is where the domains stop being defensive about the same thing.** Six
+of the eighteen answer an incoming attack and each does it differently - reflect
+it, wear it down a layer at a time, shrug the armor off and take it, put a
+barrier up, thicken an aura, or simply be harder to see. The last of those,
+Midnight's *Shadowhunter*, is the one that turned out not to be an answer at all
+here: it is gated on darkness, and the simulator holds no fact about where a
+fight happens.
+
+**It is also the level that filled in the party's side of the hook table.** Five
+of the eighteen give their whole effect to somebody else, and between them they
+cost four party-wide twins of hooks that had only ever been holder-scoped:
+`ally_attack_advantage` (Battle Cry), `ally_roll_bonus` and
+`ally_extra_armor_slot` (Forest Sprites), and `ally_severity_response` (Shield
+Aura). Before this level the party could ward an ally's damage and add dice to
+their attack, and could do nothing about their roll, their armor or their
+thresholds.
+
+**It dismisses four**, and no two for the same reason. Wrangle and Astral
+Projection are position and remote sensing, the two oldest reasons in the file.
+Shadowhunter is a trigger with no representation, the Gifted Tracker reading.
+*Shared Clarity* inside the Book of Vyola is the new one, and it is worth reading
+carefully: the user's ruling is that what it changes has no representation in an
+outcome, because the effect is **symmetrical** - a pooled pair still marks the
+same total Stress, and all the card decides is which of the two tracks fills
+first.
+
 ### Order it was done in
 
 
@@ -255,20 +303,25 @@ current party could actually swap to. Then the four that had no module at all:
 
 ### What's next
 
-**Levels 1 to 6 are complete, and level 7 is two thirds done.** What remains of it
-is **Sage, Splendor and Valor** - six cards, one batch, which closes the level.
-Every domain's page has been read several times now, so the printed-page check is a
-re-read rather than a hunt, and levels 8 to 10 all sit on the pages already used.
+**Levels 1 to 8 are complete across all nine domains** - 153 cards, so every card
+a level 8 party of any class combination could hold is either running or assessed.
+What remains of the SRD is **levels 9 and 10**, thirty-six cards, and both sit on
+the pages every batch has already read.
 
-Three of those six are *X*-Touched cards, and their shared loadout gate is already
-ruled - so each one is really a short list of printed bonuses to file against the
-sheet-resolved-values rule.
+Worth knowing before picking them up, from a read of those pages during batch 24:
+level 9 and 10 print the domains' capstones, and several are shaped like
+machinery that does not exist. Blade's *Battle Monster* and Valor's *Unbreakable*
+both reach a **death move**, which `death_move_ward` already covers; Codex's
+*Disintegration Wave* kills outright rather than dealing damage, which nothing
+does; Grace's *Copycat* mimics **another player's card**, which would need a
+loadout that can be read across the party; and Sage's *Force of Nature* is a
+second Frenzy-shaped transformation, so the condition machinery built at level 8
+should carry it.
 
-Level 6 cost less machinery than level 5: batch 18 cost nothing at all, batch 19
-cost two hooks and batch 20 cost one hook and one reader on the fight state, which
-is roughly where levels 3 and 4 sat. Codex's level 6 turned out **not** to be a
-Grimoire - the domain stops printing books at level 5 - so from here the card
-count and the thing count are the same.
+Level 8 cost more machinery than any level since 7, and all of it in one
+direction - four party-wide twins plus two facts on existing hooks
+(`damage_type` on `on_damaged`, and `denies_armor` on `Condition`) plus the
+trait-bonus record on `PlayerCharacter`.
 
 One thing batch 18 surfaced that is not a domain card: **secondary weapons do not
 exist in the simulator**, so *Paired* and dual wielding contribute nothing to
@@ -1312,6 +1365,192 @@ a miss with something other than damage.
 Stress cost in the project that does not ask `will_spend_stress` - the user ruled a
 ceiling of 3 marked instead, because a rider asked on *every* cast would otherwise
 run the track dry in a few spotlights.
+
+### Batch 24 — Arcana, Blade and Bone at level 8 (6 cards)
+
+The first of level 8, and the first batch that does **not** close the level it
+opens. **Verified against the printed page** (SRD pp. 120-123), a re-read of
+pages every earlier batch has used - and the other six domains' level 8 pages
+were read at the same time, which is why the table above can name what is
+missing rather than only count it.
+
+| Card | Disposition |
+|---|---|
+| **Arcane Reflection** (Ar 8) | Modelled. Every banked Hope buys that many d6s against an incoming magic hit; a 6 negates it outright **and** deals the same damage back to whoever is spotlighted |
+| **Confusing Aura** (Ar 8) | Modelled. A Spellcast Roll (14) raises one layer, up to two more bought with Stress; each incoming hit rolls a d6 per layer, a 5 or 6 costs a layer and turns the attack away, and all 4s or lower ends the spell |
+| **Battle Cry** (Bl 8) | Modelled. Once per long rest: every ally clears a Stress, gains a Hope, and swings with Advantage until any PC fails with Fear |
+| **Frenzy** (Bl 8) | Modelled. Once every Armor Slot is marked, the Blade becomes *Frenzied* for the rest of the fight - no Armor Slots, +10 damage, +8 Severe threshold |
+| **Breaking Blow** (Bo 8) | Modelled. A Stress on a landed hit; the next successful attack on that creature, **by anybody**, deals an extra 2d12 |
+| **Wrangle** (Bo 8) | No combat effect - an Agility Roll and a Hope that move both sides around, and no positions are tracked |
+
+Two pieces of shared machinery, one of each kind the project has:
+
+- **`ally_attack_advantage`** - party content that hands *another PC's* attack
+  Advantage, and the last empty corner of a four-way table that was otherwise
+  full. GM-side content could already aid an attack on a PC and hobble a PC's
+  swing; party-side content could hobble an adversary's swing and aid its own
+  holder's. Nothing could aid an ally's, which is the whole of Battle Cry.
+  Folded with `combined` in `items/weapons.py` beside the holder-scoped hook.
+- **`Condition.denies_armor`**, plus `FightState.armor_is_denied` and one call in
+  `PlayerCharacter.take_damage`. A **field rather than a hook**, which is the
+  cheaper of the two shapes and the one `prevents_action` and `untargetable`
+  already take: the answer belongs to the state a combatant is in rather than to
+  content that has to be consulted. Because the additional-slot hook is asked
+  inside the same branch, Bone's *Brace* is correctly shut off while Frenzied
+  without knowing any of this exists.
+
+**Frenzied is a condition, and that was the batch's correction.** *Frenzy* was
+planned as a per-fight token on the holder, which would have worked; the user's
+ruling is that a state the page **names and refers back to** is a condition, the
+same call *Cloaked* got. What that buys is that the rest of the game can talk
+about it - the play-by-play says what the PC is, other content can ask, and the
+armor ban rides a field on the record rather than a private flag. It is also the
+first condition on a PC that carries no ender at all: "until there are no more
+adversaries within sight" is the whole fight in a simulator where a fight ends
+with the field cleared either way.
+
+**Frenzy's +8 Severe threshold is expressed as a band rather than as a number.**
+Nothing reads a PC's thresholds through a hook - a sheet carries them resolved,
+and every reader assumes a resolved value does not move mid-fight - so the card
+registers on `severity_response` and takes one HP off a hit that lands inside the
+window the bonus opens. That is exactly equivalent for the damage pipeline and
+invisible to everything else, which is declared as a gap: Get Back Up's trigger
+and Rune Ward's arithmetic both still see the printed number.
+
+**Breaking Blow is Chokehold's shape at four times the size.** Both mark a
+creature and pay out on whoever hits it next, and both therefore need
+`ally_extra_damage` rather than the holder-scoped hook - registered there the card
+would only ever pay its own owner. What is new is the ordering that stops a charge
+collecting itself: the damage roll asks the payout hook, and `on_hit` lays the
+charge afterwards, so the swing that marks the target never collects from it.
+
+**Arcane Reflection is the first card that answers a hit on both sides at once.**
+Scramble, Arcane Deflection and Bone-Touched all negate; this one negates *and*
+deals the same damage to whoever threw it, which is `fight.spotlighted` - the same
+handle Counterspell needed and the only one there is, since damage arrives at a PC
+carrying an amount and a type and no attacker.
+
+**Confusing Aura is the first defence that wears out.** Every other per-rest guard
+in the project is limited by uses; this one stands for a counted number of attacks
+and loses a layer to each one it turns away, so it can end by succeeding as well
+as by failing. It is also the third card to read "once per rest **on a success**"
+- Troublemaker and Hypnotic Shimmer got there first - so a failed cast costs the
+spotlight and leaves the card available.
+
+### Batch 25 — Codex, Grace and Midnight at level 8 (6 cards, 2 spells)
+
+The second of level 8, and the batch with the **most declarations and the least
+code** of any so far: six cards, of which two are built. **Verified against the
+printed page** (SRD pp. 125, 127 and 129), read at the same time as batch 24's.
+
+| Card or spell | Disposition |
+|---|---|
+| **Mass Enrapture** (Gr 8) | Modelled. One Spellcast Roll over the Far band, everything it beats *Enraptured* - then the Stress is spent at once to force a Stress on all of them and end the spell |
+| **Spellcharge** (Mid 8) | Modelled. Magic damage banks a token per HP marked, capped at the Spellcast trait; the whole pool goes into the next attack that lands, a d6 apiece |
+| **Book of Vyola** (Cx 8) | No combat effect, declared as the book and as both spells. *Memory Delve* is information; *Shared Clarity* is symmetrical, so a pooled pair marks the same total Stress either way |
+| **Safe Haven** (Cx 8) | **Out of combat** - the extra downtime move is real and large, and "a few minutes of calm to focus" is a condition a fight never meets |
+| **Astral Projection** (Gr 8) | No combat effect - remote sensing somewhere the party is not fighting, the Floating Eye case |
+| **Shadowhunter** (Mid 8) | No combat effect, dismissed on its **trigger** - nothing records how a fight is lit |
+
+One piece of shared machinery, and it is a *fact* rather than a hook:
+
+- **`on_damaged` now carries the `damage_type`.** Spellcharge's trigger names the
+  type and its payload names the HP finally marked, and this is the only hook that
+  has both - `severity_response` sees the type while the figure is still being
+  settled. The same shape `marked_armor` took one level ago, and for the same
+  reason: inferring the type afterwards from `fight.spotlighted`'s printed attack
+  would be wrong for any feature that states its own. Fourteen registrants took the
+  parameter defaulted; both sides of the table pass the type they already resolved
+  at the top of `take_damage`, so this hook and the two severity hooks can never
+  disagree about what landed.
+
+**Shadowhunter is the dismissal worth reading, because the effect is enormous.**
+Advantage on *every* attack roll and +1 Evasion is among the largest things a card
+could grant, and none of that is why it is filed here. It is dismissed on its
+trigger - "while you're shrouded in low light or darkness" - which has no
+representation at all: the simulator holds no fact about where an encounter
+happens. Reading it as always on, which is the ruling **Sage-Touched's**
+natural-environment clause got one level earlier, was offered and declined; so was
+gating it on the holder being Hidden. The two cards are worth comparing, since the
+same shape of clause got opposite answers: Sage-Touched's other benefit is a +2,
+and this one's is Advantage on everything.
+
+**Mass Enrapture is the first card ruled into a shape its own page does not
+describe.** The card is a lasting compulsion with an optional Stress that ends it;
+the ruling is that it is only ever cast when that Stress *can* be paid, and paid
+at once - so the compulsion never survives to a spotlight and what runs is an area
+attack on the GM's Stress tracks. That is recorded as a gap on the card rather
+than hidden, and it leaves level 1's *Enrapture* as the card that keeps its
+condition. Note the interaction the implementation has to avoid: without skipping
+adversaries who are already Enraptured, a mass cast would clear a compulsion
+Enrapture had bought and paid for.
+
+**Spellcharge is the first card that turns damage taken into damage dealt.**
+Never Upstaged banks wounds and pays them back, which is close, but that one keys
+on HP marked by anything; this one is magic only, which is why it needed the type.
+Worth knowing the cap is the caster's Spellcast trait, so a Wizard's pool is
+larger than a Guardian's would be - and that the pool empties into the first
+attack that lands rather than being saved.
+
+### Batch 26 — Sage, Splendor and Valor at level 8 (6 cards)
+
+The last of level 8, and the batch that cost the most machinery of any since
+batch 7. **Verified against the printed page** (SRD pp. 131, 133 and 135).
+
+| Card | Disposition |
+|---|---|
+| **Forest Sprites** (Sg 8) | Modelled. Spellcast (13), then Hope down to a floor of 2 for that many one-shot sprites - each spent on either +3 to an ally's swing or a second Armor Slot for an ally's hit |
+| **Rejuvenation Barrier** (Sg 8) | Modelled. Spellcast (15) once per rest; everyone inside clears 1d4 HP, and physical damage is halved for whoever is inside for the rest of the fight |
+| **Shield Aura** (Spl 8) | Modelled. A Stress puts an aura on the frailest ally; while it holds, a hit that marked an Armor Slot drops one further threshold, and it fades when it takes one to nothing |
+| **Stunning Sunlight** (Spl 8) | Modelled. One Spellcast Roll over the Far band, then a Hope per target for a Reaction Roll (14) - 3d20+3 on a save, 4d20+5 and *Stunned* on a failure |
+| **Full Surge** (Vlr 8) | Modelled. 3 Stress writes +2 into every one of the holder's traits for the fight |
+| **Ground Pound** (Vlr 8) | Modelled. 2 Hope and a Strength Roll over Very Close, then a Reaction Roll (17) - 4d10+8 physical, half on a save |
+
+Three pieces of shared machinery, all of them the **party-wide twin** of a hook
+that had only ever been holder-scoped:
+
+- **`ally_roll_bonus`** - a flat bonus on another PC's attack roll. The flat twin
+  of `ally_attack_advantage`, and not interchangeable with it: Advantage is a d6
+  added to a duality roll, so a card printing "+3" cannot be expressed as one.
+- **`ally_extra_armor_slot`** - a further Armor Slot for another PC's hit. It
+  inherits `extra_armor_slot`'s trigger exactly, being asked from inside the same
+  branch, so it never fires against direct damage or against a PC whose armor a
+  condition has denied.
+- **`ally_severity_response`** - the HP another PC's hit marks, in threshold
+  bands. The last thing the party side could not say. `ally_damage_reduction`
+  reaches somebody else's hit but works on the raw number, which is right for a
+  ward rolling 1d8 and wrong for a card that moves a band: subtracting enough to
+  cross one would also change the figure every other reader sees, so an ally's Get
+  Back Up would stop firing. It carries `marked_armor`, which its holder-scoped
+  twin does not, because Shield Aura's trigger is exactly that.
+
+And one thing that is not a hook: **`PlayerCharacter.gain_trait_bonus`**, with a
+`trait_bonuses` record beside it.
+
+**Full Surge is the first card that moves a character's traits**, and the ruling
+on how is the interesting part. `traits` is already the effective mapping every
+reader consults, so writing the +2 into it is what makes the card complete - it
+reaches action rolls, the dice a Spellcast-trait spell counts, and the damage Body
+Basher, Rage Up and Cruel Precision read off Strength, Finesse and Agility. A
+`roll_bonus` of +2 instead was offered and declined, because a card that says *all
+of your traits* is not a bonus to one kind of roll. What keeps the mutation
+compatible with the standing sheet-carries-resolved-values rule is the record: the
+authored numbers stay recoverable, so nothing later has to guess whether a 4 was
+written down or bought.
+
+**Ground Pound is the first card typed by ruling rather than by the page.** It
+prints no damage type at all, which is unusual, and the user ruled it physical on
+the fiction. The alternative is worth recording because it is not neutral:
+untyped damage matches no resistance and no immunity, so leaving it as printed
+would have made the card reliably better against exactly the adversaries built to
+resist things.
+
+**Rejuvenation Barrier is the first party-wide resistance**, and it is expressed
+as a *reduction* - `damage_resistance` is holder-scoped and this barrier belongs
+to whoever cast it. The two consequences are declared on the card rather than
+hidden: it sums with other reductions instead of following the SRD's "strongest
+single resistance" rule, and it lands after any real resistance the target carries
+rather than being reconciled with it.
 
 ## Consolidating `_spellcast`
 

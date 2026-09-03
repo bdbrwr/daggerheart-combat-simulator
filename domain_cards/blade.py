@@ -22,17 +22,26 @@ Level 7's **Glancing Blow** is the first card anywhere that pays out on the
 holder's *own* attack failing. Every other card keyed on a miss - Redirect, Rapid
 Riposte - answers a miss made against its holder, which is a different hook
 pointed the other way across the swing.
+
+Level 8 is the domain's most generous card and its most selfish, side by side.
+**Battle Cry** gives every one of its effects away and keeps none, which is why
+`ally_attack_advantage` had to exist. **Frenzy** is the first card that puts its
+own holder into a named state for the rest of the fight - *Frenzied*, a condition
+in the sense Cloaked is - and the first that turns a PC's armor off.
 """
 
 import random
 
 from content.aoe import Range, targets_reached
+from content.conditions import FRENZIED, Condition
 from content.registry import (
     DamagePool,
     Fight,
     Holder,
     adjust_damage_pool,
+    ally_attack_advantage,
     ally_damage_reduction,
+    ally_on_roll,
     attack_advantage,
     attack_failed,
     damage_bonus,
@@ -41,6 +50,7 @@ from content.registry import (
     dealt_damage_type,
     death_move_ward,
     extra_damage,
+    free,
     no_combat_effect,
     on_hit,
     out_of_combat_ability,
@@ -49,6 +59,7 @@ from content.registry import (
 )
 from dice.common import AdvantageState
 from dice.damage import DiceGroup, roll_damage
+from dice.duality import DualityOutcome
 from items.registry import find_weapon
 
 # Not Good Enough rerolls any die showing this or less.
@@ -755,6 +766,266 @@ def glancing_blow(holder: Holder, target, roll, fight: Fight = None) -> None:
     fight.note(
         f"{holder.name}'s miss still glances off {target.name} for {damage.total}"
     )
+
+
+# --- Battle Cry ------------------------------------------------------------------
+
+BATTLE_CRY = "Battle Cry"
+
+# Set on the crier while the rally stands. On the crier rather than on each ally,
+# because the card's ender reads "until **you** or an ally rolls a failure with
+# Fear" - one rally, ended once, however many people it is helping.
+BATTLE_CRY_RALLIED = "Battle Cry rallied"
+
+
+@free(
+    BATTLE_CRY,
+    unmodelled=[
+        "'while you're charging into danger' - a fiction trigger with nothing to "
+        "read it off. Taken as available on the holder's own spotlight, which is "
+        "where every other free ability is offered",
+        "'All allies who can **hear** you' - no positions are tracked, so every "
+        "conscious ally is reached. At a table a spread-out party would not all "
+        "be in earshot",
+    ],
+)
+def battle_cry(holder: Holder, fight: Fight) -> bool:
+    """Battle Cry (Blade, level 8). One shout that pays the whole party.
+
+    SRD: "Once per long rest, while you're charging into danger, you can muster a
+    rousing call that inspires your allies. All allies who can hear you can each
+    clear a Stress and gain a Hope. Additionally, your allies gain advantage on
+    attack rolls until you or an ally rolls a failure with Fear."
+
+    **Everything it does goes to somebody else.** The crier clears nothing, gains
+    nothing and swings at no advantage - "your allies" is who the card names
+    throughout - which is why a lone Blade declines rather than spending the use.
+    That is the standing rule that a benefit computing to zero is not paid for,
+    read off something the player can see: whether anybody is standing with them.
+
+    SIMULATION RULE - policy, ruled. **The first spotlight of the fight**, or as
+    near as the budget allows - it costs nothing but the once-per-long-rest use,
+    and the advantage lasts until somebody fails with Fear, so the earliest cry
+    covers the most attacks. Premonition's and Deadly Focus's reading of a free
+    once-per-rest: holding one back mostly means never using it. Waiting for an
+    ally with a Stress marked was offered and declined.
+
+    So the Stress clear and the Hope are sometimes spent on a party that has taken
+    no damage yet, and the advantage is what the card is really being cast for.
+    `clear_stress` and `gain_hope` both clamp, so a full ally simply gains nothing.
+
+    Once per **long** rest, so a party running a second encounter without one
+    walks in with it already spent.
+    """
+    if fight is None:
+        return False
+
+    allies = [pc for pc in fight.conscious_party if pc is not holder]
+    if not allies:
+        return False
+    if not fight.use_once_per_rest(holder, BATTLE_CRY, long=True):
+        return False
+
+    for ally in allies:
+        ally.clear_stress(1)
+        ally.gain_hope(1)
+
+    fight.set_token(holder, BATTLE_CRY_RALLIED, 1)
+    fight.note(
+        f"{holder.name} raises a battle cry; {len(allies)} "
+        f"{'allies rally' if len(allies) > 1 else 'ally rallies'} behind them"
+    )
+    return True
+
+
+@ally_attack_advantage(
+    BATTLE_CRY,
+    unmodelled=[
+        "Attacks that aren't a weapon swing. This hook is asked where a PC's "
+        "standard attack is rolled, so a Grimoire spell or any card that rolls its "
+        "own attack passes its own advantage state and never sees the rally - the "
+        "same gap Reckless declares on the holder-scoped hook next door",
+    ],
+)
+def battle_cry_rallies(
+    holder: Holder, attacker, target, fight: Fight = None
+) -> AdvantageState | None:
+    """The advantage a standing rally hands one ally's swing.
+
+    The first registrant on `ally_attack_advantage`, and the reason that hook
+    exists: `attack_advantage` is scoped to whoever is swinging, so a card
+    registered there could only ever help its own owner - which is exactly the one
+    person this card does not help.
+
+    `attacker is not holder` is the card's own word: *your allies*. So a Blade who
+    cried keeps swinging at whatever advantage they had already.
+    """
+    if fight is None or attacker is holder:
+        return None
+    if not fight.token_count(holder, BATTLE_CRY_RALLIED):
+        return None
+    return AdvantageState.ADVANTAGE
+
+
+@ally_on_roll(BATTLE_CRY)
+def battle_cry_falters(
+    holder: Holder, roller: Holder, roll, fight: Fight = None
+) -> None:
+    """The rally ending, the first time anybody fails with Fear.
+
+    SRD: "until you **or an ally** rolls a failure with Fear" - so this watches
+    every PC's action roll rather than the crier's, which is why it is on the
+    party-wide hook and deliberately does **not** check `holder is not roller`.
+    The crier's own failure ends their rally, exactly as the card says.
+
+    A Reaction Roll correctly never reaches this: `apply_ally_on_roll` is asked
+    where a spotlight's action roll is spent, and a Reaction Roll produces neither
+    Hope nor Fear here (SIMULATION-RULES.md), so there is no failure with Fear on
+    one to end anything.
+    """
+    if fight is None or roll is None:
+        return
+    if not fight.token_count(holder, BATTLE_CRY_RALLIED):
+        return
+    if roll.is_success or roll.outcome is not DualityOutcome.FEAR:
+        return
+
+    fight.set_token(holder, BATTLE_CRY_RALLIED, 0)
+    fight.note(f"{roller.name} falters, and {holder.name}'s battle cry dies away")
+
+
+# --- Frenzy ----------------------------------------------------------------------
+
+FRENZY = "Frenzy"
+
+FRENZY_DAMAGE = 10
+FRENZY_SEVERE_THRESHOLD = 8
+
+
+@free(
+    FRENZY,
+    unmodelled=[
+        "'until there are no more adversaries within sight' - a fight ends with "
+        "the field cleared either way, so the Frenzied condition carries no `end` "
+        "and runs to the end of the fight. Nothing carries between fights: a PC is "
+        "spawned fresh from their sheet each time",
+        "Grace's *Grace-Touched* can still pay a Stress cost with an Armor Slot "
+        "while Frenzied. That substitution is asked from "
+        "`PlayerCharacter._pays_with_armor`, which has no fight to read the "
+        "condition off - the same reason `armor_instead_of_stress` takes no "
+        "`fight`. So the ban reaches the damage pipeline and not that one path",
+    ],
+)
+def frenzy(holder: Holder, fight: Fight) -> bool:
+    """Frenzy (Blade, level 8). Give up your armor for the rest of the fight.
+
+    SRD: "Once per long rest, you can go into a *Frenzy* until there are no more
+    adversaries within sight. While *Frenzied*, you can't use Armor Slots, and you
+    gain a +10 bonus to your damage rolls and a +8 bonus to your Severe damage
+    threshold."
+
+    **A named state, so it is a condition** - `FRENZIED`, applied here and read
+    back by the card's other two clauses, exactly as *Cloaked* is. That is the
+    user's ruling: the page names the state and then refers to it, so the rest of
+    the game can talk about it and the play-by-play says what the PC is. It
+    carries no `end`, which is how "until there are no more adversaries within
+    sight" comes out here.
+
+    The armor ban rides `Condition.denies_armor`, the one piece of machinery this
+    card needed. Everything else it does was already expressible.
+
+    SIMULATION RULE - policy, ruled. **Not until every Armor Slot is already
+    marked.** The ban is what the card pays with, so a Blade frenzies once there
+    is nothing left to lose - and a Blade whose sheet carries no armor at all
+    frenzies on their first spotlight, correctly, since there was never anything
+    to give up. Going in on the first spotlight regardless, and holding it until
+    near death, were both offered and declined.
+
+    The consequence is worth naming: the Frenzy starts later than it could, so it
+    runs for fewer spotlights than the card allows.
+
+    Once per **long** rest, so a party running a second encounter without one
+    walks in with it already spent.
+    """
+    if fight is None or fight.has_condition(holder, FRENZIED):
+        return False
+    if holder.armor_unmarked > 0:
+        return False
+    if not fight.use_once_per_rest(holder, FRENZY, long=True):
+        return False
+
+    fight.apply_condition(
+        holder, Condition(name=FRENZIED, source=holder, denies_armor=True)
+    )
+    fight.note(f"{holder.name} throws their armor aside and goes into a Frenzy")
+    return True
+
+
+@damage_bonus(
+    FRENZY,
+    unmodelled=[
+        "Damage rolled by anything other than a weapon swing. `total_damage_bonus` "
+        "is asked where a PC swings - `combat/policy.py` and Bone's Boost - and a "
+        "card that rolls Proficiency dice of its own never consults it. The same "
+        "gap Rage Up and Voice of Reason declare",
+    ],
+)
+def frenzy_damage(holder: Holder, target, fight: Fight = None) -> int:
+    """The +10 a Frenzied Blade adds to their damage roll.
+
+    Registered on the same name as the free ability above, the arrangement one
+    card uses to reach several hooks. A flat add rather than dice, so it belongs
+    here - and landing before the target's thresholds is most of what it buys, the
+    same point Rage Up makes about its own bonus.
+
+    **+10 is the largest flat damage bonus any ported card grants**, which is a
+    fact about the printed number rather than a claim about what it will do.
+    """
+    if fight is None or not fight.has_condition(holder, FRENZIED):
+        return 0
+    return FRENZY_DAMAGE
+
+
+@severity_response(
+    FRENZY,
+    unmodelled=[
+        "The threshold is not actually moved: the bonus is expressed as one band "
+        "taken off a hit that lands inside the window it opens, which is exactly "
+        "equivalent for the damage pipeline and invisible to everything else. So "
+        "content that reads `severe_threshold` directly - Get Back Up's trigger, "
+        "Rune Ward's decision about whether a d8 could save an HP - sees the "
+        "printed number while its holder is Frenzied. Moving the number instead "
+        "would mean a resolved value on the sheet changing mid-fight, which every "
+        "reader of one assumes cannot happen",
+    ],
+)
+def frenzy_endures(
+    holder: Holder, amount: int, hp_to_mark: int, fight: Fight = None, damage_type=None
+) -> int:
+    """The +8 Severe threshold, as the HP it saves. Returns what the hit now marks.
+
+    A hit at or above the printed Severe threshold but below it plus 8 would have
+    marked 3 HP and should mark 2, which is one band off. A hit above the whole
+    window is Severe either way, and a hit below the printed threshold never
+    reached Severe at all - so those two are returned untouched.
+
+    Runs alongside the free Armor Slot rather than instead of it, except that a
+    Frenzied PC has no slot to mark: the ban above sees to that, so in practice
+    this is the only softening a Frenzy has left.
+
+    `damage_type` is ignored - the card names no type, so it answers for both.
+    """
+    if fight is None or not fight.has_condition(holder, FRENZIED):
+        return hp_to_mark
+    if hp_to_mark <= 0:
+        return hp_to_mark
+    if not (
+        holder.severe_threshold
+        <= amount
+        < holder.severe_threshold + FRENZY_SEVERE_THRESHOLD
+    ):
+        return hp_to_mark
+    return hp_to_mark - 1
 
 
 out_of_combat_ability(

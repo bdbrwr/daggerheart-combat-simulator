@@ -43,6 +43,11 @@ wound into Stress on the GM's - the first card anywhere to reach the *resource a
 mark lands on* rather than its size, which is why it needed two hooks nothing else
 uses. **Endless Charisma** is dismissed on its trigger, a social roll the
 simulator never makes.
+
+Level 8's **Mass Enrapture** is level 1's Enrapture over the whole Far band, and
+the ruling on it is the interesting part: the card is cast only when the Stress
+that *ends* the spell can be paid, so the compulsion never gets a spotlight and
+what the card actually does here is force a Stress on everything it caught.
 """
 
 import random
@@ -596,6 +601,7 @@ def never_upstaged(
     hp_marked: int,
     fight: Fight,
     marked_armor: bool = False,
+    damage_type=None,
 ) -> None:
     """Never Upstaged (Grace, level 6), first half. Bank the wound as tokens.
 
@@ -889,7 +895,117 @@ def _most_burdened(caster: Holder, fight: Fight):
     return random.choice([pc for pc in allies if pc.stress_marked == worst])
 
 
+# --- Mass Enrapture ---------------------------------------------------------------
+
+MASS_ENRAPTURE = "Mass Enrapture"
+
+# How wide the sweep has to be before the spell is cast at all. Ruled: the card
+# is taken for its second clause, and forcing a Stress on one or two adversaries
+# is not worth a spotlight and a Stress.
+MASS_ENRAPTURE_WORTH_IT = 3
+
+
+@action(
+    MASS_ENRAPTURE,
+    unmodelled=[
+        "'against all targets within Far range' - no positions are tracked, so "
+        "the area rule in SIMULATION-RULES.md decides how many the sweep catches",
+        "The Enrapture itself never gets to do anything. Under the ruling the "
+        "spell is only cast when the Stress that **ends** it can be paid, so the "
+        "condition is applied and cleared inside one action and no adversary ever "
+        "spends a spotlight compelled by it. The card's lasting half is therefore "
+        "unreachable by design rather than unimplemented - `Enrapture` at level 1 "
+        "is the card that keeps its condition",
+        "An adversary already Enraptured is skipped entirely, per the standing "
+        "don't-re-apply rule, so it takes no Stress from this either. That also "
+        "keeps the two cards from interfering: without it, a mass cast would clear "
+        "a compulsion Enrapture had bought and paid for",
+    ],
+)
+def mass_enrapture(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Mass Enrapture (Grace, level 8). Catch the field's attention, then break it.
+
+    SRD: "Make a Spellcast Roll against all targets within Far range. Targets you
+    succeed against become temporarily *Enraptured*. While *Enraptured*, a
+    target's attention is fixed on you, narrowing their field of view and drowning
+    out any sound but your voice. **Mark a Stress** to force all *Enraptured*
+    targets to mark a Stress, ending this spell."
+
+    One roll against the whole area, each adversary checked against its own
+    Difficulty - the Wild Flame shape, and the widest band any party card sweeps.
+
+    SIMULATION RULE - policy, ruled. **The cast and the Stress are one move.** The
+    user's ruling is that the card is only worth taking for its second clause here,
+    so it is cast only when the Far band holds `MASS_ENRAPTURE_WORTH_IT` or more
+    *and* the shared last-slot rule allows the Stress - and then the Stress is
+    spent immediately, forcing one on everything the roll caught and ending the
+    spell. So this resolves as an area attack on the GM's Stress tracks rather than
+    as a lasting compulsion, which is what the declared gap above records.
+
+    Both gates are checked **before** the roll and paid after it, so declining
+    costs nothing - the arrangement every gated area card here uses.
+
+    Worth knowing what filling an adversary's Stress buys, since it is the whole
+    of the card: an adversary with no free Stress cannot pay for its Action
+    features. It does **not** make them Vulnerable - `Adversary.is_vulnerable` is
+    always False, which SIMULATION-RULES.md records beside Grace-Touched.
+    """
+    if fight is None:
+        return None
+
+    area = [
+        adversary
+        for adversary in targets_in_area(Range.FAR, fight.living_adversaries)
+        if not fight.has_condition(adversary, ENRAPTURED)
+    ]
+    if len(area) < MASS_ENRAPTURE_WORTH_IT:
+        return None
+    if not caster.will_spend_stress(1):
+        return None
+
+    attack_roll = spellcast(caster, target, fight, difficulty=area_difficulty(area))
+    if attack_roll is None:
+        return None
+
+    caught = targets_beaten(attack_roll, area)
+    if not caught:
+        fight.note(f"{caster.name}'s voice reaches nobody ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    for adversary in caught:
+        fight.apply_condition(
+            adversary,
+            Condition(name=ENRAPTURED, end=when_the_gm_pays, source=caster),
+        )
+    fight.note(f"{caster.name} enraptures {len(caught)} adversaries")
+
+    # The second clause, taken at once - the Stress the cast was gated on. Only
+    # the adversaries this spell enraptured are forced and released, so a target
+    # held by Enrapture keeps its compulsion.
+    caster.spend_stress(1)
+    for adversary in caught:
+        adversary.mark_stress(1)
+        fight.clear_condition(adversary, ENRAPTURED)
+    fight.note(
+        f"{caster.name} breaks the spell, costing {len(caught)} adversaries a Stress"
+    )
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
 # --- Assessed rather than built ----------------------------------------------
+
+no_combat_effect(
+    "Astral Projection",
+    "Once per long rest, a Stress creates a projected copy of the caster that can "
+    "appear anywhere they have been before, seeing, hearing and affecting the "
+    "world as though they were there, until their next rest or the projection "
+    "takes damage. Remote sensing somewhere the party is not fighting, which is "
+    "the standing answer Floating Eye and Through Your Eyes already have - and "
+    "the projection appearing 'anywhere you've been before' puts it outside the "
+    "encounter by construction. At a table it is a scout, an alibi and a "
+    "conversation held from another building; here there is nothing for it to "
+    "touch.",
+)
 
 out_of_combat_ability(
     "Inspirational Words",

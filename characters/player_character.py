@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from content import (
+    ally_extra_armor_slots,
+    ally_soften_damage,
     apply_ally_on_damaged,
     apply_on_damaged,
     death_move_prevented,
@@ -101,6 +103,23 @@ class PlayerCharacter:
     # module via content/registry.py instead of being repeated in every sheet
     # that carries it. Both end up in the coverage report.
     not_modelled: dict[str, str] = field(default_factory=dict)
+
+    # What content has added to this character's traits during the fight, by trait
+    # name. `traits` above is the *effective* mapping and always has been - it is
+    # per-fight state on a per-fight instance - so every existing reader
+    # (`items/weapons.py`, `content/spellcast.py`, Rage Up, Cruel Precision, a
+    # card counting Spellcast dice) picks a bonus up for free, which is what
+    # "a bonus to all of your character traits" has to mean.
+    #
+    # This record is what keeps that honest rather than lossy: the sheet's authored
+    # numbers stay recoverable by subtraction, a report can say what was granted,
+    # and nothing has to guess later whether a 4 was written on the sheet or bought
+    # mid-fight. Valor's *Full Surge* is the first and only source.
+    #
+    # Not loaded from JSON: a character sheet describes a PC walking into a fight,
+    # and nothing has been granted yet. Nothing carries between fights either - a
+    # PC is spawned fresh each time - which is why there is no expiry here.
+    trait_bonuses: dict[str, int] = field(default_factory=dict)
 
     hp_marked: int = 0
     stress_marked: int = 0
@@ -304,6 +323,34 @@ class PlayerCharacter:
             return False
         self.stress_marked += amount
         return True
+
+    def gain_trait_bonus(self, amount: int, traits: list[str] | None = None) -> None:
+        """Add `amount` to some or all of this character's traits for the fight.
+
+        `traits` names which to raise, defaulting to **all of them** - which is
+        what Valor's *Full Surge* grants ("+2 bonus to all of your character
+        traits"). Names are matched as the sheet keys them, lowercased, so a caller
+        passing "Agility" would miss; content should pass the keys it read.
+
+        The bonus goes into `traits` itself, so everything that reads a trait sees
+        it - the roll a swing makes, the dice a Spellcast-trait spell counts, and
+        the damage Body Basher, Rage Up and Cruel Precision read off Strength,
+        Finesse and Agility. That completeness is the point: a card that says *all
+        of your traits* cannot be expressed as a bonus to one kind of roll.
+
+        What it is added to is *effective* state rather than the sheet. `traits` is
+        already per-fight state on a per-fight instance, and `trait_bonuses` keeps
+        the record of what was granted, so the authored numbers stay recoverable
+        and a report can tell a 4 that was written down from a 4 that was bought.
+
+        Additive if called twice, which nothing does today; there is no expiry
+        because nothing carries between fights.
+        """
+        for trait in self.traits if traits is None else traits:
+            if trait not in self.traits:
+                continue
+            self.traits[trait] += amount
+            self.trait_bonuses[trait] = self.trait_bonuses.get(trait, 0) + amount
 
     def mark_armor_slot(self, amount: int) -> None:
         self.armor_marked = min(self.armor_marked + amount, self.armor_max)
@@ -572,7 +619,16 @@ class PlayerCharacter:
         # triggers on exactly that absence; see `on_damaged`.
         marked_armor = False
 
-        if not direct and self.should_mark_armor_slot():
+        # A condition can shut the armor off entirely - Blade's *Frenzy* trades
+        # every Armor Slot for +10 damage, and "while Frenzied, you can't use
+        # Armor Slots" is the whole of what it pays with. Read generically off
+        # `Condition.denies_armor`; nothing here knows the condition's name, or
+        # that any such condition exists. Because the additional-slot hook is
+        # asked inside the branch below, content that marks *further* slots is
+        # shut off with the free one and needs to know nothing about it.
+        denied = fight is not None and fight.armor_is_denied(self)
+
+        if not direct and not denied and self.should_mark_armor_slot():
             marked_armor = True
             self.mark_armor_slot(1)
             hp_to_mark = max(hp_to_mark - 1, 0)
@@ -587,17 +643,35 @@ class PlayerCharacter:
             # Clamped to what is actually left, so content asking for more slots
             # than the PC has cannot mark negative HP. Nothing here knows what
             # any of it is.
-            wanted = extra_armor_slots(self, amount, hp_to_mark, fight, kind)
+            # Holder-scoped first, then content **another PC** carries that marks
+            # a slot for this one - Sage's Forest Sprites, whose sprite stands
+            # beside an ally and takes a second slot with them. The two sum, and
+            # both inherit the trigger this branch is: a free slot has gone in.
+            wanted = extra_armor_slots(
+                self, amount, hp_to_mark, fight, kind
+            ) + ally_extra_armor_slots(self, amount, hp_to_mark, fight, kind)
             marked_extra = min(max(wanted, 0), self.armor_unmarked)
             if marked_extra:
                 self.mark_armor_slot(marked_extra)
                 hp_to_mark = max(hp_to_mark - marked_extra, 0)
 
         hp_to_mark = soften_damage(self, amount, hp_to_mark, fight, kind)
+
+        # And party content that softens somebody *else's* hit in threshold bands -
+        # Splendor's Shield Aura, which drops the hit an extra band when its target
+        # marked an Armor Slot. After the holder's own cards, so a hit passes what
+        # the PC carries first, and before the hardening below, which keeps the
+        # ordering rule intact: everything that softens has its say before anything
+        # that worsens. `marked_armor` goes through because this hook's first
+        # registrant keys on it and nothing else can see it by now.
+        hp_to_mark = ally_soften_damage(
+            self, amount, hp_to_mark, fight, kind, marked_armor
+        )
+
         hp_to_mark = harden_damage(self, amount, hp_to_mark, fight, kind)
 
         self.mark_hp_and_check_death(hp_to_mark, fight)
-        apply_on_damaged(self, amount, hp_to_mark, fight, marked_armor)
+        apply_on_damaged(self, amount, hp_to_mark, fight, marked_armor, kind)
 
         # And content another PC carries that watches the *party* take damage,
         # rather than only its own holder - the Codex spell Sigil of Retribution,

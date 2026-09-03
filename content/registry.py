@@ -184,6 +184,14 @@ class Holder(Protocol):
     def can_spend_hope(self, amount: int = 1) -> bool: ...
     def spend_hope(self, amount: int) -> None: ...
     def clear_hp(self, amount: int) -> None: ...
+
+    # Raise some or all of this holder's traits for the fight. `traits` above is
+    # the effective mapping, so a bonus granted here reaches every reader of it -
+    # the roll, the dice a Spellcast-trait spell counts, the damage Body Basher
+    # reads off Strength. Valor's *Full Surge* is the only caller, and only ever
+    # on a PC; adversaries have no traits to raise.
+    def gain_trait_bonus(self, amount: int, traits: list[str] | None = None) -> None: ...
+
     def mark_armor_slot(self, amount: int) -> None: ...
     def clear_armor_slot(self, amount: int) -> None: ...
 
@@ -252,6 +260,12 @@ class Fight(Protocol):
     def release_conditions_from(self, source) -> list: ...
     def is_vulnerable(self, combatant) -> bool: ...
     def is_hidden(self, combatant) -> bool: ...
+
+    # Whether a condition currently stops this combatant marking Armor Slots -
+    # Blade's *Frenzy*. On the protocol because `PlayerCharacter.take_damage` asks
+    # it, and that module reaches a fight only through this shape.
+    def armor_is_denied(self, combatant) -> bool: ...
+
     def disadvantaged_on(self, holder, trait: str) -> bool: ...
     def token_count(self, holder, name: str) -> int: ...
     def add_token(self, holder, name: str, cap: int) -> bool: ...
@@ -344,6 +358,10 @@ _ally_extra_damage: dict[str, Callable] = {}
 _attack_misses: dict[str, Callable] = {}
 _death_move_wards: dict[str, Callable] = {}
 _adversary_attack_disadvantages: dict[str, Callable] = {}
+_ally_attack_advantages: dict[str, Callable] = {}
+_ally_roll_bonuses: dict[str, Callable] = {}
+_ally_extra_armor_slots: dict[str, Callable] = {}
+_ally_severity_responses: dict[str, Callable] = {}
 _ally_on_damaged: dict[str, Callable] = {}
 _move_rescinds: dict[str, Callable] = {}
 _damage_scalings: dict[str, Callable] = {}
@@ -1122,6 +1140,150 @@ def adversary_attack_disadvantage(name: str, unmodelled: Iterable[str] = ()):
     return register
 
 
+def ally_attack_advantage(name: str, unmodelled: Iterable[str] = ()):
+    """Register party content that hands **another PC's** attack Advantage.
+
+    Signature: `(holder, attacker, target, fight) -> AdvantageState | None` - the
+    state this content contributes, or None to decline. Scanned across the
+    conscious party, since `holder` and `attacker` are generally different PCs.
+    The Blade card *Battle Cry* is the reason: "your allies gain advantage on
+    attack rolls until you or an ally rolls a failure with Fear".
+
+    **`attack_advantage` next door cannot say this.** That hook is holder-scoped
+    on whoever is swinging, so a card registered there only ever helps its own
+    owner - which is right for Reckless and precisely wrong for a card whose whole
+    point is the people around you. The same argument that gave Parallela
+    `ally_on_hit` and Chokehold `ally_extra_damage`, arriving at the attack roll.
+
+    **The last empty corner of the four-way table.** GM-side content could already
+    aid an attack on a PC (`attack_advantage_against`) and hobble a PC's swing
+    (`party_attack_disadvantage`); party-side content could hobble an adversary's
+    swing (`adversary_attack_disadvantage`) and aid its own holder's. Nothing
+    could aid an ally's, and this is it.
+
+    Folded into the roll with `combined`, so it cancels against a hobble rather
+    than overriding it - the treatment every other source in that fold gets.
+
+    Asked once per swing, immediately before the roll and outside its closure,
+    which makes **being asked the commitment**: the contract every pre-roll hook
+    keeps, so content spending something here has spent it. Content that means an
+    ally's attack rather than anybody's checks `attacker is not holder` itself.
+
+    One call site, in `items/weapons.py`, beside the holder-scoped hook. So it
+    reaches a weapon swing and the cards that swing through `attack_with`, and not
+    a card that rolls an attack of its own - the gap Reckless already declares.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_attack_advantages, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def ally_roll_bonus(name: str, unmodelled: Iterable[str] = ()):
+    """Register party content that adds a flat bonus to **another PC's** attack roll.
+
+    Signature: `(holder, attacker, target, fight, trait) -> int` - the bonus, or 0
+    to decline. Scanned across the conscious party and the answers sum, since
+    `holder` and `attacker` are generally different PCs. Sage's *Forest Sprites*
+    is the reason: "your allies gain a +3 bonus to attack rolls against
+    adversaries within Melee range of a sprite".
+
+    **The flat twin of `ally_attack_advantage`.** That hook returns an
+    `AdvantageState` and this one returns a number, which is the whole difference -
+    Daggerheart's Advantage is a d6 added to a duality roll, so the two are not
+    interchangeable and a card printing "+3" cannot be expressed as Advantage.
+
+    **Not `roll_bonus`**, which is holder-scoped on whoever is rolling: registered
+    there a card would only ever help its own owner, which is precisely what a
+    card written for *your allies* does not do.
+
+    Asked once per swing, immediately before the roll and outside its closure, so
+    **being asked is the commitment** - the contract every pre-roll hook keeps.
+    Content whose sprites are consumed by granting a benefit spends one here.
+
+    One call site, in `items/weapons.py`, beside the two advantage hooks. So it
+    reaches a weapon swing and the cards that swing through `attack_with`, and not
+    a Spellcast attack - the same gap Reckless and Battle Cry declare, and the
+    narrower reading of "attack rolls" of the two available.
+
+    `trait` is the trait being swung, passed on unchanged for the reason
+    `roll_bonus` carries one; no registrant reads it yet.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_roll_bonuses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def ally_extra_armor_slot(name: str, unmodelled: Iterable[str] = ()):
+    """Register party content that marks further Armor Slots for **another PC**.
+
+    Signature: `(holder, target, amount, hp_to_mark, fight, damage_type) -> int` -
+    how many *additional* slots `target` marks, or 0 to decline. Scanned across the
+    conscious party and the answers sum. Sage's *Forest Sprites* is the reason: "an
+    ally who marks an Armor Slot while within Melee range of a sprite can mark an
+    additional Armor Slot".
+
+    **The party-wide twin of `extra_armor_slot`**, and it keeps that hook's
+    contract exactly: it is asked **only where a free Armor Slot has actually been
+    marked**, so it never fires against direct damage, against a PC with no slots
+    free, or against a PC a condition has denied their armor. The caller marks the
+    slots and takes the same number off `hp_to_mark`, clamped to what is free.
+
+    Holder-scoping it would mean a sprite conjured by the Druid could only ever
+    help the Druid, which is the one PC the card does not name.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_extra_armor_slots, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def ally_severity_response(name: str, unmodelled: Iterable[str] = ()):
+    """Register party content that changes the HP a hit marks on **another PC**.
+
+    Signature:
+    `(holder, target, amount, hp_to_mark, fight, damage_type, marked_armor) -> int`
+    - the HP the hit should now mark. Scanned across the conscious party, since
+    `holder` and `target` are generally different PCs. Splendor's *Shield Aura* is
+    the reason: a Stress puts an aura on somebody else, and "when the target marks
+    an Armor Slot, they reduce the severity of the attack by an additional
+    threshold".
+
+    **The party-wide twin of `severity_response`**, and the last thing the party
+    side could not say. `ally_damage_reduction` next door reaches somebody else's
+    hit but works on the **raw number**, which is right for a ward rolling 1d8 and
+    wrong for a card that moves a *threshold band*: subtracting enough to cross a
+    band would also change the figure every other reader sees, so a card keyed on
+    "when you take Severe damage" would stop firing.
+
+    `marked_armor` is in the signature and not in its holder-scoped twin's,
+    because this hook's first registrant needs it: Shield Aura pays out only when
+    its target marked an Armor Slot, and by the time the severity hooks run that
+    is over. Content that does not care ignores it.
+
+    Runs **after** `soften_damage` and before `harden_damage`, so it sees what the
+    holder's own cards have already left and the ordering rule stays what it was:
+    everything that softens gets its say before anything that worsens.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_severity_responses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
 def attack_missed(name: str, unmodelled: Iterable[str] = ()):
     """Register content on a *target* that responds to an incoming attack failing.
 
@@ -1616,7 +1778,7 @@ def difficulty_bonus(name: str, unmodelled: Iterable[str] = ()):
 def on_damaged(name: str, unmodelled: Iterable[str] = ()):
     """Register content that fires when its holder has just taken damage.
 
-    Signature: `(holder, amount, hp_marked, fight, marked_armor) -> None`.
+    Signature: `(holder, amount, hp_marked, fight, marked_armor, damage_type) -> None`.
     Distinct from `severity_response` and `severity_increase`, which are asked
     *while* a hit is being worked out and return the HP it should cost. This
     fires afterwards, when the marking is done, for content that reacts rather
@@ -1637,6 +1799,20 @@ def on_damaged(name: str, unmodelled: Iterable[str] = ()):
     **Always False on the GM's side**, since adversaries have no Armor Slots at
     all. Defaulted on every registrant, so the ten adversary features and the two
     party cards that ignore it were untouched when it was added.
+
+    `damage_type` is the `DamageType` the hit arrived with, or None, and it is
+    here for the reason `severity_response` gives for carrying one: the type is a
+    fact about the hit exactly as `amount` and `hp_marked` are, and the SRD keys
+    plenty of content on it. Midnight's *Spellcharge* is the first registrant that
+    needs it - "when you take **magic** damage, place tokens equal to the number
+    of Hit Points you marked" needs the type *and* the settled figure, and this is
+    the only hook that has both. Reading the type off `fight.spotlighted`'s
+    printed attack instead would be wrong for any feature that states its own,
+    which is the same inference `marked_armor` was added to avoid.
+
+    **Untyped damage matches no restriction**, the rule every type-carrying hook
+    follows: a hit with no type satisfies neither "physical only" nor "magic
+    only", so missing data can only ever fail to fire something.
     """
 
     def register(function: Callable) -> Callable:
@@ -2728,6 +2904,93 @@ def granted_action_roll_advantage(holder, target, fight=None):
     return combined(*states) if states else AdvantageState.NONE
 
 
+def ally_granted_attack_advantage(attacker, target, fight=None):
+    """Everything the *party* carries that changes the state of `attacker`'s swing.
+
+    Returns an `AdvantageState`, `NONE` when nothing answers. The party-wide twin
+    of `granted_attack_advantage`, asked from the same place and folded the same
+    way - see `ally_attack_advantage` for why the two hooks are not one.
+
+    Everything registered gets its say and the answers are folded rather than
+    first-answer-wins, so a PC rallied by one card and hobbled by another lands
+    where the SRD puts them.
+
+    `NONE` without a fight, since there is no party to scan.
+    """
+    _discover()
+    states = []
+    for holder, grants in _party_offers(fight, _ally_attack_advantages):
+        state = grants(holder, attacker, target, fight)
+        if state is not None:
+            states.append(state)
+    return combined(*states) if states else AdvantageState.NONE
+
+
+def total_ally_roll_bonus(
+    attacker: Holder, target, fight: Fight = None, trait: str = ""
+) -> int:
+    """Everything the *party* carries that adds to `attacker`'s swing, summed.
+
+    Zero unless something answers. The flat twin of
+    `ally_granted_attack_advantage`, asked from the same place and for the same
+    reason - see `ally_roll_bonus`.
+
+    Asked once per swing, outside the roll's closure, since being asked is the
+    commitment: content whose charge is spent on granting a bonus has spent it.
+
+    Zero without a fight, since there is no party to scan.
+    """
+    _discover()
+    total = 0
+    for holder, contribute in _party_offers(fight, _ally_roll_bonuses):
+        total += contribute(holder, attacker, target, fight, trait)
+    return total
+
+
+def ally_extra_armor_slots(
+    target, amount: int, hp_to_mark: int, fight: Fight = None, damage_type=None
+) -> int:
+    """How many *additional* Armor Slots party content marks for `target`.
+
+    Zero unless something answers, and the answers sum. The party-wide twin of
+    `extra_armor_slots`, asked from the same place inside the same branch - so it
+    inherits that hook's trigger exactly: a free slot has already gone in. The
+    caller clamps to the slots actually free.
+    """
+    _discover()
+    total = 0
+    for holder, contribute in _party_offers(fight, _ally_extra_armor_slots):
+        total += contribute(holder, target, amount, hp_to_mark, fight, damage_type)
+    return total
+
+
+def ally_soften_damage(
+    target,
+    amount: int,
+    hp_to_mark: int,
+    fight: Fight = None,
+    damage_type=None,
+    marked_armor: bool = False,
+) -> int:
+    """Let party content soften a hit landing on `target`; return what it now marks.
+
+    The party-wide twin of `soften_damage`, called immediately after it so a hit
+    passes the holder's own cards first. Each responder sees what the previous one
+    left, exactly as the holder-scoped chain does, so two of these compose.
+
+    `marked_armor` says whether an Armor Slot went in against this hit - see
+    `ally_severity_response` for why this hook carries it and its twin does not.
+
+    Unchanged without a fight, since there is no party to scan.
+    """
+    _discover()
+    for holder, respond in _party_offers(fight, _ally_severity_responses):
+        hp_to_mark = respond(
+            holder, target, amount, hp_to_mark, fight, damage_type, marked_armor
+        )
+    return hp_to_mark
+
+
 def incoming_damage_multiplier(target, attacker, fight: Fight = None) -> float:
     """How much the GM's side multiplies this damage by before thresholds.
 
@@ -3380,7 +3643,12 @@ def standard_attack_area(holder, fight=None):
 
 
 def apply_on_damaged(
-    holder, amount: int, hp_marked: int, fight=None, marked_armor: bool = False
+    holder,
+    amount: int,
+    hp_marked: int,
+    fight=None,
+    marked_armor: bool = False,
+    damage_type=None,
 ) -> None:
     """Let content react to `holder` having just taken a hit.
 
@@ -3390,12 +3658,16 @@ def apply_on_damaged(
     `marked_armor` says whether an Armor Slot went in against this hit, which only
     the pipeline that marked it can know - see `on_damaged`. Defaulted to False,
     which is the permanent answer on the GM's side: adversaries have no slots.
+
+    `damage_type` is the type the hit arrived with, already resolved by the caller
+    - both sides parse it once at the top of `take_damage` and carry it, so this
+    hook and the two severity hooks can never disagree about what landed.
     """
     _discover()
     for name in holder.named_features:
         respond = _registered(_on_damaged, name)
         if respond is not None:
-            respond(holder, amount, hp_marked, fight, marked_armor)
+            respond(holder, amount, hp_marked, fight, marked_armor, damage_type)
 
 
 def apply_on_attacked(

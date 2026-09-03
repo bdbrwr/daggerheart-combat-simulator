@@ -599,6 +599,26 @@ class FightState:
             for (holder_id, _), condition in self.conditions.items()
         )
 
+    def armor_is_denied(self, combatant) -> bool:
+        """Whether a condition currently stops `combatant` marking Armor Slots.
+
+        Read off `Condition.denies_armor` rather than by name, exactly as
+        `cannot_act` and `cannot_be_targeted` are read off their own fields - so
+        nothing here or in the damage pipeline knows that Frenzied is what
+        answers, and a second such condition would need no change.
+
+        Asked by `PlayerCharacter.take_damage` at the one point a free slot would
+        be marked. Because the additional-slot hook is asked from inside that same
+        branch, content that marks *further* slots is shut off with it and needs
+        to know nothing about any of this.
+
+        Only PCs have Armor Slots at all, so this is never asked of an adversary.
+        """
+        return any(
+            holder_id == id(combatant) and condition.denies_armor
+            for (holder_id, _), condition in self.conditions.items()
+        )
+
     def searchable_condition(self, combatant):
         """The condition on `combatant` that somebody could spend a roll to end.
 

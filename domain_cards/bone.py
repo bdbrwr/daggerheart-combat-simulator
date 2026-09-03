@@ -31,6 +31,11 @@ Level 7 finishes the domain's answer to being hit rather than missed:
 **Bone-Touched** buys one landed attack back off the board outright for 3 Hope,
 which is Scramble's shape at a Bone price. Its +1 Agility is the first *trait*
 bonus declared as already resolved on the sheet.
+
+Level 8's **Breaking Blow** is the first card to mark an adversary for the
+*party* rather than for its own holder: the Stress is the Bone character's and
+the 2d12 goes to whoever hits that creature next, which is Chokehold's shape at a
+much larger size.
 """
 
 import random
@@ -44,6 +49,7 @@ from content.registry import (
     action,
     adjust_damage_pool,
     ally_damage_reduction,
+    ally_extra_damage,
     attack_missed,
     damage_bonus,
     dealt_damage_type,
@@ -807,7 +813,119 @@ def cruel_precision(attacker: Holder, target, fight: Fight = None) -> int:
     return max(attacker.traits["finesse"], attacker.traits["agility"], 0)
 
 
+# --- Breaking Blow ---------------------------------------------------------------
+
+BREAKING_BLOW = "Breaking Blow"
+
+BREAKING_BLOW_DICE = 2
+BREAKING_BLOW_DIE = 12
+
+# The charge waiting on one adversary. A token on the **target** rather than on
+# the holder, because what the card marks is a creature: whoever hits it next
+# collects, and the card's owner may not be them.
+BREAKING_BLOW_CHARGE = "Breaking Blow charge"
+
+
+@on_hit(
+    BREAKING_BLOW,
+    unmodelled=[
+        "A landed attack that dealt **no damage** never reaches this hook. "
+        "`on_hit` is asked where an attack rolled damage, so a card that "
+        "succeeds and applies a condition instead - Midnight's Shadowbind, Sage's "
+        "Death Grip - is a successful attack this cannot see. Champion's Edge "
+        "declares the same gap",
+    ],
+)
+def breaking_blow(attacker: Holder, target, result, fight: Fight) -> None:
+    """Breaking Blow (Bone, level 8). A Stress now, 2d12 on the next hit.
+
+    SRD: "When you make a successful attack, you can mark a Stress to make the
+    next successful attack against that same target deal an extra 2d12 damage."
+
+    The charge is laid here and collected by `breaking_blow_lands` below, which is
+    the arrangement one card uses to reach two hooks - Ferocity's, Boost's and
+    Signature Move's.
+
+    Declines against a target the attack has just finished off, and against one
+    already carrying a charge: the standing don't-re-apply rule, and here it also
+    keeps the Stress off a second charge that would replace the first rather than
+    add to it.
+
+    SIMULATION RULE - policy. Nothing to rule beyond the standing default: the
+    Stress is marked whenever the shared last-slot rule allows it, which is the
+    same answer Reckless, Versatile Fighter, Rage Up and Glancing Blow get.
+    """
+    if fight is None or target.is_defeated:
+        return
+    if fight.token_count(target, BREAKING_BLOW_CHARGE):
+        return
+    if not attacker.will_spend_stress(1):
+        return
+
+    attacker.spend_stress(1)
+    fight.set_token(target, BREAKING_BLOW_CHARGE, 1)
+    fight.note(f"{attacker.name} marks a Stress; {target.name} is left reeling")
+
+
+@ally_extra_damage(
+    BREAKING_BLOW,
+    unmodelled=[
+        "Attacks that aren't a weapon swing. `total_ally_extra_damage` is asked "
+        "from `items/weapons.py` alone, so the charge is collected by a swing and "
+        "by the cards that swing through it - Forceful Push, Boost - and not by a "
+        "Spellcast attack, which rolls its own damage and never asks. Chokehold "
+        "has the same reach for the same reason",
+    ],
+)
+def breaking_blow_lands(
+    holder: Holder, attacker, target, roll, fight: Fight = None
+) -> list:
+    """The 2d12 the next successful attack on a reeling target collects.
+
+    SIMULATION RULE - rules interpretation, ruled. **Any creature's attack
+    collects it.** The card names no attacker for the second half - "the next
+    successful attack against that same target" - and the user's ruling is to read
+    that as written, which is the same reading Midnight's *Chokehold* already gets
+    of "when a creature attacks a target who is Vulnerable in this way". That is
+    what puts this on the party-wide hook rather than the holder-scoped one beside
+    it: registered on `extra_damage` the card would only ever pay out for its own
+    owner, which is not what the page says.
+
+    Spent on being collected, so the charge pays out once. Because this is asked
+    from inside the damage roll of an attack that has already succeeded, "the next
+    **successful** attack" comes for free - a miss never reaches here.
+
+    The ordering with the hook above is what stops a charge collecting itself: the
+    damage roll asks this first, and `on_hit` lays the charge afterwards.
+
+    `discardable=False`, like every die a feature adds to somebody else's roll - a
+    Greatsword's Massive has no business discarding a Bone character's d12.
+    """
+    if fight is None or not fight.token_count(target, BREAKING_BLOW_CHARGE):
+        return []
+
+    fight.set_token(target, BREAKING_BLOW_CHARGE, 0)
+    fight.note(f"{attacker.name} breaks {target.name} open for an extra 2d12")
+    return [
+        DiceGroup(count=BREAKING_BLOW_DICE, sides=BREAKING_BLOW_DIE, discardable=False)
+    ]
+
+
 # --- Assessed and dismissed --------------------------------------------------
+
+no_combat_effect(
+    "Wrangle",
+    "An Agility Roll against all targets within Close range, then a Hope moves "
+    "every target it beat - and any willing allies in the band - to another point "
+    "within Close range. Its whole effect is where combatants are standing, and no "
+    "positions are tracked: the standing answer for repositioning content, and the "
+    "same one Blink Out, Flight, Teleport, Rift Walker and Manifest Wall already "
+    "have. It is the first card to move **both sides at once**, which is a great "
+    "deal at a table - pulling three adversaries off the Wizard and putting the "
+    "party where it wants to be - and nothing here. Worth knowing that modelling "
+    "it would make a party *worse*, since the cast would spend a whole action roll "
+    "and a Hope to buy nothing, which is the Blink Out reading.",
+)
 
 out_of_combat_ability(
     "Recovery",

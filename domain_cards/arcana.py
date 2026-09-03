@@ -22,6 +22,12 @@ SIMULATION-RULES.md. **Cloaking Blast** is the first party content anywhere that
 reaches the GM's *targeting* rule: its Cloaked condition says its holder cannot
 be aimed at, which is a stronger thing than Hidden and needed
 `Condition.untargetable` to say at all.
+
+Level 8 is the domain's answer to being hit, twice over. **Arcane Reflection** is
+the first card anywhere that both negates a hit *and* deals it to whoever threw
+it, and **Confusing Aura** is the first defence that wears out: it stands for a
+counted number of attacks rather than for a number of uses, and each one it turns
+away costs it a layer.
 """
 
 import random
@@ -1116,6 +1122,254 @@ def cloaking_blast(holder: Holder, roll, fight: Fight) -> None:
         ),
     )
     fight.note(f"{holder.name} spends a Hope and vanishes behind their own spell")
+
+
+# --- Arcane Reflection -----------------------------------------------------------
+
+ARCANE_REFLECTION = "Arcane Reflection"
+
+ARCANE_REFLECTION_DIE = 6
+
+# "If any roll a 6" - the face that sends the spell back.
+ARCANE_REFLECTION_FACE = 6
+
+
+@ally_damage_reduction(
+    ARCANE_REFLECTION,
+    unmodelled=[
+        "'reflected back to **the caster**' is read as the adversary taking the "
+        "spotlight, through `fight.spotlighted` - the same handle Counterspell "
+        "uses, and the only one there is: damage arrives at a PC carrying an "
+        "amount and a type and no attacker. Magic damage arriving while nothing "
+        "is spotlighted is the party's own (On Fire burning its holder), and this "
+        "declines rather than guessing at a caster",
+        "The attack is made to deal no damage rather than to **fail**, so content "
+        "on the attacker that fires on a successful attack has already run by the "
+        "time this is asked. Scramble, Arcane Deflection and Bone-Touched are all "
+        "built this way and carry the same gap",
+        "The play-by-play still reports the hit landing. The reduction happens "
+        "inside `take_damage`, and `combat/policy.py` has already read the damage "
+        "roll's own total for its line - so the reflection notes itself underneath "
+        "a line saying the PC was hit for the full amount",
+    ],
+)
+def arcane_reflection(
+    holder: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """Arcane Reflection (Arcana, level 8). Returns the damage this hit should lose.
+
+    SRD: "When you would take magic damage, you can spend any number of Hope to
+    roll that many d6s. If any roll a 6, the attack is reflected back to the
+    caster, dealing the damage to them instead."
+
+    **Both halves happen at once**, which is what makes this different from every
+    other card on this hook: the whole amount is returned, so the hit resolves to
+    nothing and no Armor Slot is spent on it - and the same number is dealt to
+    whoever threw it, typed magic, because it is the same spell arriving somewhere
+    else. Scramble and Bone-Touched only do the first half.
+
+    Registered on the party-wide hook and scoped back to its own holder with
+    `holder is target`, exactly as those two are. The card says "when **you**
+    would take magic damage", so it never answers for an ally.
+
+    **Magic damage only**, read the way Counterspell reads it: damage carries a
+    type and nothing else in the simulator is marked as magic, so a magic hit is
+    the only magical effect there is to send back.
+
+    SIMULATION RULE - policy, ruled. Two decisions, both the user's:
+
+    * **Counterspell's trigger** - the first magic hit that would mark 2 or more
+      HP, or any magic hit against a holder already at 2 or fewer unmarked HP.
+      Read here for the fourth time rather than as a number of its own, and like
+      the other three it reads only what a player can see when they decide: the
+      damage the GM announced against their own printed thresholds.
+    * **Every banked Hope goes in.** "Any number" is the player's choice and the
+      ruling is all of it, so the number of d6s is whatever the pool holds. A
+      holder with no Hope declines rather than rolling nothing.
+
+    The Hope is spent whether or not a 6 comes up, which is the card read
+    literally: the dice are what the Hope buys.
+    """
+    if fight is None or holder is not target:
+        return 0
+    if DamageType.MAGIC not in types_in(damage_type):
+        return 0
+
+    attacker = fight.spotlighted
+    if attacker is None:
+        return 0
+
+    if amount < holder.major_threshold and not holder.is_near_death:
+        return 0
+
+    hope = holder.hope_marked
+    if hope <= 0:
+        return 0
+
+    holder.spend_hope(hope)
+    rolled = [random.randint(1, ARCANE_REFLECTION_DIE) for _ in range(hope)]
+    if ARCANE_REFLECTION_FACE not in rolled:
+        fight.note(
+            f"{holder.name} spends {hope} Hope trying to turn the spell back, and "
+            f"it lands anyway ({rolled})"
+        )
+        return 0
+
+    attacker.take_damage(amount, fight, damage_type=DamageType.MAGIC)
+    fight.note(
+        f"{holder.name} reflects the spell into {attacker.name} for {amount} "
+        f"({hope} Hope, {rolled})"
+    )
+    return amount
+
+
+# --- Confusing Aura --------------------------------------------------------------
+
+CONFUSING_AURA = "Confusing Aura"
+
+CONFUSING_AURA_DIFFICULTY = 14
+
+# How many layers are currently up. Zero means the aura is not standing, which
+# covers both "never cast" and "worn through" - and both correctly decline.
+CONFUSING_AURA_LAYERS = "Confusing Aura layers"
+
+AURA_DIE = 6
+
+# "If any roll a 5 or higher, one layer of the aura is destroyed and the attack
+# fails."
+AURA_TURNS_AN_ATTACK_AT = 5
+
+# How many layers the Stress buys on top of the one the spell creates. Ruled.
+CONFUSING_AURA_EXTRA_LAYERS = 2
+
+
+@action(
+    CONFUSING_AURA,
+    unmodelled=[
+        "'a layer of illusion over your body that makes it hard to tell exactly "
+        "where you are' - no positions are tracked, so what is modelled is the "
+        "attack being turned away and not where the adversary thinks the caster "
+        "is standing",
+    ],
+)
+def confusing_aura(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Confusing Aura (Arcana, level 8). Raise layers of illusion around yourself.
+
+    SRD: "Make a Spellcast Roll (14). Once per long rest on a success, you create
+    a layer of illusion over your body that makes it hard to tell exactly where
+    you are. Mark any number of Stress to make that many additional layers. When
+    an adversary makes an attack against you, roll a number of d6s equal to the
+    number of layers currently active. If any roll a 5 or higher, one layer of the
+    aura is destroyed and the attack fails. If all the results are 4 or lower, you
+    take the damage and this spell ends."
+
+    **The per-rest use is claimed on the success, not on the cast**, which is the
+    page read literally - "once per long rest **on a success**". So a failed
+    Spellcast Roll costs the spotlight and leaves the card available, and a caster
+    can try again. Nothing else in the catalogue is written that way.
+
+    A flat Difficulty of 14 rather than the target's, which is what the card
+    prints: the aura goes up around the caster and no adversary is resisting it.
+    The roll still passes through `content/spellcast.py`, so the cast is a real
+    action roll - it can be helped, rerolled and hobbled like any other, and its
+    Hope or Fear moves the spotlight.
+
+    SIMULATION RULE - policy, ruled. **Up to two extra layers**, each one asked of
+    the shared last-slot rule separately - Rage Up's shape - so a caster one slot
+    from the cliff buys one and stops, and a caster with a full track raises three
+    layers for two Stress.
+
+    Declines while an aura is already standing, which is the standing
+    don't-re-apply rule: the card creates layers rather than adding to them, and a
+    second cast would be spent on a defence the caster already has.
+    """
+    if fight is None:
+        return None
+    if fight.token_count(caster, CONFUSING_AURA_LAYERS) > 0:
+        return None
+    if not fight.can_use_once_per_rest(caster, CONFUSING_AURA, long=True):
+        return None
+
+    attack_roll = spellcast(
+        caster, target, fight, difficulty=CONFUSING_AURA_DIFFICULTY
+    )
+    if attack_roll is None:
+        return None
+    if not attack_roll.is_success:
+        fight.note(f"{caster.name}'s aura fails to take shape ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    fight.use_once_per_rest(caster, CONFUSING_AURA, long=True)
+
+    layers = 1
+    while layers <= CONFUSING_AURA_EXTRA_LAYERS and caster.will_spend_stress(1):
+        caster.spend_stress(1)
+        layers += 1
+
+    fight.set_token(caster, CONFUSING_AURA_LAYERS, layers)
+    fight.note(
+        f"{caster.name} raises {layers} layer{'s' if layers > 1 else ''} of "
+        f"confusing aura"
+    )
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+@ally_damage_reduction(
+    CONFUSING_AURA,
+    unmodelled=[
+        "'When an adversary **makes an attack** against you' is answered when the "
+        "damage arrives instead, since nothing on the GM's side announces an "
+        "attack before it is rolled - `before_attacked` is asked from "
+        "`items/weapons.py`, which only ever sees the party swinging. So an attack "
+        "that missed spends no layer, and the aura lasts longer here than the page "
+        "would have it",
+        "Damage that did not come from an adversary's attack reaches the aura too "
+        "- On Fire burning its holder - because `take_damage` carries an amount "
+        "and a type and cannot say what caused it. It errs the other way from the "
+        "gap above",
+        "The attack is made to deal no damage rather than to **fail**, the gap "
+        "Scramble, Arcane Deflection and Bone-Touched all declare",
+    ],
+)
+def confusing_aura_confounds(
+    holder: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """The aura answering one incoming hit. Returns the damage it should lose.
+
+    Registered on the same name as the action above, which is how one card reaches
+    two hooks - the arrangement Ferocity, Boost and Signature Move already use.
+
+    A d6 per layer standing. Any 5 or 6 costs one layer and turns the attack away
+    entirely; all 4s or lower and the aura is gone and the damage lands in full.
+    Both halves are printed on the card, so nothing here had to be ruled - and
+    note that the spell can end **either** way, since destroying the last layer
+    leaves nothing to roll next time.
+
+    Scoped to its own holder with `holder is target`. The card protects the caster
+    and nobody else.
+
+    No policy of its own: the aura is already paid for, and the dice are rolled
+    whenever a hit arrives. There is nothing left to decide.
+    """
+    if fight is None or holder is not target:
+        return 0
+
+    layers = fight.token_count(holder, CONFUSING_AURA_LAYERS)
+    if layers <= 0:
+        return 0
+
+    rolled = [random.randint(1, AURA_DIE) for _ in range(layers)]
+    if max(rolled) >= AURA_TURNS_AN_ATTACK_AT:
+        fight.set_token(holder, CONFUSING_AURA_LAYERS, layers - 1)
+        fight.note(
+            f"A layer of {holder.name}'s aura tears away and the attack finds "
+            f"nothing ({rolled})"
+        )
+        return amount
+
+    fight.set_token(holder, CONFUSING_AURA_LAYERS, 0)
+    fight.note(f"{holder.name}'s aura fails and collapses ({rolled})")
+    return 0
 
 
 # --- Assessed and dismissed --------------------------------------------------

@@ -39,13 +39,27 @@ at all and is the first card anywhere that reaches an action roll of *any* shape
 rather than a standard attack, which is the one new hook the level cost. **Rise
 Up** splits the way Armorer did - half of it is a threshold the sheet already
 carries, and the half that runs is a Stress cleared off every wound.
+
+Level 8 is the domain's biggest pair. **Full Surge** is the first card anywhere
+that moves a character's **traits**, which it does through
+`PlayerCharacter.gain_trait_bonus` so the +2 reaches everything that reads one -
+rolls, Spellcast dice counts, and the damage Body Basher and Rage Up read off a
+trait. **Ground Pound** is the second card to roll a named trait through the
+shared cast shape, after Grace's Troublemaker, and the first to be typed by
+ruling rather than by the page.
 """
 
 import random
 from dataclasses import replace
 
 from combat.results import AttackResult
-from content.aoe import Range, chance_within, targets_in_area
+from content.aoe import (
+    Range,
+    area_difficulty,
+    chance_within,
+    targets_beaten,
+    targets_in_area,
+)
 from content.conditions import (
     TAUNTED,
     VULNERABLE,
@@ -53,6 +67,7 @@ from content.conditions import (
     when_the_gm_pays,
     when_they_act,
 )
+from content.damage_types import DamageType
 from content.registry import (
     Fight,
     Holder,
@@ -64,6 +79,7 @@ from content.registry import (
     condition_refusal,
     damage_bonus,
     extra_damage,
+    free,
     guard,
     hope_die_for,
     no_combat_effect,
@@ -74,11 +90,13 @@ from content.registry import (
     reroll,
     severity_response,
     total_damage_bonus,
+    total_extra_damage,
     total_roll_bonus,
 )
 from content.spellcast import spellcast
 from dice.common import AdvantageState
-from dice.damage import DiceGroup
+from dice.d20 import roll_d20
+from dice.damage import DiceGroup, roll_damage
 from dice.duality import DualityOutcome
 
 FORCEFUL_PUSH = "Forceful Push"
@@ -812,6 +830,7 @@ def rise_up(
     hp_marked: int,
     fight: Fight = None,
     marked_armor: bool = False,
+    damage_type=None,
 ) -> None:
     """Rise Up (Valor, level 6), second clause.
 
@@ -920,6 +939,186 @@ def shrug_it_off(
     return hp_to_mark - 1
 
 
+# --- Full Surge ------------------------------------------------------------------
+
+FULL_SURGE = "Full Surge"
+
+FULL_SURGE_STRESS = 3
+FULL_SURGE_BONUS = 2
+
+
+@free(
+    FULL_SURGE,
+    unmodelled=[
+        "'until your next rest' - nothing carries between fights, so the surge "
+        "lasts this one and a PC is spawned fresh from their sheet for the next. "
+        "Under sequenced encounters a surge taken in one fight should still be "
+        "running in the next",
+        "Evasion and the damage thresholds are **not** raised, which is correct: "
+        "the card says character *traits*, and a sheet carries Evasion and "
+        "thresholds as their own resolved numbers rather than deriving them from "
+        "traits here",
+    ],
+)
+def full_surge(holder: Holder, fight: Fight) -> bool:
+    """Full Surge (Valor, level 8). Three Stress for +2 to everything you are.
+
+    SRD: "Once per long rest, mark 3 Stress to push your body to its limits. Gain a
+    +2 bonus to all of your character traits until your next rest."
+
+    **No roll**, so it is a free ability and the surge and an action roll fit in
+    one spotlight - which means the +2 can pay out on the very roll it was taken
+    for.
+
+    **The bonus goes into the traits themselves**, through
+    `PlayerCharacter.gain_trait_bonus`, which is the user's ruling. That is what
+    makes it complete rather than approximate: `traits` is the effective mapping
+    every reader already consults, so the +2 reaches an action roll, the dice a
+    Spellcast-trait spell counts, and the damage Body Basher, Rage Up and Cruel
+    Precision read off Strength, Finesse and Agility. Registering a `roll_bonus` of
+    +2 instead was offered and declined, because a card that says *all of your
+    traits* is not a bonus to one kind of roll.
+
+    What keeps that honest is `trait_bonuses`, which records what was granted - so
+    the sheet's authored numbers stay recoverable and nothing later has to guess
+    whether a 4 was written down or bought.
+
+    SIMULATION RULE - policy. Taken at the first spotlight the 3 Stress allows,
+    which is Wild Surge's rule for the same shape of card: the bonus runs for the
+    rest of the fight, so every spotlight spent unsurged throws part of it away and
+    there is no moment worth waiting for. `will_spend_stress` is the shared
+    last-slot rule, measured at the last of the three slots.
+
+    Three Stress is the largest Stress price any ported card pays, which is a fact
+    about the printed number rather than a claim about what it will do.
+    """
+    if fight is None or holder.trait_bonuses:
+        return False
+    if not holder.will_spend_stress(FULL_SURGE_STRESS):
+        return False
+    if not fight.use_once_per_rest(holder, FULL_SURGE, long=True):
+        return False
+
+    holder.spend_stress(FULL_SURGE_STRESS)
+    holder.gain_trait_bonus(FULL_SURGE_BONUS)
+    fight.note(
+        f"{holder.name} pushes their body to its limits (+{FULL_SURGE_BONUS} to "
+        f"every trait)"
+    )
+    return True
+
+
+# --- Ground Pound ----------------------------------------------------------------
+
+GROUND_POUND = "Ground Pound"
+
+GROUND_POUND_HOPE = 2
+GROUND_POUND_DIFFICULTY = 17
+GROUND_POUND_DICE = 4
+GROUND_POUND_DIE = 10
+GROUND_POUND_MODIFIER = 8
+
+# The card costs a resource beyond the roll, so it waits for a second target - the
+# Rain of Blades and Chain Lightning gate. Ruled.
+GROUND_POUND_WORTH_IT = 2
+
+
+@action(
+    GROUND_POUND,
+    unmodelled=[
+        "'thrown back to Far range' - the knockback is half of what the card is "
+        "named for and no positions are tracked, so nothing here moves. "
+        "Preservation Blast declares the same clause",
+        "'all targets within Very Close range' - no positions are tracked, so the "
+        "area rule decides how many the shockwave catches",
+    ],
+)
+def ground_pound(holder: Holder, target, fight: Fight) -> AttackResult | None:
+    """Ground Pound (Valor, level 8). Two Hope and a fist into the floor.
+
+    SRD: "Spend 2 Hope to strike the ground where you stand and make a Strength
+    Roll against all targets within Very Close range. Targets you succeed against
+    are thrown back to Far range and must make a Reaction Roll (17). Targets who
+    fail take 4d10+8 damage. Targets who succeed take half damage."
+
+    **A Strength Roll**, not a Spellcast Roll - the second card in the project to
+    roll a named trait through the shared cast shape, after Grace's *Troublemaker*
+    rolls Presence. That also means a Valor PC with no Spellcast trait at all can
+    use it, which is most of them.
+
+    One roll against the whole area, each target checked against its own
+    Difficulty - the Wild Flame shape - and then Chain Lightning's second gate: a
+    flat d20 Reaction Roll per target, with no modifier since adversaries have no
+    traits.
+
+    SIMULATION RULE - rules interpretation, ruled. **The damage is physical.** The
+    card prints no type, which is unusual, and the user ruled it to the fiction:
+    striking the ground is not a spell, and Valor's other damage is all weapon
+    damage. So a physically resistant adversary halves it, which is the behaviour a
+    typed hit should have; leaving it untyped would have made the card reliably
+    better against exactly the adversaries built to resist things.
+
+    "Half damage rounds down", the standing rule for halving *damage* - which is
+    the opposite of the rule for halving an ability's own quantity (Glancing Blow
+    rounds its Proficiency up). See SIMULATION-RULES.md.
+
+    SIMULATION RULE - policy, ruled. **Declines below two targets in the band**,
+    the Rain of Blades gate: 2 Hope is a real cost and against a single adversary
+    it buys less than a swing plus the Experience that Hope would have bought.
+    Mass Enrapture's higher floor of three, and never declining, were both offered
+    and declined.
+
+    Both gates are checked before the roll and the Hope is spent after it, so
+    declining costs nothing.
+    """
+    if fight is None:
+        return None
+    if not holder.can_spend_hope(GROUND_POUND_HOPE):
+        return None
+
+    area = targets_in_area(Range.VERY_CLOSE, fight.living_adversaries)
+    if len(area) < GROUND_POUND_WORTH_IT:
+        return None
+
+    attack_roll = spellcast(
+        holder, target, fight, trait="strength", difficulty=area_difficulty(area)
+    )
+    if attack_roll is None:
+        return None
+
+    holder.spend_hope(GROUND_POUND_HOPE)
+
+    caught = targets_beaten(attack_roll, area)
+    if not caught:
+        fight.note(f"{holder.name}'s shockwave catches nobody ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=GROUND_POUND_DICE, sides=GROUND_POUND_DIE)]
+        + total_extra_damage(holder, target, attack_roll, fight),
+        modifier=GROUND_POUND_MODIFIER,
+        is_critical=attack_roll.is_critical,
+    )
+
+    marked = 0
+    for adversary in caught:
+        # A flat d20 against the printed Difficulty; see `dice/d20.py` for why the
+        # number is passed as `evasion`.
+        saved = roll_d20(evasion=GROUND_POUND_DIFFICULTY).is_success
+        dealt = damage_roll.total // 2 if saved else damage_roll.total
+        marked += adversary.take_damage(
+            dealt, fight, damage_type=DamageType.PHYSICAL
+        )
+
+    fight.note(
+        f"{holder.name} pounds the ground, catching {len(caught)} for "
+        f"{damage_roll.total}"
+    )
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
 # --- Valor-Touched ---------------------------------------------------------------
 
 VALOR_TOUCHED = "Valor-Touched"
@@ -951,6 +1150,7 @@ def valor_touched(
     hp_marked: int,
     fight: Fight = None,
     marked_armor: bool = False,
+    damage_type=None,
 ) -> None:
     """Valor-Touched (Valor, level 7), the clause that isn't already on the sheet.
 
