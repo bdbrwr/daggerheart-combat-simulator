@@ -36,12 +36,25 @@ Level 8's **Breaking Blow** is the first card to mark an adversary for the
 *party* rather than for its own holder: the Stress is the Bone character's and
 the 2d12 goes to whoever hits that creature next, which is Chokehold's shape at a
 much larger size.
+
+Level 9 finishes the domain's answer to being hit and opens a new one on being
+several people's problem: **On the Brink** is the only wholly passive card Bone
+prints, and **Splintering Strike** is the first anywhere that rolls one pool of
+damage and lets the player *choose* how it lands - which is what made the
+allocation ruling in SIMULATION-RULES.md necessary.
 """
 
 import random
 
 from combat.results import AttackResult
-from content.aoe import Range, chance_within, targets_in_area
+from content.aoe import (
+    Range,
+    area_difficulty,
+    band_named,
+    chance_within,
+    targets_beaten,
+    targets_in_area,
+)
 from content.registry import (
     DamagePool,
     Fight,
@@ -64,10 +77,12 @@ from content.registry import (
     on_hit,
     on_roll,
     out_of_combat_ability,
+    severity_response,
     total_damage_bonus,
     total_roll_bonus,
 )
 from content.rolls import EXPERIENCE_HOPE_FLOOR
+from content.spellcast import spellcast
 from dice.common import AdvantageState
 from dice.damage import DiceGroup, roll_damage
 from items.registry import find_weapon
@@ -908,6 +923,276 @@ def breaking_blow_lands(
     fight.note(f"{attacker.name} breaks {target.name} open for an extra 2d12")
     return [
         DiceGroup(count=BREAKING_BLOW_DICE, sides=BREAKING_BLOW_DIE, discardable=False)
+    ]
+
+
+# --- On the Brink ----------------------------------------------------------------
+
+ON_THE_BRINK = "On the Brink"
+
+
+@severity_response(ON_THE_BRINK)
+def on_the_brink(
+    holder: Holder, amount: int, hp_to_mark: int, fight: Fight = None, damage_type=None
+) -> int:
+    """On the Brink (Bone, level 9). Returns the HP the hit should now mark.
+
+    SRD: "When you have 2 or fewer Hit Points unmarked, you don't take Minor
+    damage."
+
+    **Minor damage is damage below the Major threshold** - the band that marks one
+    Hit Point - so what this does is take that one off, leaving nothing. Major and
+    Severe hits are untouched, which is the whole shape of the card: it is an
+    answer to being chipped to death and no answer at all to being hit hard.
+
+    Read off the damage **amount** against the printed thresholds, which is Get
+    Back Up's reading of its own trigger and Frenzy's of its window: a hit is
+    Minor by its size, whatever an Armor Slot has already done to the HP it would
+    mark. The consequence is that a Major hit an Armor Slot softened to one HP is
+    still not Minor damage and still marks it.
+
+    "2 or fewer Hit Points unmarked" is `is_near_death`, the same threshold the
+    shared Stress rule releases the last slot at and the one four damage responses
+    already read. Nothing here is new; the card simply names it.
+
+    No policy at all. It costs nothing, has no limit and is not a choice - the
+    only passive card in this batch.
+
+    `damage_type` is ignored: the card names no type, so it answers for both.
+    """
+    if hp_to_mark <= 0:
+        return hp_to_mark
+    if not holder.is_near_death:
+        return hp_to_mark
+    if amount >= holder.major_threshold:
+        return hp_to_mark
+
+    if fight is not None:
+        fight.note(f"{holder.name} is past feeling it; the hit marks nothing")
+    return 0
+
+
+# --- Splintering Strike ----------------------------------------------------------
+
+SPLINTERING_STRIKE = "Splintering Strike"
+
+SPLINTERING_STRIKE_HOPE = 1
+
+
+@action(
+    SPLINTERING_STRIKE,
+    unmodelled=[
+        "The roll is made through `content/spellcast.py` on the **weapon's** "
+        "trait, which is the shared shape for an action roll that is not a swing. "
+        "The cost is that content registered on `spellcast_bonus` is asked about a "
+        "weapon attack - the same gap Blade's Reaper's Strike declares, and empty "
+        "for the same reason",
+        "'one of your active weapons' is not offered: a sheet can carry a "
+        "secondary weapon and nothing resolves one (SIMULATION-RULES.md, section "
+        "3), so the strike is always made with the primary. Rapid Riposte and "
+        "Glancing Blow read the same clause the same way",
+        "The additional damage die is rolled **after** the pool is shared out, so "
+        "it can carry a target's share over a threshold the share alone did not "
+        "reach. The page puts the die before the damage is dealt and says nothing "
+        "about whether the split is decided first; taking it the other way would "
+        "mean rolling every die before choosing, which is a different card",
+    ],
+)
+def splintering_strike(holder: Holder, target, fight: Fight) -> AttackResult | None:
+    """Splintering Strike (Bone, level 9). One swing shared out across a band.
+
+    SRD: "Spend a Hope and make an attack against all adversaries within your
+    weapon's range. Once per long rest, on a success against any targets, roll
+    your weapon's damage and distribute that damage however you wish between the
+    targets you succeeded against. Before you deal damage to each target, roll an
+    additional damage die and add its result to the damage you deal to them."
+
+    One roll re-checked against **each target's own Difficulty** - the standing
+    area shape - over the band the *weapon* prints, read through `band_named` the
+    way Reaper's Strike reads it.
+
+    The damage is built the way `items/weapons.py` builds a swing's: Proficiency
+    dice of the weapon's size, its modifier, then `adjust_damage_pool` asked
+    holder-wide and again for the weapon's own features. So a Greatsword's Massive
+    discards its lowest here exactly as it would on a swing, which is what "roll
+    your weapon's damage" asks for. Rapid Riposte and Glancing Blow are built the
+    same way.
+
+    What is deliberately **not** asked is `total_damage_bonus` and
+    `total_extra_damage`: the first is paid "before you make an attack" and this
+    card's cost is a Hope rather than that decision, and the second keys on how an
+    attack roll came out for a single target, which a shared-out pool has no
+    single answer to.
+
+    SIMULATION RULE - policy, ruled. **Defeat what it can, remainder to the
+    toughest.** The pool is spent first on the smallest shares that would finish a
+    target outright - 1 for an adversary on its last Hit Point, the Major
+    threshold for one on two, the Severe threshold for one on three - taking the
+    cheapest first, and whatever is left goes to the target with the most unmarked
+    HP. That is the user's general rule for allocating an effect across the
+    targets an attack beat, and it is automated scoring: it reads every beaten
+    target's unmarked HP and printed thresholds. The ruling settled exactly that.
+
+    **The per-long-rest use is claimed on the success**, per "once per long rest,
+    **on a success**" - Confusing Aura's and Zone of Protection's reading. The
+    card declines outright once that use is spent rather than making an attack
+    that could deal nothing, which is the standing rule that a benefit computing
+    to zero is not paid for.
+
+    The Hope buys the attack and is spent on the attempt, including one that beats
+    nobody.
+    """
+    if fight is None or holder.proficiency <= 0:
+        return None
+
+    carried = getattr(holder, "primary_weapon", "")
+    if not carried:
+        return None
+
+    weapon = find_weapon(carried)
+    if weapon.trait not in holder.traits:
+        return None
+    if not holder.can_spend_hope(SPLINTERING_STRIKE_HOPE):
+        return None
+    if not fight.can_use_once_per_rest(holder, SPLINTERING_STRIKE, long=True):
+        return None
+
+    area = targets_in_area(band_named(weapon.range), fight.living_adversaries)
+    if not area:
+        return None
+
+    holder.spend_hope(SPLINTERING_STRIKE_HOPE)
+    attack_roll = spellcast(
+        holder, target, fight, trait=weapon.trait, difficulty=area_difficulty(area)
+    )
+    if attack_roll is None:
+        return None
+
+    beaten = targets_beaten(attack_roll, area)
+    if not beaten:
+        fight.note(f"{holder.name}'s splintering strike finds nobody ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    fight.use_once_per_rest(holder, SPLINTERING_STRIKE, long=True)
+
+    pool = adjust_damage_pool(
+        holder,
+        weapon,
+        DamagePool(
+            dice_groups=[DiceGroup(count=holder.proficiency, sides=weapon.damage_die)],
+            drop_lowest=0,
+            modifier=weapon.damage_modifier,
+        ),
+        fight,
+        roll=attack_roll,
+    )
+    pool = adjust_damage_pool(
+        holder, weapon, pool, fight, names=weapon.named_features, roll=attack_roll
+    )
+    damage_roll = roll_damage(
+        dice_groups=pool.dice_groups,
+        modifier=pool.modifier,
+        is_critical=attack_roll.is_critical,
+        drop_lowest=pool.drop_lowest,
+    )
+
+    fight.note(
+        f"{holder.name} splinters a strike across {len(beaten)} "
+        f"for {damage_roll.total}"
+    )
+
+    damage_type = dealt_damage_type(holder, target, weapon.damage_type, fight)
+    marked = 0
+    for adversary, share in _splintered(damage_roll.total, beaten):
+        # "Before you deal damage to each target, roll an additional damage die
+        # and add its result" - one more of the weapon's own dice, per target.
+        extra = roll_damage(dice_groups=[DiceGroup(count=1, sides=weapon.damage_die)])
+        marked += adversary.take_damage(
+            share + extra.total, fight, damage_type=damage_type
+        )
+        fight.note(
+            f"{adversary.name} takes {share} of it, and {extra.total} more from the "
+            f"splinter"
+        )
+
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
+def _finishing_share(adversary) -> int | None:
+    """The smallest share of a pool that would defeat `adversary`, if any would.
+
+    A hit marks 1 HP below the Major threshold, 2 at or above it, and 3 at or
+    above Severe - so what it costs to finish a creature is decided entirely by
+    how many Hit Points it has left, and the thresholds cap a single share at 3.
+    An adversary with more than three unmarked cannot be finished by one share
+    however large, which is what None says.
+    """
+    unmarked = adversary.hp_unmarked
+    if unmarked <= 0:
+        return None
+    if unmarked == 1:
+        return 1
+    if unmarked == 2:
+        return adversary.major_threshold
+    if unmarked == 3:
+        return adversary.severe_threshold
+    return None
+
+
+def _splintered(pool: int, beaten: list) -> list[tuple]:
+    """How the weapon's damage is shared out. Pairs of (target, share).
+
+    The user's allocation rule, in two passes: the cheapest finishing shares are
+    bought first while the pool lasts, and everything left goes to the target with
+    the most unmarked HP. Targets that end up with nothing are left out, since the
+    card only rolls its additional die for a target it deals damage to.
+
+    Shuffled before sorting, so two adversaries whose finishing shares cost the
+    same are not separated by the order the encounter spawned them in - and the
+    remainder's tie is broken by a draw for the same reason.
+
+    The remainder goes to the toughest target that was **not** already given a
+    finishing share, since piling it onto a creature the pool has already killed
+    would throw it away. When every beaten target has been finished there is
+    nowhere useful left for it, and it is simply not dealt.
+    """
+    order = list(beaten)
+    random.shuffle(order)
+
+    shares = {id(adversary): 0 for adversary in beaten}
+    remaining = pool
+
+    affordable = [
+        (adversary, cost)
+        for adversary, cost in ((a, _finishing_share(a)) for a in order)
+        if cost is not None
+    ]
+    for adversary, cost in sorted(affordable, key=lambda pair: pair[1]):
+        if cost > remaining:
+            continue
+        shares[id(adversary)] = cost
+        remaining -= cost
+
+    left_standing = [
+        adversary for adversary in order if not shares[id(adversary)]
+    ]
+    if remaining > 0 and left_standing:
+        toughest = max(adversary.hp_unmarked for adversary in left_standing)
+        heaviest = random.choice(
+            [
+                adversary
+                for adversary in left_standing
+                if adversary.hp_unmarked == toughest
+            ]
+        )
+        shares[id(heaviest)] += remaining
+
+    return [
+        (adversary, shares[id(adversary)])
+        for adversary in beaten
+        if shares[id(adversary)] > 0
     ]
 
 

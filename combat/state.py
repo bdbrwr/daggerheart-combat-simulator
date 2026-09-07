@@ -13,7 +13,7 @@ from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.common import Side
 from combat.rest import Rest
-from content.conditions import UNSEEN, VULNERABLE, Condition
+from content.conditions import UNNERVED, UNSEEN, Condition
 from content.names import canonical
 from content.registry import refuses_condition
 
@@ -642,8 +642,16 @@ class FightState:
 
         Immunity is *not* checked here - that's a separate question with its own
         dispatch, and the one caller that cares asks both.
+
+        **Several condition names, one effect**, exactly as `is_hidden` reads
+        `UNSEEN`. Midnight's *Night Terror* leaves its targets *Horrified*, which
+        the card defines as being Vulnerable; the two stay separate names so a
+        report says which one is running, and `content/conditions.py`'s `UNNERVED`
+        holds the list so this reader never grows a branch.
         """
-        return combatant.is_vulnerable or self.has_condition(combatant, VULNERABLE)
+        return combatant.is_vulnerable or any(
+            self.has_condition(combatant, name) for name in UNNERVED
+        )
 
     def token_count(self, holder, name: str) -> int:
         """How many `name` tokens `holder` is currently holding."""

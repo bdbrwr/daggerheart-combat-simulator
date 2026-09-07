@@ -620,3 +620,17 @@ def test_endless_charisma_is_declared_with_a_reason():
 def test_the_level_eight_pair_are_assessed():
     assert assess(MASS_ENRAPTURE).status is Status.MODELLED
     assert assess("Astral Projection").status is Status.NO_COMBAT_EFFECT
+
+
+@pytest.mark.parametrize("card", ["Copycat", "Master of the Craft"])
+def test_the_whole_of_level_nine_is_declared_rather_than_absent(card):
+    """Grace is the fourth domain with a level that reaches no fight at all.
+
+    Both are dismissals rather than gaps, and for reasons the domain hasn't used
+    before - Master of the Craft moves numbers the sheet carries resolved, and
+    Copycat's printed price is a card *level* nothing in the project records.
+    """
+    assessment = assess(card)
+
+    assert assessment.status is Status.NO_COMBAT_EFFECT
+    assert assessment.reason

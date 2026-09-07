@@ -372,6 +372,7 @@ _attack_failures: dict[str, Callable] = {}
 _stress_for_hp: dict[str, Callable] = {}
 _armor_for_stress: dict[str, Callable] = {}
 _fear_conversions: dict[str, Callable] = {}
+_effect_landings: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -471,6 +472,44 @@ def damage_die_reroll(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_damage_die_rerolls, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def on_effect_landed(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that fires when its holder's action lands without damage.
+
+    Signature: `(holder, target, result, fight) -> None`. Asked only when the
+    holder's action roll **succeeded** against `target` and **no damage roll was
+    made** - a card that applies a condition, forces a Stress, or shifts a
+    Difficulty and stops there.
+
+    **The complement of `on_hit`, and the two never both fire.** That hook is
+    asked where an attack rolled damage, so between them they cover every action
+    of the holder's that landed on somebody; `attack_failed` covers the ones that
+    didn't. Until this existed, a successful action that dealt no damage was the
+    one outcome nothing announced, which is why so many cards' docstrings say
+    "`on_hit` cannot see a card that succeeds and applies a condition instead".
+
+    Midnight's *Twilight Toll* is the reason it exists - "when you succeed on an
+    action roll against them that doesn't result in making a damage roll, place a
+    token on this card" - and it is the only content that could not be written
+    without it. Note that the card names exactly the gap above, which is a fair
+    sign the moment is real rather than an artefact of how this simulator is put
+    together.
+
+    Holder-scoped on whoever acted, like `attack_failed` next door, and everything
+    registered is asked with nothing short-circuiting: a landed effect is not a
+    resource anybody is competing for.
+
+    `result` is the whole `AttackResult` rather than the roll alone, so content can
+    read how the action came out as well as that it came out well.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_effect_landings, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -2710,6 +2749,23 @@ def apply_attack_failed(attacker, target, roll, fight: Fight = None) -> None:
         respond = _registered(_attack_failures, name)
         if respond is not None:
             respond(attacker, target, roll, fight)
+
+
+def apply_on_effect_landed(holder, target, result, fight: Fight = None) -> None:
+    """Let the actor's own content respond to an action that landed without damage.
+
+    Holder-scoped on whoever acted - see `on_effect_landed`. Everything registered
+    is asked and nothing short-circuits, exactly as `apply_attack_failed` does.
+
+    Asked from `combat/policy.py` at the one place a PC's action is known to have
+    succeeded with no damage roll behind it, beside the `on_hit` call it is the
+    complement of.
+    """
+    _discover()
+    for name in holder.named_features:
+        respond = _registered(_effect_landings, name)
+        if respond is not None:
+            respond(holder, target, result, fight)
 
 
 def adjust_damage_pool(

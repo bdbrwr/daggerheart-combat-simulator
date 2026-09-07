@@ -77,6 +77,25 @@ from typing import Callable
 VULNERABLE = "Vulnerable"
 RESTRAINED = "Restrained"
 
+# **Horrified**, from Midnight's *Night Terror*: targets who fail a Reaction Roll
+# "become temporarily *Horrified*. While Horrified, they're Vulnerable."
+#
+# A condition of its own rather than an application of Vulnerable, which is the
+# standing call for a state the page names and then refers back to - the same one
+# Cloaked and Frenzied got. Keeping the name is what lets a report say which card
+# put an adversary in this state, and it matters more here than usual: Vulnerable
+# arrives from half a dozen places and Horrified from exactly one.
+#
+# What it *does* is Vulnerable's effect, which is why it joins `UNNERVED` below
+# rather than carrying any machinery of its own.
+HORRIFIED = "Horrified"
+
+# The conditions that make rolls against their holder Advantaged. Two names, one
+# effect, and the list lives here so `FightState.is_vulnerable` stays a single
+# generic reader rather than growing a branch per condition name - exactly the
+# arrangement `UNSEEN` already has on the other side of the same question.
+UNNERVED = (VULNERABLE, HORRIFIED)
+
 # **Hidden**, which is modelled: every roll made *against* a hidden combatant has
 # Disadvantage. The exact mirror of Vulnerable, pointed the other way, and ruled
 # by the user rather than read off any one feature's text - the Sylvan Soldier's

@@ -995,6 +995,37 @@ def mass_enrapture(caster: Holder, target, fight: Fight) -> AttackResult | None:
 # --- Assessed rather than built ----------------------------------------------
 
 no_combat_effect(
+    "Copycat",
+    "Once per long rest, the card mimics the features of another domain card of "
+    "level 8 or lower in **another player's loadout**, for Hope equal to half that "
+    "card's level, until the next rest or they vault it. The user's ruling is that "
+    "it reaches no fight here, and it is worth recording what was costed and "
+    "declined alongside it, since this is not the usual repositioning dismissal. "
+    "The copying itself is expressible - a copied name could simply join the "
+    "copier's loadout and existing dispatch would run it - but **the price is "
+    "not**: nothing in the project records a card's level, and the registry keys "
+    "on names and hooks alone. Building `level=` into all 159 registrations so "
+    "that one card could read it, and charging a flat ruled Hope cost instead, "
+    "were both offered and declined. What the card mimics is also a property of "
+    "the sheets a party happens to be carrying rather than of the fight they are "
+    "in - a Grace character beside a Valor one copies something quite different "
+    "from the same character beside an Arcana one, and none of that is an "
+    "encounter's business.",
+)
+
+no_combat_effect(
+    "Master of the Craft",
+    "A permanent +2 to two of the holder's Experiences or +3 to one, after which "
+    "the card is vaulted for good. Every Experience on a character sheet carries "
+    "its modifier **already resolved** - `combat/policy.py` and Bone's Tactician "
+    "both read `experience['modifier']` straight off the sheet - so the bonus is "
+    "in the number before a fight starts and applying it here would count it "
+    "twice. The Vitality case exactly, down to the card vaulting itself "
+    "afterwards: it does not even occupy a loadout slot during the fight it is "
+    "paying for.",
+)
+
+no_combat_effect(
     "Astral Projection",
     "Once per long rest, a Stress creates a projected copy of the caster that can "
     "appear anywhere they have been before, seeing, hearing and affecting the "

@@ -15,8 +15,9 @@ visible.
 
 **Levels 1 to 8, all nine domains** - 153 cards, complete. That is every card a
 level 8 party of any class combination could hold, so a new party composition can
-be simulated without writing code first. What is left of the SRD is levels 9 and
-10.
+be simulated without writing code first. **Level 9 is under way**: Arcana, Blade
+and Bone are in, and the remaining six domains are what is left of it. Level 10 is
+untouched.
 
 The scope grew from levels 1-2, then to 3, then to 4, then to 5, then to 6, then
 to 7, then to 8, each time the previous one was finished. Cards are ported
@@ -336,6 +337,107 @@ the coverage report - Whirlwind's range band, I Am Your Shield's armor slots,
 Healing Hands' Stress option. The two Grimoires carry three spells each;
 Telepathy inside the Book of Illiat is separately dismissed as having no combat
 effect.
+
+## Level 9 — in progress
+
+| Domain | Level 9 |
+|---|---|
+| **Arcana** | ✅ Earthquake · 🚫 Sensory Projection |
+| **Blade** | ✅ Gore and Glory · ✅ Reaper's Strike |
+| **Bone** | ✅ On the Brink · ✅ Splintering Strike |
+| **Codex** | ✅ Book of Ronin · ✅ Disintegration Wave |
+| **Grace** | 🚫 Copycat · 🚫 Master of the Craft |
+| **Midnight** | ✅ Night Terror · ✅ Twilight Toll |
+| **Sage** | ⬜ · ⬜ |
+| **Splendor** | ⬜ · ⬜ |
+| **Valor** | ⬜ · ⬜ |
+
+**9 modelled, 3 no effect, 6 outstanding.** Batches 27 (Arcana, Blade, Bone) and
+28 (Codex, Grace, Midnight) cover twelve of the eighteen; Sage, Splendor and Valor
+are what is left of the level.
+
+**Grace is the fourth domain to have a whole level dismissed**, after Grace's own
+level 4, Midnight's level 6 and Sage's level 6 (which went out of combat rather
+than being dismissed). Both cards here are the *already-resolved* case rather than
+the repositioning one, which is new: Master of the Craft moves numbers a character
+sheet carries resolved, and Copycat's price is a card level nothing records.
+
+### Batch 28 — Codex, Grace and Midnight at level 9 (6 cards, 2 spells)
+
+**Verified against the printed page** (SRD pp. 125, 127 and 129).
+
+| Card | Disposition |
+|---|---|
+| **Book of Ronin** (Cx 9) | Modelled, partial. *Eternal Enervation* makes one adversary **permanently** Vulnerable, once per long rest; *Transform* is dismissed |
+| **Disintegration Wave** (Cx 9) | Modelled. A Spellcast Roll against a flat 18, then a Stress each to unmake adversaries in Far range whose Difficulty is 18 or lower - killed outright, with no roll against them and no damage |
+| **Night Terror** (Mid 9) | Modelled. No roll of its own: everything the Very Close band reaches saves against 16 or is *Horrified*, and the Fear stolen for them comes back as d6s of damage |
+| **Twilight Toll** (Mid 9) | Modelled. One creature marked; every action roll that succeeds against them without rolling damage banks a d12 for whenever damage does land |
+| **Copycat** (Gr 9) | No combat effect - what it copies is another player's card, and the printed price is a card *level* nothing in the project records |
+| **Master of the Craft** (Gr 9) | No combat effect - Experiences carry their modifiers already resolved on the sheet, the Vitality case |
+
+One piece of shared machinery, plus one condition:
+
+- **`on_effect_landed`** - content that fires when its holder's action roll
+  **succeeded** against a target and **rolled no damage**. The complement of
+  `on_hit`, and the outcome nothing in the loop announced: a dozen cards'
+  docstrings already said "`on_hit` cannot see a card that succeeds and applies a
+  condition instead", which is a fair sign the moment was real rather than an
+  artefact. One call site, in `combat/policy.py`, beside the `on_hit` it completes.
+  Twilight Toll is the only content that could not be written without it.
+- **`HORRIFIED`**, which comes to Vulnerable's effect through a new `UNNERVED`
+  tuple in `content/conditions.py` - the exact arrangement `UNSEEN` already has
+  for Hidden and Invisible, so `FightState.is_vulnerable` stays one generic reader.
+
+**Three firsts worth knowing before these are run.** Disintegration Wave is the
+only thing in the project that **kills without dealing damage**. Eternal
+Enervation is the first **permanent** condition anybody applies. And Night Terror
+is the first card whose payload is the **GM's Fear pool** - it is worth most
+exactly when the GM is richest, which is a shape nothing else has.
+
+### Batch 27 — Arcana, Blade and Bone at level 9 (6 cards)
+
+**Verified against the printed page** (SRD pp. 120 and 122-123), a re-read of
+pages every earlier batch has already used.
+
+| Card | Disposition |
+|---|---|
+| **Earthquake** (Ar 9) | Modelled. A Spellcast Roll against a flat 16; once per rest on a success, everything in the **Very Far** band makes a Reaction Roll (18), failures take 3d10+8 physical and are temporarily Vulnerable, successes take half |
+| **Gore and Glory** (Bl 9) | Modelled. Two separate clauses on one hit - a critical, and defeating the target - each paying a Stress clear or a Hope, so a critical that finishes something pays twice |
+| **Reaper's Strike** (Bl 9) | Modelled. Once per long rest, a Hope buys one attack roll over the weapon's own band; one of the targets it beat marks **5 Hit Points** directly |
+| **On the Brink** (Bo 9) | Modelled. At 2 or fewer unmarked HP, Minor damage marks nothing. The only wholly passive card in the domain |
+| **Splintering Strike** (Bo 9) | Modelled. A Hope, one attack over the weapon's band, and the weapon's damage roll shared out among everything it beat, with an extra die per target |
+| **Sensory Projection** (Ar 9) | No combat effect - remote sensing, the Floating Eye and Through Your Eyes reading |
+
+One piece of shared machinery, and it is the batch:
+
+- **`Range.VERY_FAR`** - the outermost band the SRD prints, and the first the area
+  rule has gained since it was written. Earthquake is the first content anywhere
+  to name it, and it is **the one band with no spread roll**: the whole field,
+  always. That is the user's ruling; Far's numbers and folding it into Far were
+  both offered and declined. It also makes a weapon's printed `range` parseable
+  for the first time - the field has existed since the catalogue was written and
+  nothing had ever read it, because no card swept the band its weapon prints
+  until these two.
+
+**Two rulings landed as *general* rules rather than as thresholds for one card**,
+which is worth knowing before either is revisited. A card offering "gain a Hope or
+clear a Stress" clears the Stress where one is marked; and an effect shared across
+the targets an attack beat goes to defeating what it can with the remainder to the
+toughest. The second is **the one place this project has automated scoring**, and
+it was chosen deliberately over spreading evenly and over the standing
+random-among-viable rule - see SIMULATION-RULES.md.
+
+**Two cards mark Hit Points without dealing damage.** Reaper's Strike forces five,
+which is two more than any damage roll can reach, since the thresholds cap a
+single hit at three. Champion's Edge already read that wording the same way, but
+this is the first card where the marking *is* the card.
+
+Worth watching when these are run: Splintering Strike's additional die is rolled
+**after** the pool is shared out, so it can carry a target's share over a
+threshold the share alone did not reach; and Reaper's Strike and Splintering
+Strike both roll through `content/spellcast.py` on the weapon's trait, which means
+`spellcast_bonus` content is asked about a weapon attack. Both are declared as
+gaps on the cards.
 
 ## Batches
 

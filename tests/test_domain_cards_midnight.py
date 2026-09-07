@@ -31,16 +31,20 @@ from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.fight import _apply_duality_outcome
 from combat.rest import Rest
+from combat.results import AttackResult
 from combat.state import FightState
 from content import (
     Status,
     apply_attack_missed,
     apply_on_damaged,
+    apply_on_effect_landed,
     assess,
     total_extra_damage,
+    use_free_abilities,
 )
 from content.conditions import (
     HIDDEN,
+    HORRIFIED,
     ON_A_GM_TURN,
     RESTRAINED,
     VULNERABLE,
@@ -57,14 +61,23 @@ from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityRollResult
 from domain_cards.midnight import (
     MIDNIGHT_TOUCHED,
+    NIGHT_TERROR,
     SPELLCHARGE,
     SPELLCHARGE_DIE,
     SPELLCHARGE_TOKENS,
+    TOLL_TOKENS,
+    TOLLED,
+    TWILIGHT_TOLL,
+    TWILIGHT_TOLL_DIE,
     VANISHING_DODGE,
     _casts_with_magic,
     midnight_spirit,
+    night_terror,
     rain_of_blades,
     shadowbind,
+    twilight_toll,
+    twilight_toll_collects,
+    twilight_toll_falls,
 )
 from items.registry import find_weapon
 from items.weapons import attack_with
@@ -681,6 +694,195 @@ def test_an_adversary_taking_damage_reaches_the_hook_with_its_type():
     assert target.hp_marked > 0
 
 
+# --- Night Terror ------------------------------------------------------------
+
+
+def _terrifying(adversaries: int, fear: int = 6, **overrides):
+    holder = _make_level_8_pc(level=9, domain_cards_loadout=[NIGHT_TERROR], **overrides)
+    field = [_make_adversary(name=f"Dummy {index}") for index in range(adversaries)]
+    return holder, field, _rested_state([holder], field, fear=fear)
+
+
+def test_night_terror_horrifies_what_it_reaches_and_leaves_them_vulnerable():
+    holder, field, fight = _terrifying(6)
+
+    with _bunched(), patch("domain_cards.midnight.roll_d20") as rolled:
+        rolled.return_value.is_success = False
+        assert night_terror(holder, fight) is True
+
+    horrified = [a for a in field if fight.has_condition(a, HORRIFIED)]
+    assert horrified
+    assert all(fight.is_vulnerable(a) for a in horrified)
+
+
+def test_the_fear_it_steals_becomes_the_damage_it_deals():
+    holder, field, fight = _terrifying(6, fear=6)
+
+    with _bunched(), patch("domain_cards.midnight.roll_d20") as rolled:
+        rolled.return_value.is_success = False
+        night_terror(holder, fight)
+
+    horrified = [a for a in field if fight.has_condition(a, HORRIFIED)]
+    assert fight.fear == 6 - len(horrified)
+    assert all(a.hp_marked > 0 for a in horrified)
+
+
+def test_an_empty_fear_pool_still_horrifies_and_deals_nothing():
+    """The card read literally: the dice are what the stolen Fear buys."""
+    holder, field, fight = _terrifying(6, fear=0)
+
+    with _bunched(), patch("domain_cards.midnight.roll_d20") as rolled:
+        rolled.return_value.is_success = False
+        night_terror(holder, fight)
+
+    horrified = [a for a in field if fight.has_condition(a, HORRIFIED)]
+    assert horrified
+    assert all(a.hp_marked == 0 for a in field)
+
+
+def test_a_target_that_holds_its_nerve_is_untouched():
+    holder, field, fight = _terrifying(6)
+
+    with _bunched(), patch("domain_cards.midnight.roll_d20") as rolled:
+        rolled.return_value.is_success = True
+        night_terror(holder, fight)
+
+    assert not any(fight.has_condition(a, HORRIFIED) for a in field)
+    assert all(a.hp_marked == 0 for a in field)
+    assert fight.fear == 6
+
+
+def test_night_terror_is_once_per_long_rest():
+    holder, field, fight = _terrifying(6)
+
+    with _bunched(), patch("domain_cards.midnight.roll_d20") as rolled:
+        rolled.return_value.is_success = False
+        assert night_terror(holder, fight) is True
+        assert night_terror(holder, fight) is False
+
+
+def test_the_gm_pays_a_fear_to_calm_one_down():
+    """"Temporarily" on an adversary is the standing until-the-GM-pays reading."""
+    holder, field, fight = _terrifying(6)
+
+    with _bunched(), patch("domain_cards.midnight.roll_d20") as rolled:
+        rolled.return_value.is_success = False
+        night_terror(holder, fight)
+
+    horrified = [a for a in field if fight.has_condition(a, HORRIFIED)][0]
+    fight.fear = 2
+    ended = fight.expire_conditions(horrified, ON_A_GM_TURN)
+
+    assert HORRIFIED in ended
+    assert fight.fear == 1
+
+
+# --- Twilight Toll -----------------------------------------------------------
+
+
+def _tolling(*hit_points: int, **overrides):
+    holder = _make_level_8_pc(
+        level=9, domain_cards_loadout=[TWILIGHT_TOLL], **overrides
+    )
+    field = [
+        _make_adversary(name=f"Dummy {index}", hp_max=points)
+        for index, points in enumerate(hit_points)
+    ]
+    return holder, field, _rested_state([holder], field)
+
+
+def _landed_effect() -> AttackResult:
+    """An action roll that succeeded and rolled no damage."""
+    return AttackResult(attack_roll=_roll(9, 4, difficulty=5), damage_roll=None)
+
+
+def test_the_toll_goes_on_the_toughest_adversary():
+    holder, field, fight = _tolling(6, 12)
+
+    assert twilight_toll(holder, fight) is True
+    assert fight.token_count(holder, TOLLED) == id(field[1])
+
+
+def test_the_toll_declines_while_one_already_stands():
+    holder, field, fight = _tolling(6, 12)
+
+    assert twilight_toll(holder, fight) is True
+    assert twilight_toll(holder, fight) is False
+
+
+def test_the_toll_is_re_chosen_once_its_creature_is_gone():
+    """And re-choosing clears what the dead one's toll had banked."""
+    holder, field, fight = _tolling(6, 12)
+    twilight_toll(holder, fight)
+    fight.set_token(holder, TOLL_TOKENS, 3)
+    field[1].mark_hp(field[1].hp_max)
+
+    assert twilight_toll(holder, fight) is True
+    assert fight.token_count(holder, TOLLED) == id(field[0])
+    assert fight.token_count(holder, TOLL_TOKENS) == 0
+
+
+def test_a_damageless_success_against_the_tolled_creature_rings_it():
+    holder, field, fight = _tolling(12)
+    twilight_toll(holder, fight)
+
+    twilight_toll_collects(holder, field[0], _landed_effect(), fight)
+
+    assert fight.token_count(holder, TOLL_TOKENS) == 1
+
+
+def test_the_same_success_against_anybody_else_rings_nothing():
+    holder, field, fight = _tolling(6, 12)
+    twilight_toll(holder, fight)  # goes on field[1]
+
+    twilight_toll_collects(holder, field[0], _landed_effect(), fight)
+
+    assert fight.token_count(holder, TOLL_TOKENS) == 0
+
+
+def test_the_toll_reaches_the_hook_through_dispatch():
+    """Nothing in combat/policy.py knows this card; it asks the hook."""
+    holder, field, fight = _tolling(12)
+    twilight_toll(holder, fight)
+
+    apply_on_effect_landed(holder, field[0], _landed_effect(), fight)
+
+    assert fight.token_count(holder, TOLL_TOKENS) == 1
+
+
+def test_the_whole_pool_falls_on_the_next_damage():
+    holder, field, fight = _tolling(12)
+    twilight_toll(holder, fight)
+    fight.set_token(holder, TOLL_TOKENS, 3)
+
+    groups = twilight_toll_falls(holder, field[0], _roll(9, 4, 5), fight)
+
+    assert groups == [DiceGroup(count=3, sides=TWILIGHT_TOLL_DIE, discardable=False)]
+    assert fight.token_count(holder, TOLL_TOKENS) == 0
+
+
+def test_the_toll_never_falls_on_anybody_else():
+    holder, field, fight = _tolling(6, 12)
+    twilight_toll(holder, fight)  # goes on field[1]
+    fight.set_token(holder, TOLL_TOKENS, 3)
+
+    assert twilight_toll_falls(holder, field[0], _roll(9, 4, 5), fight) == []
+    assert fight.token_count(holder, TOLL_TOKENS) == 3
+
+
+def test_an_unrung_toll_adds_no_dice():
+    holder, field, fight = _tolling(12)
+    twilight_toll(holder, fight)
+
+    assert twilight_toll_falls(holder, field[0], _roll(9, 4, 5), fight) == []
+
+
+def test_the_toll_is_offered_as_a_free_ability():
+    holder, field, fight = _tolling(12)
+
+    assert use_free_abilities(holder, fight, limit=1) == [TWILIGHT_TOLL]
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
 
@@ -695,3 +897,8 @@ def test_the_two_social_cards_are_declared_rather_than_absent(card):
 def test_the_level_eight_pair_are_assessed():
     assert assess(SPELLCHARGE).status is Status.MODELLED
     assert assess("Shadowhunter").status is Status.NO_COMBAT_EFFECT
+
+
+def test_the_level_nine_pair_are_modelled():
+    for card in (NIGHT_TERROR, TWILIGHT_TOLL):
+        assert assess(card).status is Status.MODELLED

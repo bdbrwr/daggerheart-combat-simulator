@@ -28,16 +28,30 @@ Level 8 is the domain's most generous card and its most selfish, side by side.
 `ally_attack_advantage` had to exist. **Frenzy** is the first card that puts its
 own holder into a named state for the rest of the fight - *Frenzied*, a condition
 in the sense Cloaked is - and the first that turns a PC's armor off.
+
+Level 9's **Reaper's Strike** forces five Hit Points to be marked outright, which
+is two more than any damage roll can reach: the thresholds cap a hit at three, and
+this card doesn't deal damage at all. It is also the first card to sweep the band
+its **weapon** prints rather than one named on the card.
 """
 
 import random
 
-from content.aoe import Range, targets_reached
+from combat.results import AttackResult
+from content.aoe import (
+    Range,
+    area_difficulty,
+    band_named,
+    targets_beaten,
+    targets_in_area,
+    targets_reached,
+)
 from content.conditions import FRENZIED, Condition
 from content.registry import (
     DamagePool,
     Fight,
     Holder,
+    action,
     adjust_damage_pool,
     ally_attack_advantage,
     ally_damage_reduction,
@@ -57,6 +71,7 @@ from content.registry import (
     roll_bonus,
     severity_response,
 )
+from content.spellcast import spellcast
 from dice.common import AdvantageState
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import DualityOutcome
@@ -1026,6 +1041,202 @@ def frenzy_endures(
     ):
         return hp_to_mark
     return hp_to_mark - 1
+
+
+# --- Gore and Glory --------------------------------------------------------------
+
+GORE_AND_GLORY = "Gore and Glory"
+
+
+@on_hit(
+    GORE_AND_GLORY,
+    unmodelled=[
+        "A landed attack that dealt **no damage** never reaches this hook. "
+        "`on_hit` is asked where an attack rolled damage, so a card that succeeds "
+        "and applies a condition instead is a critical this cannot see. Champion's "
+        "Edge and Breaking Blow declare the same gap",
+        "'a **weapon** attack' - `on_hit` is asked wherever a landed attack rolled "
+        "damage, which includes the cards that roll their own, so a critical "
+        "Spellcast pays out here too. Empty in practice for a Blade-shaped "
+        "loadout, which prints no Spellcast Roll at any level, and declared "
+        "because nothing enforces it",
+        "'when you deal enough damage to defeat an enemy' is read as the target "
+        "being defeated by **this** hit. An adversary the holder wounded and "
+        "something else finished - On Fire, an ally's swing - never reaches this "
+        "hook, since it is holder-scoped and asked on the holder's own attacks",
+    ],
+)
+def gore_and_glory(attacker: Holder, target, result, fight: Fight) -> None:
+    """Gore and Glory (Blade, level 9). Two triggers, one reward each.
+
+    SRD: "When you critically succeed on a weapon attack, gain an additional Hope
+    or clear an additional Stress. Additionally, when you deal enough damage to
+    defeat an enemy, gain a Hope or clear a Stress."
+
+    Two separate clauses, so a critical that also finishes the target off pays out
+    **twice** - which is the page read literally rather than a generous reading.
+    Both are riders on a hit that already happened; the card costs nothing and has
+    no limit, so there is nothing to gate.
+
+    "An **additional** Hope" on the first clause is additional to what a critical
+    already gives: the duality rules hand a critical a Hope and a Stress clear
+    before this is asked, and the card is one more on top.
+
+    SIMULATION RULE - policy, ruled. **Clear a Stress if one is marked, otherwise
+    gain a Hope.** The user's general rule for every card offering that choice -
+    Critical Inspiration's printed shape, made standing - so the whole class
+    behaves one way rather than each card carrying a threshold of its own. Level
+    10's *Swift Step* is the next card it will answer for.
+
+    `clear_stress` and `gain_hope` both clamp, so neither half can overflow.
+    """
+    if fight is None:
+        return
+
+    clauses = 0
+    if result.attack_roll is not None and result.attack_roll.is_critical:
+        clauses += 1
+    if target.is_defeated:
+        clauses += 1
+    if not clauses:
+        return
+
+    for _ in range(clauses):
+        if attacker.stress_marked > 0:
+            attacker.clear_stress(1)
+            fight.note(f"{attacker.name} takes the glory, clearing a Stress")
+        else:
+            attacker.gain_hope(1)
+            fight.note(f"{attacker.name} takes the glory, gaining a Hope")
+
+
+# --- Reaper's Strike -------------------------------------------------------------
+
+REAPERS_STRIKE = "Reaper's Strike"
+
+REAPERS_STRIKE_HOPE = 1
+
+# "Force them to mark 5 Hit Points" - marked directly, not dealt as damage.
+REAPERS_STRIKE_HIT_POINTS = 5
+
+
+@action(
+    REAPERS_STRIKE,
+    unmodelled=[
+        "The roll is made through `content/spellcast.py` on the **weapon's** "
+        "trait, which is the shared shape for an action roll that is not a swing - "
+        "Grace's Troublemaker already rolls Presence through it. The cost is that "
+        "content registered on `spellcast_bonus` is asked about a weapon attack: "
+        "Arcana-Touched would add its +1 and Codex-Touched would mark a Stress. "
+        "Empty in practice, since an *X*-Touched card needs four of its own "
+        "domain in the loadout and this needs a Blade one, and declared because "
+        "nothing enforces it",
+        "'The GM tells you which targets within range it would succeed against' - "
+        "the information half is exactly what `targets_beaten` computes, so "
+        "nothing is lost. What is not modelled is a player declining to strike "
+        "after hearing the answer: the Hope and the per-rest use are spent on the "
+        "attempt, which is what the card's own wording buys",
+    ],
+)
+def reapers_strike(holder: Holder, target, fight: Fight) -> AttackResult | None:
+    """Reaper's Strike (Blade, level 9). One swing that takes five Hit Points.
+
+    SRD: "Once per long rest, spend a Hope to make an attack roll. The GM tells
+    you which targets within range it would succeed against. Choose one of these
+    targets and force them to mark 5 Hit Points."
+
+    **The Hit Points are marked directly, not dealt as damage.** The card says the
+    target marks five, not that it takes damage worth five - so no threshold is
+    read, no Armor Slot or resistance applies, and nothing that responds to being
+    damaged fires. That is Champion's Edge's reading of the same wording, and here
+    it is most of what the card is: five HP is a whole band past what any damage
+    roll can mark, since the thresholds cap a hit at three.
+
+    One roll re-checked against **each target's own Difficulty** - the standing
+    area shape, and what "which targets within range it would succeed against"
+    asks for. The band is the weapon's own printed range, read through
+    `band_named` the way Redirect and Rapid Riposte read an adversary's.
+
+    SIMULATION RULE - policy, ruled. **Defeat what it can, otherwise the
+    toughest.** Among the targets the roll beat, the strike goes to the one with
+    the most unmarked HP that five would still finish; if five finishes none of
+    them, it goes to the one with the most unmarked HP of all. That is the user's
+    general rule for allocating an effect across the targets an attack beat, and
+    it is automated scoring - it reads every beaten target's unmarked HP - which
+    is the thing the ruling settled. Ties are broken by a draw rather than by the
+    order the encounter spawned them in.
+
+    The Hope and the per-long-rest use are spent on the **attempt**: "spend a Hope
+    to make an attack roll" is what the Hope buys, and the once-per-long-rest sits
+    on the whole card rather than on a success, unlike Confusing Aura's.
+    """
+    if fight is None:
+        return None
+
+    carried = getattr(holder, "primary_weapon", "")
+    if not carried:
+        return None
+
+    weapon = find_weapon(carried)
+    if weapon.trait not in holder.traits:
+        return None
+    if not holder.can_spend_hope(REAPERS_STRIKE_HOPE):
+        return None
+    if not fight.can_use_once_per_rest(holder, REAPERS_STRIKE, long=True):
+        return None
+
+    area = targets_in_area(band_named(weapon.range), fight.living_adversaries)
+    if not area:
+        return None
+
+    holder.spend_hope(REAPERS_STRIKE_HOPE)
+    fight.use_once_per_rest(holder, REAPERS_STRIKE, long=True)
+
+    attack_roll = spellcast(
+        holder, target, fight, trait=weapon.trait, difficulty=area_difficulty(area)
+    )
+    if attack_roll is None:
+        return None
+
+    beaten = targets_beaten(attack_roll, area)
+    if not beaten:
+        fight.note(f"{holder.name}'s reaping stroke finds nobody ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    victim = _reaped(beaten)
+    victim.mark_hp(REAPERS_STRIKE_HIT_POINTS)
+    fight.note(
+        f"{holder.name} reaps {victim.name}, forcing {REAPERS_STRIKE_HIT_POINTS} "
+        f"Hit Points"
+    )
+    return AttackResult(
+        attack_roll=attack_roll,
+        damage_roll=None,
+        hp_marked=REAPERS_STRIKE_HIT_POINTS,
+    )
+
+
+def _reaped(beaten: list):
+    """Which of the targets the roll beat takes the five Hit Points.
+
+    The user's allocation rule: defeat what it can, and otherwise put it into the
+    toughest. Among the ones five would finish, the *largest* is taken, since
+    finishing a bigger creature wastes less of the strike; when five finishes none
+    of them the largest of all is taken instead.
+
+    Ties broken by a draw, because which of two identical adversaries is struck
+    must not be decided by the order a catalogue happened to list them in.
+    """
+    finishable = [
+        adversary
+        for adversary in beaten
+        if adversary.hp_unmarked <= REAPERS_STRIKE_HIT_POINTS
+    ]
+    among = finishable or beaten
+    toughest = max(adversary.hp_unmarked for adversary in among)
+    return random.choice(
+        [adversary for adversary in among if adversary.hp_unmarked == toughest]
+    )
 
 
 out_of_combat_ability(

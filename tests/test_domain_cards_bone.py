@@ -16,6 +16,8 @@ Bone-Touched negating a hit outright rather than softening it.
 """
 
 import random
+from contextlib import contextmanager
+from unittest.mock import patch
 
 import pytest
 
@@ -29,6 +31,7 @@ from content import (
     apply_on_hit,
     assess,
     party_damage_reduction,
+    soften_damage,
     total_ally_extra_damage,
     total_damage_bonus,
     total_evasion_bonus,
@@ -42,10 +45,16 @@ from domain_cards.bone import (
     BREAKING_BLOW_CHARGE,
     CRUEL_PRECISION,
     FEROCITY_BONUS,
+    ON_THE_BRINK,
+    SPLINTERING_STRIKE,
     STRATEGIC_OPENED,
     STRATEGIC_TOKENS,
+    _finishing_share,
+    _splintered,
     ferocity,
     ferocity_evades,
+    on_the_brink,
+    splintering_strike,
     strategic_approach,
 )
 
@@ -577,6 +586,200 @@ def test_a_charge_belongs_to_the_creature_rather_than_to_the_attack():
     assert total_ally_extra_damage(bone, charged, roll, fight)
 
 
+# --- On the Brink ------------------------------------------------------------
+
+
+@contextmanager
+def _bunched():
+    """Every band at its best reach, so a case is about the card not the spread."""
+    with patch("content.aoe.random.random", return_value=0.0):
+        yield
+
+
+def _on_the_brink(**overrides):
+    """A Bone character carrying the card, at 2 unmarked HP of 8."""
+    holder = _make_level_8_pc(
+        level=9, domain_cards_loadout=[ON_THE_BRINK], **overrides
+    )
+    holder.mark_hp(6)
+    return holder, _rested_state([holder], [_make_adversary()])
+
+
+def test_minor_damage_marks_nothing_while_near_death():
+    holder, fight = _on_the_brink()
+
+    assert holder.is_near_death is True
+    assert soften_damage(holder, 5, 1, fight) == 0
+
+
+def test_a_major_hit_is_untouched():
+    """The card answers Minor damage and nothing else."""
+    holder, fight = _on_the_brink()
+
+    assert soften_damage(holder, 12, 2, fight) == 2
+
+
+def test_a_healthy_holder_takes_minor_damage_normally():
+    holder = _make_level_8_pc(level=9, domain_cards_loadout=[ON_THE_BRINK])
+    fight = _rested_state([holder], [_make_adversary()])
+
+    assert holder.is_near_death is False
+    assert soften_damage(holder, 5, 1, fight) == 1
+
+
+def test_the_trigger_is_read_off_the_damage_and_not_the_hp_it_would_mark():
+    """A Major hit an Armor Slot softened to one HP is still not Minor damage."""
+    holder, fight = _on_the_brink()
+
+    assert soften_damage(holder, 12, 1, fight) == 1
+
+
+def test_a_hit_armor_already_took_to_nothing_is_left_alone():
+    holder, fight = _on_the_brink()
+
+    assert soften_damage(holder, 5, 0, fight) == 0
+
+
+def test_the_card_reaches_the_real_damage_pipeline():
+    holder, fight = _on_the_brink()
+
+    assert holder.take_damage(5, fight) == 0
+    assert holder.hp_marked == 6
+
+
+def test_a_holder_without_the_card_marks_the_hit_point():
+    holder = _make_level_8_pc(level=9)
+    holder.mark_hp(6)
+    fight = _rested_state([holder], [_make_adversary()])
+
+    assert holder.take_damage(5, fight) == 1
+
+
+def test_the_card_answers_for_itself_whatever_it_is_asked():
+    """The card's own contract, independent of how the registry calls it."""
+    holder, fight = _on_the_brink()
+
+    assert on_the_brink(holder, 5, 1, fight) == 0
+    assert on_the_brink(holder, 12, 2, fight) == 2
+
+
+# --- Splintering Strike: how the pool is shared out ---------------------------
+#
+# `_splintered` is a pure function of a pool and the targets an attack beat, so
+# the allocation ruling is pinned here directly rather than through a cast whose
+# damage would have to be patched twice over.
+
+
+@pytest.mark.parametrize(
+    "unmarked, expected",
+    [(1, 1), (2, "major"), (3, "severe"), (4, None), (5, None)],
+)
+def test_what_it_costs_to_finish_a_target(unmarked, expected):
+    """The bands cap a single share at 3 HP, so four unmarked cannot be finished."""
+    adversary = _make_adversary(hp_max=unmarked, major_threshold=10, severe_threshold=20)
+
+    wanted = {"major": 10, "severe": 20}.get(expected, expected)
+
+    assert _finishing_share(adversary) == wanted
+
+
+def test_a_defeated_target_needs_no_share():
+    adversary = _make_adversary(hp_max=1)
+    adversary.hp_marked = 1
+
+    assert _finishing_share(adversary) is None
+
+
+def test_the_pool_finishes_what_it_can_and_wastes_the_rest():
+    """Both are on their last Hit Point, so a point each is the whole answer."""
+    first, second = _make_adversary(name="A", hp_max=1), _make_adversary(
+        name="B", hp_max=1
+    )
+
+    shared = dict(
+        (adversary.name, share) for adversary, share in _splintered(40, [first, second])
+    )
+
+    assert shared == {"A": 1, "B": 1}
+
+
+def test_a_target_nothing_could_finish_takes_the_whole_pool():
+    alone = _make_adversary(name="A", hp_max=5)
+
+    assert _splintered(40, [alone]) == [(alone, 40)]
+
+
+def test_the_remainder_goes_to_the_toughest_left_standing():
+    """B is finished for a point; A's finishing share is out of reach, so it
+    takes everything left rather than the pool being spent on a corpse."""
+    tough = _make_adversary(name="A", hp_max=2, major_threshold=10)
+    frail = _make_adversary(name="B", hp_max=1)
+
+    shared = dict(
+        (adversary.name, share) for adversary, share in _splintered(5, [tough, frail])
+    )
+
+    assert shared == {"B": 1, "A": 4}
+
+
+# --- Splintering Strike: the card ---------------------------------------------
+
+
+def _splintering(*hit_points: int, **overrides):
+    holder = _make_level_8_pc(
+        level=9, domain_cards_loadout=[SPLINTERING_STRIKE], **overrides
+    )
+    field = [
+        _make_adversary(name=f"Dummy {index}", hp_max=points)
+        for index, points in enumerate(hit_points)
+    ]
+    return holder, field, _rested_state([holder], field)
+
+
+def test_the_strike_spends_a_hope_and_finishes_what_it_beat():
+    holder, field, fight = _splintering(1, 1)
+
+    with _bunched():
+        result = splintering_strike(holder, field[0], fight)
+
+    assert result is not None
+    assert holder.hope_marked == 5
+    assert all(adversary.is_defeated for adversary in field)
+
+
+def test_the_strike_is_once_per_long_rest_on_a_success():
+    holder, field, fight = _splintering(1, 1)
+
+    with _bunched():
+        assert splintering_strike(holder, field[0], fight) is not None
+        assert fight.can_use_once_per_rest(holder, SPLINTERING_STRIKE, long=True) is False
+        assert splintering_strike(holder, field[0], fight) is None
+
+
+def test_the_strike_declines_without_a_hope():
+    holder, field, fight = _splintering(1, 1, hope_marked=0)
+
+    with _bunched():
+        assert splintering_strike(holder, field[0], fight) is None
+    assert all(adversary.hp_marked == 0 for adversary in field)
+
+
+def test_a_roll_that_beats_nobody_keeps_the_per_rest_use():
+    """"Once per long rest, **on a success**" gates the payoff, not the attempt."""
+    holder, field, fight = _splintering(1)
+    field[0].difficulty = 40
+
+    with _bunched(), patch(
+        "content.spellcast.roll_duality", return_value=_roll(2, 3, difficulty=40)
+    ):
+        result = splintering_strike(holder, field[0], fight)
+
+    assert result is not None and not result.attack_roll.is_success
+    assert field[0].hp_marked == 0
+    assert holder.hope_marked == 5  # the Hope buys the attempt
+    assert fight.can_use_once_per_rest(holder, SPLINTERING_STRIKE, long=True) is True
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
 
@@ -596,3 +799,8 @@ def test_the_two_measured_dismissals_say_how_much_they_are_worth(card):
 def test_breaking_blow_is_modelled_and_wrangle_is_dismissed():
     assert assess(BREAKING_BLOW).status is Status.MODELLED
     assert assess("Wrangle").status is Status.NO_COMBAT_EFFECT
+
+
+def test_the_level_nine_pair_are_modelled():
+    for card in (ON_THE_BRINK, SPLINTERING_STRIKE):
+        assert assess(card).status is Status.MODELLED

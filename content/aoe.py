@@ -44,6 +44,7 @@ class Range(Enum):
     VERY_CLOSE = "Very Close"
     CLOSE = "Close"
     FAR = "Far"
+    VERY_FAR = "Very Far"
 
 
 def band_named(name: str) -> Range:
@@ -147,6 +148,16 @@ def reach_outcomes(
 
     def clamped(reached: int) -> int:
         return min(max(reached, 1 if floor else 0), combatants)
+
+    if band is Range.VERY_FAR:
+        # The whole field, always - ruled. Very Far is the outermost band the SRD
+        # prints, so there is nowhere for a combatant to be standing that is
+        # inside a fight and outside it. This is the one band with no spread roll:
+        # every other exists to stop an ability being worth its ceiling on every
+        # cast, and at Very Far the ceiling *is* the band. It is deliberately the
+        # most generous rule in this module, and `chance_within` at Very Far is
+        # correspondingly always 1.0.
+        return [(1.0, clamped(combatants))]
 
     if band is Range.FAR:
         # Everyone, but one short a quarter of the time. Far used to mean

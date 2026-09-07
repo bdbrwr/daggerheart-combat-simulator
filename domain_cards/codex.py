@@ -47,6 +47,12 @@ the other - *Shared Clarity*, which pools two PCs' Stress tracks - is real,
 representable and ruled to make no difference across a high-N run. **Safe Haven**
 is filed as out of combat rather than dismissed, because the downtime move it
 grants is one of the larger things a party can buy.
+
+Level 9 is the domain at its most final. The **Book of Ronin** carries the first
+**permanent** condition anybody applies - every other Vulnerable the party hands
+out lifts when the GM pays a Fear - and **Disintegration Wave** is the only thing
+in the project that kills without dealing damage: a Stress per adversary, no roll
+against them, and every unmarked Hit Point marked at once.
 """
 
 import random
@@ -59,7 +65,7 @@ from content.aoe import (
     targets_beaten,
     targets_in_area,
 )
-from content.conditions import RESTRAINED, Condition, when_the_gm_pays
+from content.conditions import RESTRAINED, VULNERABLE, Condition, when_the_gm_pays
 from content.damage_types import DamageType, types_in
 from content.grimoire import Grimoire
 from content.registry import (
@@ -1707,6 +1713,210 @@ no_combat_effect(
     "threaded through the Stress path, and a required one - were offered and "
     "declined.",
 )
+
+
+# --- Book of Ronin ---------------------------------------------------------------
+
+BOOK_OF_RONIN = "Book of Ronin"
+ETERNAL_ENERVATION = "Eternal Enervation"
+
+RONIN = Grimoire(BOOK_OF_RONIN)
+
+
+@RONIN.action(
+    ETERNAL_ENERVATION,
+    unmodelled=[
+        "'against a target within Close range' - no positions are tracked, so the "
+        "spell always reaches whoever it picks",
+        "'They can't clear this condition by any means' is expressed by the "
+        "condition carrying **no ender at all**, which is how 'until the scene "
+        "ends' is written here. That holds by construction rather than by anything "
+        "refusing to lift it: nothing in the project clears a condition on an "
+        "adversary except `when_the_gm_pays`, which this one does not offer",
+    ],
+)
+def eternal_enervation(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Eternal Enervation (Book of Ronin, Codex level 9). Vulnerable, for good.
+
+    SRD: "Once per long rest, make a Spellcast Roll against a target within Close
+    range. On a success, they become permanently *Vulnerable*. They can't clear
+    this condition by any means."
+
+    **The first permanent condition anybody applies.** Every other Vulnerable the
+    party hands out lifts when the GM spends a Fear, which is the standing reading
+    of "temporarily"; this card prints the opposite in as many words, so the
+    condition carries no `end` and runs to the end of the fight. Blade's *Frenzied*
+    is written the same way on the party's own side.
+
+    What that is worth is exactly what Vulnerable is worth: every roll against the
+    target has Advantage for the rest of the fight.
+
+    SIMULATION RULE - policy, ruled. **It goes on the toughest adversary** - the
+    one with the most unmarked HP - which is the user's general rule for a card
+    that marks one creature for a lasting effect, and is deliberately the opposite
+    of the party's focus-fire rule. A permanent condition pays out for as long as
+    its holder survives, so it goes on whoever will be there longest. Ties are
+    drawn at random rather than settled by the order an encounter spawned them in.
+
+    Declines against a target already Vulnerable, per the standing don't-re-apply
+    rule. Worth naming the consequence: an adversary made *temporarily* Vulnerable
+    by something else - Forceful Push, Bolt Beacon - is skipped, so a party that
+    leans on those can talk this card out of the one target it wants.
+    """
+    if fight is None:
+        return None
+    if not fight.can_use_once_per_rest(caster, ETERNAL_ENERVATION, long=True):
+        return None
+
+    candidates = [
+        adversary
+        for adversary in fight.living_adversaries
+        if not fight.has_condition(adversary, VULNERABLE)
+    ]
+    if not candidates:
+        return None
+
+    toughest = max(adversary.hp_unmarked for adversary in candidates)
+    victim = random.choice(
+        [adversary for adversary in candidates if adversary.hp_unmarked == toughest]
+    )
+
+    attack_roll = spellcast(caster, victim, fight)
+    if attack_roll is None:
+        return None
+    if not attack_roll.is_success:
+        fight.note(f"{caster.name} reaches for {victim.name} and fails ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    fight.use_once_per_rest(caster, ETERNAL_ENERVATION, long=True)
+    fight.apply_condition(victim, Condition(name=VULNERABLE, source=caster))
+    fight.note(f"{caster.name} enervates {victim.name}, permanently Vulnerable")
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+RONIN.note_gap(
+    "Transform",
+    "assessed and declared under its own name as having no combat effect - see "
+    "the declaration below",
+)
+
+no_combat_effect(
+    "Transform",
+    "A Spellcast Roll (15) turns the caster into an inanimate object no larger "
+    "than twice their normal size, held until they take damage. Modelling it would "
+    "mean a PC who cannot usefully be aimed at and cannot usefully act, which is a "
+    "spotlight spent buying nothing - the Blink Out reading, where running the "
+    "spell would make the party *worse*. At a table it is how somebody hides in "
+    "plain sight or waits out a patrol, and none of that is a fight.",
+)
+
+
+# --- Disintegration Wave ---------------------------------------------------------
+
+DISINTEGRATION_WAVE = "Disintegration Wave"
+
+# Both printed on the card, and they happen to be the same number: the Spellcast
+# Roll is made against a flat 18, and only adversaries whose Difficulty is 18 or
+# lower can be unmade.
+DISINTEGRATION_DIFFICULTY = 18
+DISINTEGRATION_CEILING = 18
+
+
+@action(
+    DISINTEGRATION_WAVE,
+    unmodelled=[
+        "'They are killed and can't come back to life by any means' - the second "
+        "half has nothing to hold it against. Nothing in the simulator brings an "
+        "adversary back except the Skeleton Warrior's *Won't Stay Dead*, which is "
+        "not resurrection so much as re-forming, and this card would not stop it. "
+        "So the clause is recorded rather than enforced",
+        "'the GM tells you which adversaries within Far range have a Difficulty of "
+        "18 or lower' - the information half is exactly the list this builds, so "
+        "nothing is lost. What is not modelled is a caster declining after hearing "
+        "the answer: the per-rest use is claimed on the successful cast",
+    ],
+)
+def disintegration_wave(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Disintegration Wave (Codex, level 9). A Stress each, and they are simply gone.
+
+    SRD: "Make a Spellcast Roll (18). Once per long rest on a success, the GM tells
+    you which adversaries within Far range have a Difficulty of 18 or lower. Mark a
+    Stress for each one you wish to hit with this spell. They are killed and can't
+    come back to life by any means."
+
+    **The only thing in the project that kills without dealing damage.** No roll is
+    made against the victim, no threshold is read, nothing softens or resists it,
+    and no damage response fires: every unmarked Hit Point is marked at once and the
+    adversary is defeated. The nearest neighbours are Reaper's Strike and Champion's
+    Edge, which mark Hit Points directly but a fixed number of them.
+
+    A flat Difficulty of 18 rather than anybody's own, printed on the card, so
+    `area_difficulty` is not consulted - nobody is resisting the cast itself. What
+    resists it is the printed **Difficulty ceiling**, which is the card's own
+    balance: a Solo of Difficulty 19 or more simply is not on the list.
+
+    **The per-rest use is claimed on the success**, per "once per long rest **on a
+    success**" - Confusing Aura's and Zone of Protection's reading of that phrasing.
+
+    SIMULATION RULE - policy, ruled. **One Stress per adversary, spent as far as
+    the shared last-slot rule allows** - `will_spend_stress` asked once per victim,
+    which is Rage Up's and Confusing Aura's shape. So a caster with a full track
+    unmakes several and stops one slot short; spending the whole track, killing
+    exactly one, and waiting for two eligible targets were all offered and declined.
+
+    Which ones die first is the toughest first - the most unmarked HP - which
+    extends the same rule Eternal Enervation is ruled by, on the same reasoning:
+    the Stress is worth most spent on the creature damage would take longest to
+    remove. Ties drawn at random.
+
+    Declines before rolling when no Stress can be paid at all, per the standing
+    rule that a use is never spent on nothing.
+    """
+    if fight is None:
+        return None
+    if not fight.can_use_once_per_rest(caster, DISINTEGRATION_WAVE, long=True):
+        return None
+    if not caster.will_spend_stress(1):
+        return None
+
+    reachable = [
+        adversary
+        for adversary in targets_in_area(Range.FAR, fight.living_adversaries)
+        if adversary.difficulty <= DISINTEGRATION_CEILING
+    ]
+    if not reachable:
+        return None
+
+    attack_roll = spellcast(
+        caster, target, fight, difficulty=DISINTEGRATION_DIFFICULTY
+    )
+    if attack_roll is None:
+        return None
+    if not attack_roll.is_success:
+        fight.note(f"{caster.name}'s disintegration wave breaks up ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    fight.use_once_per_rest(caster, DISINTEGRATION_WAVE, long=True)
+
+    # Shuffled before sorting, so two adversaries with the same unmarked HP are
+    # not separated by the order the encounter spawned them in.
+    order = list(reachable)
+    random.shuffle(order)
+    order.sort(key=lambda adversary: adversary.hp_unmarked, reverse=True)
+
+    marked = 0
+    for adversary in order:
+        if not caster.will_spend_stress(1):
+            break
+        caster.spend_stress(1)
+        unmade = adversary.hp_unmarked
+        adversary.mark_hp(unmade)
+        marked += unmade
+        fight.note(f"{caster.name} unmakes {adversary.name}")
+
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=None, hp_marked=marked
+    )
 
 
 # --- Safe Haven ------------------------------------------------------------------

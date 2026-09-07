@@ -51,12 +51,23 @@ magic damage taken into damage dealt, and is the first card anywhere that needed
 its trigger - low light and darkness, which the simulator holds no fact about -
 and it is worth reading that dismissal carefully, since the effect it turns off is
 one of the largest in the domain.
+
+Level 9 gives the domain two firsts. **Night Terror** is the first card anywhere
+whose payload is the GM's own Fear - it takes the pool and throws it back as
+damage - and it brings *Horrified*, a named state that comes to Vulnerable.
+**Twilight Toll** is the reason `on_effect_landed` exists: it charges on action
+rolls that succeed and deal no damage, which is the one outcome nothing in the
+loop announced, and which this domain's own conditions produce more than any
+other.
 """
+
+import random
 
 from combat.results import AttackResult
 from content.aoe import Range, area_difficulty, targets_beaten, targets_in_area
 from content.conditions import (
     HIDDEN,
+    HORRIFIED,
     RESTRAINED,
     SILENCED,
     VULNERABLE,
@@ -80,10 +91,12 @@ from content.registry import (
     free,
     no_combat_effect,
     on_damaged,
+    on_effect_landed,
     total_extra_damage,
 )
 from content.spellcast import spellcast
 from dice.common import AdvantageState
+from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
 
 CHOKEHOLD = "Chokehold"
@@ -1064,6 +1077,260 @@ def spellcharge_discharges(
 
     fight.note(f"{holder.name} discharges {tokens}d6 into the blow")
     return [DiceGroup(count=tokens, sides=SPELLCHARGE_DIE, discardable=False)]
+
+
+# --- Night Terror ----------------------------------------------------------------
+
+NIGHT_TERROR = "Night Terror"
+
+NIGHT_TERROR_REACTION = 16
+NIGHT_TERROR_DIE = 6
+
+
+@free(
+    NIGHT_TERROR,
+    unmodelled=[
+        "'choose any targets within Very Close range' - no positions are tracked, "
+        "so the area rule in SIMULATION-RULES.md decides how many the horror "
+        "reaches, and every one of them is chosen. There is no cost per target, so "
+        "choosing fewer could only ever buy less",
+        "The Reaction Roll is a flat d20 against the printed 16. Adversaries have "
+        "no traits to roll, which is the standing rule, so nothing on a stat block "
+        "makes one better or worse at holding its nerve",
+    ],
+)
+def night_terror(holder: Holder, fight: Fight) -> bool:
+    """Night Terror (Midnight, level 9). Take the GM's Fear and throw it back.
+
+    SRD: "Once per long rest, choose any targets within Very Close range to
+    perceive you as a nightmarish horror. The targets must succeed on a Reaction
+    Roll (16) or become temporarily *Horrified*. While Horrified, they're
+    *Vulnerable*. Steal a number of Fear from the GM equal to the number of targets
+    that are Horrified (up to the number of Fear in the GM's pool). Roll a number
+    of d6s equal to the number of stolen Fear and deal the total damage to each
+    Horrified target. Discard the stolen Fear."
+
+    **No roll of the caster's**, so it is a free ability: the horror happens *and*
+    the caster takes their own action roll in the same spotlight. Rune Circle,
+    Chokehold and Sigil of Retribution are built the same way and for the same
+    reason - what makes something a free ability here is that it costs no action
+    roll, not that it costs nothing.
+
+    **The first card anywhere that takes Fear out of the GM's pool as its payload.**
+    Vicious Entangle and Shadowbind drain it as the price of undoing a condition
+    they applied; Sigil of Retribution pays *into* it. This one simply removes it,
+    and then turns what it removed into damage - so the card is worth most exactly
+    when the GM is richest, which is a shape nothing else in the project has.
+
+    *Horrified* is a condition of its own rather than an application of Vulnerable,
+    which is the standing call for a state the page names and refers back to -
+    Cloaked's and Frenzied's. What it does is Vulnerable's effect, through
+    `UNNERVED` in `content/conditions.py`, so nothing new had to be built for it.
+    "Temporarily", on an adversary, is the standing reading: until the GM spends a
+    Fear on their turn to clear it.
+
+    SIMULATION RULE - policy. Nothing to rule beyond the standing default. It costs
+    no Hope, no Stress and no action roll, so there is no state in which using it is
+    worse than not - the Preservation Blast reading - and no floor on how many it
+    has to catch. With an empty Fear pool it still Horrifies and simply deals
+    nothing, which is the card read literally.
+
+    Once per **long** rest, so a party running a second encounter without one walks
+    in with it already spent.
+    """
+    if fight is None:
+        return False
+
+    area = targets_in_area(Range.VERY_CLOSE, fight.living_adversaries)
+    if not area:
+        return False
+    if not fight.use_once_per_rest(holder, NIGHT_TERROR, long=True):
+        return False
+
+    horrified = []
+    for adversary in area:
+        if roll_d20(evasion=NIGHT_TERROR_REACTION).is_success:
+            fight.note(f"{adversary.name} holds its nerve")
+            continue
+        fight.apply_condition(
+            adversary,
+            Condition(name=HORRIFIED, end=when_the_gm_pays, source=holder),
+        )
+        horrified.append(adversary)
+
+    if not horrified:
+        fight.note(f"{holder.name}'s nightmare frightens nobody")
+        return True
+
+    # "Up to the number of Fear in the GM's pool" - taken one at a time, so a pool
+    # shorter than the count simply hands over what it has.
+    stolen = 0
+    while stolen < len(horrified) and fight.spend_fear(1):
+        stolen += 1
+
+    fight.note(
+        f"{holder.name} horrifies {len(horrified)} and steals {stolen} Fear"
+    )
+    if not stolen:
+        return True
+
+    # One roll, dealt to each of them - the standing reading of one roll landing on
+    # several targets, which `Adversary.area_attack` already takes.
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=stolen, sides=NIGHT_TERROR_DIE)]
+    )
+    for adversary in horrified:
+        adversary.take_damage(
+            damage_roll.total, fight, damage_type=DamageType.MAGIC
+        )
+    fight.note(f"The nightmare tears into them for {damage_roll.total} each")
+    return True
+
+
+# --- Twilight Toll ---------------------------------------------------------------
+
+TWILIGHT_TOLL = "Twilight Toll"
+
+TWILIGHT_TOLL_DIE = 12
+
+# Which adversary the toll is on, held as that adversary's `id()` - the Ranger's
+# Focus arrangement, and what `set_token` exists for. Zero means no toll stands.
+TOLLED = "Twilight Toll target"
+
+# The tokens waiting on the card, held on the caster: it is their card.
+TOLL_TOKENS = "Twilight Toll tokens"
+
+
+@free(
+    TWILIGHT_TOLL,
+    unmodelled=[
+        "'Choose a target within Far range' - no positions are tracked, so the "
+        "toll always reaches whoever it picks",
+    ],
+)
+def twilight_toll(holder: Holder, fight: Fight) -> bool:
+    """Twilight Toll (Midnight, level 9), the choosing. Mark one creature.
+
+    SRD: "Choose a target within Far range. When you succeed on an action roll
+    against them that doesn't result in making a damage roll, place a token on this
+    card. When you deal damage to this target, spend any number of tokens to add a
+    d12 for each token spent to your damage roll. You can only hold Twilight Toll
+    on one creature at a time. When you choose a new target or take a rest, clear
+    all unspent tokens."
+
+    **No roll**, so choosing is a free ability - the caster marks somebody *and*
+    takes their action roll in the same spotlight, exactly as Sigil of Retribution
+    does. The card reaches three hooks between them: this one chooses, the next
+    collects, and the third spends.
+
+    SIMULATION RULE - policy, ruled. **The toll goes on the toughest adversary** -
+    the most unmarked HP - which is the user's general rule for a card that marks
+    one creature for a lasting effect, and the same one Eternal Enervation follows.
+    It is deliberately the opposite of the party's focus-fire rule: tokens
+    accumulate over a fight, so the toll is worth most on whoever will be there to
+    collect them. Ties are drawn at random.
+
+    Declines while a toll already stands on something still living. "When you
+    choose a new target ... clear all unspent tokens" is what makes re-choosing a
+    cost rather than a free improvement, so the toll is not moved while it is still
+    worth anything - and once its creature is defeated the card is free to pick
+    again, which clears the tokens the dead adversary's toll had banked.
+    """
+    if fight is None:
+        return False
+
+    living = fight.living_adversaries
+    if not living:
+        return False
+    if any(fight.token_count(holder, TOLLED) == id(a) for a in living):
+        return False
+
+    toughest = max(adversary.hp_unmarked for adversary in living)
+    marked = random.choice(
+        [adversary for adversary in living if adversary.hp_unmarked == toughest]
+    )
+    fight.set_token(holder, TOLLED, id(marked))
+    # A fresh toll starts empty - "when you choose a new target, clear all unspent
+    # tokens", and the previous target's tokens are exactly that.
+    fight.set_token(holder, TOLL_TOKENS, 0)
+    fight.note(f"{holder.name} tolls {marked.name}")
+    return True
+
+
+@on_effect_landed(
+    TWILIGHT_TOLL,
+    unmodelled=[
+        "A spotlight spent hunting something that has gone to ground never reaches "
+        "this hook - `combat/policy.py`'s `_search_for_hidden` returns before the "
+        "options are offered - so finding a tolled adversary places no token, even "
+        "though it is an action roll that succeeded against them and rolled no "
+        "damage",
+        "A **Reaction Roll** is not an action roll and correctly places nothing, "
+        "which is the page read literally; it is recorded because the two are easy "
+        "to confuse and several of this domain's cards make both",
+    ],
+)
+def twilight_toll_collects(holder: Holder, target, result, fight: Fight = None) -> None:
+    """The token a successful, damageless action against the tolled creature places.
+
+    Registered on the same name as the choosing above, which is how one card
+    reaches several hooks - Ferocity's, Boost's and Frenzy's arrangement.
+
+    **The card this hook was built for.** "When you succeed on an action roll
+    against them that doesn't result in making a damage roll" is precisely the
+    moment `on_hit` cannot see and `attack_failed` is the wrong side of; see
+    `on_effect_landed` in `content/registry.py`. So the toll is charged by
+    Shadowbind, Chokehold, Hush and Veil of Night - the domain's own conditions -
+    rather than by hitting anybody, which is what makes it a Midnight card.
+
+    No policy: the tokens cost nothing and the card states its own trigger.
+    """
+    if fight is None:
+        return
+    if fight.token_count(holder, TOLLED) != id(target):
+        return
+
+    held = fight.token_count(holder, TOLL_TOKENS) + 1
+    fight.set_token(holder, TOLL_TOKENS, held)
+    fight.note(f"{holder.name}'s toll on {target.name} rings ({held})")
+
+
+@extra_damage(
+    TWILIGHT_TOLL,
+    unmodelled=[
+        "Attacks that aren't a weapon swing or a card rolling damage through "
+        "`total_extra_damage`. This is the holder-scoped hook, so it reaches "
+        "everywhere a PC's own content rolls damage - which is what 'when you deal "
+        "damage to this target' asks for - but damage dealt with no roll behind it "
+        "at all (Rune Circle's, On Fire's) never consults it",
+    ],
+)
+def twilight_toll_falls(holder: Holder, target, roll, fight: Fight = None) -> list:
+    """The d12s the toll pays out, all at once.
+
+    SIMULATION RULE - policy, ruled. **Every token on the first damage that
+    reaches the tolled creature**, which is Spellcharge's and Unleash Chaos's
+    answer to the same "spend any number" wording. Holding tokens back for a bigger
+    swing was not offered separately: a toll that is never collected is worth
+    nothing, and the tolled adversary can die at any point.
+
+    Scoped to the tolled creature by `id()`, so the dice never ride an attack on
+    somebody else - which is the whole difference between this and a plain damage
+    bonus.
+
+    `discardable=False`, like every die a feature adds to somebody else's roll.
+    """
+    if fight is None or fight.token_count(holder, TOLLED) != id(target):
+        return []
+
+    tokens = fight.spend_tokens(
+        holder, TOLL_TOKENS, fight.token_count(holder, TOLL_TOKENS)
+    )
+    if not tokens:
+        return []
+
+    fight.note(f"{holder.name}'s toll falls on {target.name} for {tokens}d12")
+    return [DiceGroup(count=tokens, sides=TWILIGHT_TOLL_DIE, discardable=False)]
 
 
 # --- Assessed and dismissed --------------------------------------------------

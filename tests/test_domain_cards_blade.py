@@ -27,17 +27,20 @@ fail.
 """
 
 import random
+from contextlib import contextmanager
 from unittest.mock import Mock, patch
 
 from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.rest import Rest
+from combat.results import AttackResult
 from combat.state import FightState
 from content import (
     Status,
     ally_granted_attack_advantage,
     apply_ally_on_roll,
     apply_attack_failed,
+    apply_on_hit,
     assess,
     granted_attack_advantage,
     reroll_damage_dice,
@@ -58,8 +61,13 @@ from domain_cards.blade import (
     FRENZY,
     FRENZY_DAMAGE,
     GLANCING_BLOW,
+    GORE_AND_GLORY,
+    REAPERS_STRIKE,
+    REAPERS_STRIKE_HIT_POINTS,
     get_back_up,
+    gore_and_glory,
     not_good_enough,
+    reapers_strike,
     reckless,
 )
 from items.registry import find_weapon
@@ -747,9 +755,200 @@ def test_frenzy_does_nothing_before_it_is_entered():
     assert total_damage_bonus(pc, _make_adversary(), fight) == 0
 
 
+# --- Gore and Glory ----------------------------------------------------------
+
+
+@contextmanager
+def _bunched():
+    """Every band at its best reach, so a case is about the card not the spread."""
+    with patch("content.aoe.random.random", return_value=0.0):
+        yield
+
+
+def _a_hit(critical: bool = False) -> AttackResult:
+    """A landed attack, optionally a critical - equal dice are a critical."""
+    return AttackResult(
+        attack_roll=_roll(9, 9, 5) if critical else _roll(9, 4, 5),
+        damage_roll=DamageRollResult(
+            dice_groups=[DiceGroup(count=1, sides=4)],
+            die_results=[[4]],
+            modifier=0,
+        ),
+        hp_marked=1,
+    )
+
+
+def test_a_critical_clears_a_stress():
+    holder = _make_level_8_pc(
+        level=9, domain_cards_loadout=[GORE_AND_GLORY], stress_marked=3
+    )
+    target = _make_adversary()
+    fight = _rested_state([holder], [target])
+
+    gore_and_glory(holder, target, _a_hit(critical=True), fight)
+
+    assert holder.stress_marked == 2
+    assert holder.hope_marked == 6
+
+
+def test_a_critical_gains_a_hope_when_there_is_no_stress_to_clear():
+    """The user's general rule for every card offering the choice."""
+    holder = _make_level_8_pc(
+        level=9, domain_cards_loadout=[GORE_AND_GLORY], hope_marked=2
+    )
+    target = _make_adversary()
+    fight = _rested_state([holder], [target])
+
+    gore_and_glory(holder, target, _a_hit(critical=True), fight)
+
+    assert holder.hope_marked == 3
+    assert holder.stress_marked == 0
+
+
+def test_defeating_an_enemy_pays_out_on_its_own():
+    holder = _make_level_8_pc(
+        level=9, domain_cards_loadout=[GORE_AND_GLORY], stress_marked=3
+    )
+    target = _make_adversary(hp_max=1)
+    target.hp_marked = 1
+    fight = _rested_state([holder], [target])
+
+    gore_and_glory(holder, target, _a_hit(), fight)
+
+    assert holder.stress_marked == 2
+
+
+def test_a_critical_that_also_defeats_pays_twice():
+    """Two printed clauses, so both fire - the page read literally."""
+    holder = _make_level_8_pc(
+        level=9, domain_cards_loadout=[GORE_AND_GLORY], stress_marked=3
+    )
+    target = _make_adversary(hp_max=1)
+    target.hp_marked = 1
+    fight = _rested_state([holder], [target])
+
+    gore_and_glory(holder, target, _a_hit(critical=True), fight)
+
+    assert holder.stress_marked == 1
+
+
+def test_an_ordinary_landed_hit_pays_nothing():
+    holder = _make_level_8_pc(
+        level=9, domain_cards_loadout=[GORE_AND_GLORY], stress_marked=3
+    )
+    target = _make_adversary()
+    fight = _rested_state([holder], [target])
+
+    apply_on_hit(holder, target, _a_hit(), fight)
+
+    assert holder.stress_marked == 3
+    assert holder.hope_marked == 6
+
+
+# --- Reaper's Strike ---------------------------------------------------------
+
+
+def _reaping(*hit_points: int, **overrides):
+    """A Blade and a field whose adversaries have the given unmarked HP."""
+    holder = _make_level_8_pc(
+        level=9, domain_cards_loadout=[REAPERS_STRIKE], **overrides
+    )
+    field = [
+        _make_adversary(name=f"Dummy {index}", hp_max=points)
+        for index, points in enumerate(hit_points)
+    ]
+    return holder, field, _rested_state([holder], field)
+
+
+def test_the_strike_forces_five_hit_points_for_a_hope():
+    holder, field, fight = _reaping(9)
+
+    with _bunched():
+        result = reapers_strike(holder, field[0], fight)
+
+    assert result is not None
+    assert field[0].hp_marked == REAPERS_STRIKE_HIT_POINTS
+    assert holder.hope_marked == 5
+    assert result.damage_roll is None
+
+
+def test_the_strike_takes_the_largest_target_five_would_finish():
+    """Defeat what it can, and waste as little of the strike doing it."""
+    holder, field, fight = _reaping(2, 4)
+
+    with _bunched():
+        reapers_strike(holder, field[0], fight)
+
+    assert field[1].is_defeated is True
+    assert field[0].hp_marked == 0
+
+
+def test_the_strike_falls_back_to_the_toughest_when_five_finishes_nobody():
+    holder, field, fight = _reaping(6, 8)
+
+    with _bunched():
+        reapers_strike(holder, field[0], fight)
+
+    assert field[1].hp_marked == REAPERS_STRIKE_HIT_POINTS
+    assert field[0].hp_marked == 0
+
+
+def test_the_five_hit_points_are_marked_rather_than_dealt():
+    """No threshold is read, so an adversary nothing could wound still marks five."""
+    holder, field, fight = _reaping(500)
+    field[0].major_threshold = 1000
+    field[0].severe_threshold = 2000
+
+    with _bunched():
+        reapers_strike(holder, field[0], fight)
+
+    assert field[0].hp_marked == REAPERS_STRIKE_HIT_POINTS
+
+
+def test_the_strike_declines_without_a_hope():
+    holder, field, fight = _reaping(9, hope_marked=0)
+
+    with _bunched():
+        assert reapers_strike(holder, field[0], fight) is None
+    assert field[0].hp_marked == 0
+
+
+def test_the_strike_is_once_per_long_rest():
+    holder, field, fight = _reaping(9)
+
+    with _bunched():
+        assert reapers_strike(holder, field[0], fight) is not None
+        assert reapers_strike(holder, field[0], fight) is None
+
+
+def test_a_roll_that_beats_nobody_still_costs_the_hope():
+    """"Spend a Hope to make an attack roll" - the Hope buys the roll.
+
+    The roll is pinned rather than seeded around: equal dice are a critical and a
+    critical beats every Difficulty, so a hard target alone is not enough to make
+    a case about missing deterministic.
+    """
+    holder, field, fight = _reaping(9)
+    field[0].difficulty = 40
+
+    with _bunched(), patch(
+        "content.spellcast.roll_duality", return_value=_roll(2, 3, difficulty=40)
+    ):
+        result = reapers_strike(holder, field[0], fight)
+
+    assert result is not None and not result.attack_roll.is_success
+    assert field[0].hp_marked == 0
+    assert holder.hope_marked == 5
+
+
 # --- Assessed ----------------------------------------------------------------
 
 
 def test_the_level_eight_pair_are_modelled():
     for card in (BATTLE_CRY, FRENZY):
+        assert assess(card).status is Status.MODELLED
+
+
+def test_the_level_nine_pair_are_modelled():
+    for card in (GORE_AND_GLORY, REAPERS_STRIKE):
         assert assess(card).status is Status.MODELLED

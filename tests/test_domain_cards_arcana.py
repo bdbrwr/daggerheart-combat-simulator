@@ -49,6 +49,7 @@ from content.conditions import (
     CLOAKED,
     ON_A_GM_TURN,
     ON_FIRE,
+    VULNERABLE,
     WHEN_THEY_ACT,
     WHEN_THEY_ATTACK,
     Condition,
@@ -57,7 +58,7 @@ from content.conditions import (
 from content.damage_types import DamageType
 from content.spellcast import spellcast
 from dice.common import AdvantageState
-from dice.damage import DiceGroup
+from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityRollResult
 from domain_cards.arcana import (
     ARCANA_TOUCHED,
@@ -68,9 +69,11 @@ from domain_cards.arcana import (
     CLOAKING_BLAST,
     CONFUSING_AURA,
     CONFUSING_AURA_LAYERS,
+    EARTHQUAKE,
     WARD_SPENT,
     cinder_grasp,
     confusing_aura,
+    earthquake,
     rune_ward,
     unleash_chaos,
 )
@@ -847,6 +850,110 @@ def test_an_aura_worn_to_nothing_answers_no_further_hits():
         assert party_damage_reduction(pc, 14, fight, DamageType.PHYSICAL) == 0
 
 
+# --- Earthquake --------------------------------------------------------------
+
+
+def _quaking(adversaries: int, **overrides):
+    caster = _make_level_8_pc(level=9, domain_cards_loadout=[EARTHQUAKE], **overrides)
+    field = [_make_adversary(name=f"Dummy {index}") for index in range(adversaries)]
+    return caster, field, _rested_state([caster], field)
+
+
+def _the_ground_heaves():
+    """A cast that certainly beats the printed 16."""
+    return patch(
+        "content.spellcast.roll_duality", return_value=_roll(12, 11, difficulty=16)
+    )
+
+
+def _the_ground_holds():
+    return patch(
+        "content.spellcast.roll_duality", return_value=_roll(2, 3, difficulty=16)
+    )
+
+
+def test_earthquake_catches_the_whole_field():
+    """Very Far reaches everyone, with no spread roll to cut it."""
+    caster, field, fight = _quaking(4)
+
+    with _the_ground_heaves(), patch("domain_cards.arcana.roll_d20") as rolled:
+        rolled.return_value.is_success = False
+        result = earthquake(caster, field[0], fight)
+
+    assert result is not None
+    assert all(adversary.hp_marked > 0 for adversary in field)
+    assert all(fight.has_condition(adversary, VULNERABLE) for adversary in field)
+
+
+def test_a_saved_reaction_roll_takes_half_and_leaves_them_standing():
+    """40 against a Major of 30: the full hit marks 2 HP, half of it marks 1."""
+    caster, field, fight = _quaking(3)
+    for adversary in field:
+        adversary.major_threshold = 30
+        adversary.severe_threshold = 300
+
+    fixed = DamageRollResult(
+        dice_groups=[DiceGroup(count=4, sides=10)],
+        die_results=[[10, 10, 10, 10]],
+        modifier=0,
+    )
+    with (
+        _the_ground_heaves(),
+        patch("domain_cards.arcana.roll_damage", return_value=fixed),
+        patch("domain_cards.arcana.roll_d20") as rolled,
+    ):
+        rolled.return_value.is_success = True
+        earthquake(caster, field[0], fight)
+
+    assert all(adversary.hp_marked == 1 for adversary in field)
+    assert not any(fight.has_condition(adversary, VULNERABLE) for adversary in field)
+
+
+def test_a_failed_cast_keeps_the_per_rest_use():
+    """"Once per rest **on a success**" - the page says so outright."""
+    caster, field, fight = _quaking(4)
+
+    with _the_ground_holds():
+        result = earthquake(caster, field[0], fight)
+
+    assert result is not None and not result.attack_roll.is_success
+    assert all(adversary.hp_marked == 0 for adversary in field)
+    assert fight.can_use_once_per_rest(caster, EARTHQUAKE) is True
+
+
+def test_earthquake_is_once_per_rest():
+    caster, field, fight = _quaking(4)
+
+    with _the_ground_heaves(), patch("domain_cards.arcana.roll_d20") as rolled:
+        rolled.return_value.is_success = False
+        assert earthquake(caster, field[0], fight) is not None
+        assert earthquake(caster, field[0], fight) is None
+
+
+def test_earthquake_never_declines_against_a_single_adversary():
+    """No floor - the spell costs nothing but the roll and the per-rest use."""
+    caster, field, fight = _quaking(1)
+
+    with _the_ground_heaves(), patch("domain_cards.arcana.roll_d20") as rolled:
+        rolled.return_value.is_success = False
+        assert earthquake(caster, field[0], fight) is not None
+
+
+def test_the_gm_pays_a_fear_to_get_them_back_on_their_feet():
+    """"Temporarily" on an adversary is the standing until-the-GM-pays reading."""
+    caster, field, fight = _quaking(2, hope_marked=6)
+    fight.fear = 3
+
+    with _the_ground_heaves(), patch("domain_cards.arcana.roll_d20") as rolled:
+        rolled.return_value.is_success = False
+        earthquake(caster, field[0], fight)
+
+    ended = fight.expire_conditions(field[0], ON_A_GM_TURN)
+
+    assert VULNERABLE in ended
+    assert fight.fear == 2
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
 
@@ -858,3 +965,9 @@ def test_the_two_utility_spells_are_declared_rather_than_absent():
 def test_the_level_eight_pair_are_modelled():
     for card in (ARCANE_REFLECTION, CONFUSING_AURA):
         assert assess(card).status is Status.MODELLED
+
+
+def test_the_level_nine_pair_are_assessed():
+    assert assess(EARTHQUAKE).status is Status.MODELLED
+    assert assess("Sensory Projection").status is Status.NO_COMBAT_EFFECT
+    assert assess("Sensory Projection").reason

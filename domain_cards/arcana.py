@@ -28,6 +28,10 @@ the first card anywhere that both negates a hit *and* deals it to whoever threw
 it, and **Confusing Aura** is the first defence that wears out: it stands for a
 counted number of attacks rather than for a number of uses, and each one it turns
 away costs it a layer.
+
+Level 9's **Earthquake** is the first content anywhere to reach **Very Far**, and
+the band exists because of it - see `content/aoe.py`, where it is the one band
+with no spread roll on it.
 """
 
 import random
@@ -38,6 +42,7 @@ from content.aoe import Range, area_difficulty, targets_beaten, targets_in_area
 from content.conditions import (
     CLOAKED,
     ON_FIRE,
+    VULNERABLE,
     WHEN_THEY_ACT,
     Condition,
     when_the_gm_pays,
@@ -1372,8 +1377,148 @@ def confusing_aura_confounds(
     return 0
 
 
+# --- Earthquake ------------------------------------------------------------------
+
+EARTHQUAKE = "Earthquake"
+
+# Both printed on the card: the Spellcast Roll is made against a flat 16 rather
+# than against anybody's Difficulty, and everything caught saves against 18.
+EARTHQUAKE_DIFFICULTY = 16
+EARTHQUAKE_REACTION = 18
+
+EARTHQUAKE_DICE = 3
+EARTHQUAKE_DIE = 10
+EARTHQUAKE_MODIFIER = 8
+
+
+@action(
+    EARTHQUAKE,
+    unmodelled=[
+        "'all terrain within Very Far range becomes difficult to move through and "
+        "structures within this range might sustain damage or crumble' - the whole "
+        "second half of the card. No positions are tracked and no terrain exists, "
+        "so there is nothing for it to touch. At a table it is the larger half: it "
+        "shapes the rest of the fight for both sides, and it lands whether or not "
+        "anybody failed their Reaction Roll",
+        "The Reaction Roll is a flat d20 against the printed 18. Adversaries have "
+        "no traits to roll, which is the standing rule, so nothing on a stat block "
+        "makes one better or worse at riding out an earthquake",
+    ],
+)
+def earthquake(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Earthquake (Arcana, level 9). Shake the whole field at once.
+
+    SRD: "Make a Spellcast Roll (16). Once per rest on a success, all targets
+    within Very Far range must make a Reaction Roll (18). Targets who fail take
+    3d10+8 physical damage and are temporarily *Vulnerable*. Targets who succeed
+    take half damage. Additionally, when you succeed on the Spellcast Roll, all
+    terrain within Very Far range becomes difficult to move through and structures
+    within this range might sustain damage or crumble."
+
+    **The first card anywhere to reach Very Far**, which is the band the area rule
+    gained for it: the whole field, always, with no spread roll (see
+    `content/aoe.py`). So an earthquake catches everything that is in the fight,
+    which is what the outermost band the SRD prints ought to mean.
+
+    "All **targets**" rather than "all creatures", so it reaches adversaries and
+    not the party - the same noun Preservation Blast uses, and the distinction
+    Codex's *Fireball* turns on in the other direction.
+
+    A flat Difficulty of 16 rather than anybody's own, printed on the card, so
+    `area_difficulty` is not consulted: the ground either heaves or it doesn't, and
+    no adversary is resisting the cast itself. What each of them resists is the
+    Reaction Roll afterwards.
+
+    **The per-rest use is claimed on the success, not on the cast** - "once per
+    rest **on a success**", which is the page read literally and Confusing Aura's
+    and Zone of Protection's reading of the same clause. A failed roll costs the
+    spotlight and leaves the card available.
+
+    **The damage is rolled once and reused**, the reading `Adversary.area_attack`
+    already takes of one roll landing on several targets - so everything caught
+    measures the same 3d10+8 against its own thresholds, and half of it rounds
+    down, as Whirlwind's splash does.
+
+    "Temporarily *Vulnerable*", on an adversary, is the standing reading: it lasts
+    until the GM spends a Fear on their turn to clear it. So the condition is the
+    same question Cinder Grasp's On Fire poses, asked of everything at once.
+
+    SIMULATION RULE - policy, ruled. **No floor on how many it needs to catch.**
+    The spell costs nothing but the roll and the per-rest use, so there is no state
+    in which casting it is worse than not - the Preservation Blast side of the
+    split rather than the Chain Lightning side, where 2 Stress is what buys a
+    minimum target count.
+    """
+    if fight is None:
+        return None
+    if not fight.can_use_once_per_rest(caster, EARTHQUAKE):
+        return None
+
+    area = targets_in_area(Range.VERY_FAR, fight.living_adversaries)
+    if not area:
+        return None
+
+    attack_roll = spellcast(caster, target, fight, difficulty=EARTHQUAKE_DIFFICULTY)
+    if attack_roll is None:
+        return None
+    if not attack_roll.is_success:
+        fight.note(f"{caster.name} reaches for the ground and it holds ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    fight.use_once_per_rest(caster, EARTHQUAKE)
+
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=EARTHQUAKE_DICE, sides=EARTHQUAKE_DIE)]
+        + total_extra_damage(caster, target, attack_roll, fight),
+        modifier=EARTHQUAKE_MODIFIER,
+        is_critical=attack_roll.is_critical,
+    )
+    halved = damage_roll.total // 2
+
+    fight.note(
+        f"{caster.name} brings the ground up under {len(area)} "
+        f"for {damage_roll.total}"
+    )
+
+    marked = 0
+    for adversary in area:
+        if roll_d20(evasion=EARTHQUAKE_REACTION).is_success:
+            marked += adversary.take_damage(
+                halved, fight, damage_type=DamageType.PHYSICAL
+            )
+            fight.note(f"{adversary.name} rides it out, taking {halved}")
+            continue
+
+        marked += adversary.take_damage(
+            damage_roll.total, fight, damage_type=DamageType.PHYSICAL
+        )
+        if not adversary.is_defeated:
+            fight.apply_condition(
+                adversary,
+                Condition(name=VULNERABLE, end=when_the_gm_pays, source=caster),
+            )
+            fight.note(f"{adversary.name} is thrown down and left Vulnerable")
+
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
+no_combat_effect(
+    "Sensory Projection",
+    "Once per rest, a Spellcast Roll (15) drops the caster into a vision of a "
+    "place they have been before, which they can move through freely and which "
+    "nothing mundane or magical can detect. The vision ends the moment they take "
+    "damage or cast another spell, which is the tell: it is remote sensing, and "
+    "the card is written to be used somewhere a fight is not happening. It "
+    "produces information about places nobody is fighting in - the Floating Eye "
+    "and Through Your Eyes reading - and nothing in a fight's outcome turns on it. "
+    "Filed as no combat effect rather than out of combat, since what it would buy "
+    "between encounters is scouting rather than any resource a later fight starts "
+    "with.",
+)
 no_combat_effect(
     "Rift Walker",
     "A Spellcast Roll (15) plants an arcane marking where the caster stands; the "

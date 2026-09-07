@@ -55,6 +55,7 @@ from content import (
     adversary_attack_is_hobbled,
     apply_ally_on_hit,
     apply_attack_missed,
+    apply_on_effect_landed,
     apply_on_hit,
     apply_on_spotlight,
     attacks_on_are_aided,
@@ -527,6 +528,23 @@ def _make_the_roll(
         # resolves when they land a hit. Asked party-wide; nothing here knows
         # what any of it is, or that any of it exists.
         apply_ally_on_hit(pc, target, result, state)
+
+    # And the complement of that: an action that **succeeded and dealt no
+    # damage** - a card that applies a condition, forces a Stress or shifts a
+    # Difficulty and stops there. Between this and `on_hit` above, every action
+    # of the PC's that landed on somebody is announced; `attack_failed`, asked
+    # from `items/weapons.py`, covers the ones that didn't. Midnight's *Twilight
+    # Toll* is the first thing to ask, and nothing here knows what any of it is.
+    #
+    # A search for something hidden never reaches here - `_search_for_hidden`
+    # returns before the options are offered - so a toll is not placed by
+    # finding somebody. That is declared as a gap where the card registers.
+    if (
+        result.made_an_attack
+        and result.damage_roll is None
+        and result.attack_roll.is_success
+    ):
+        apply_on_effect_landed(pc, target, result, state)
 
     if result.damage_roll is None:
         state.note(f"{pc.name} misses {target.name} ({result.attack_roll})")
