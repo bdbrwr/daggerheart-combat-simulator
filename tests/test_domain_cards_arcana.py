@@ -67,13 +67,19 @@ from domain_cards.arcana import (
     CHAOS_PRIMED,
     CHAOS_TOKENS,
     CLOAKING_BLAST,
+    ADJUST_REALITY,
+    ADJUST_REALITY_HOPE,
     CONFUSING_AURA,
     CONFUSING_AURA_LAYERS,
     EARTHQUAKE,
+    FALLING_SKY,
+    FALLING_SKY_WORTH_IT,
+    adjust_reality,
     WARD_SPENT,
     cinder_grasp,
     confusing_aura,
     earthquake,
+    falling_sky,
     rune_ward,
     unleash_chaos,
 )
@@ -954,6 +960,109 @@ def test_the_gm_pays_a_fear_to_get_them_back_on_their_feet():
     assert fight.fear == 2
 
 
+# --- Adjust Reality ----------------------------------------------------------
+
+
+def _adjusting(**overrides):
+    caster = _make_level_8_pc(
+        level=10, name="Wizard", domain_cards_loadout=[ADJUST_REALITY], **overrides
+    )
+    ally = _make_level_8_pc(level=10, name="Ally")
+    return caster, ally, _rested_state([caster, ally], [_make_adversary()])
+
+
+def test_a_failed_roll_is_lifted_to_exactly_what_it_needed():
+    caster, _, fight = _adjusting()
+
+    lifted = adjust_reality(caster, caster, _roll(2, 3, difficulty=8), None, fight)
+
+    assert lifted.total == 8
+    assert lifted.is_success is True
+    assert caster.hope_marked == 6 - ADJUST_REALITY_HOPE
+
+
+def test_it_answers_for_an_ally_as_readily_as_for_its_holder():
+    """The one registrant on `reroll` with no `holder is roller` scope."""
+    caster, ally, fight = _adjusting()
+
+    lifted = adjust_reality(caster, ally, _roll(2, 3, difficulty=8), None, fight)
+
+    assert lifted is not None
+    assert caster.hope_marked == 6 - ADJUST_REALITY_HOPE
+
+
+def test_a_roll_that_already_succeeded_is_left_alone():
+    caster, _, fight = _adjusting()
+
+    assert adjust_reality(caster, caster, _roll(9, 8, difficulty=8), None, fight) is None
+    assert caster.hope_marked == 6
+
+
+def test_a_difficulty_the_dice_could_never_have_reached_is_left_alone():
+    """"Plausible within the range of the dice" - two d12s cannot pass 24."""
+    caster, _, fight = _adjusting()
+
+    assert adjust_reality(caster, caster, _roll(2, 3, difficulty=30), None, fight) is None
+    assert caster.hope_marked == 6
+
+
+def test_it_declines_without_the_five_hope():
+    caster, _, fight = _adjusting(hope_marked=4)
+
+    assert adjust_reality(caster, caster, _roll(2, 3, difficulty=8), None, fight) is None
+
+
+def test_a_roll_with_no_difficulty_is_not_a_failure():
+    caster, _, fight = _adjusting()
+
+    assert adjust_reality(caster, caster, _roll(2, 3), None, fight) is None
+
+
+# --- Falling Sky -------------------------------------------------------------
+
+
+def _raining(adversaries: int, **overrides):
+    caster = _make_level_8_pc(
+        level=10, domain_cards_loadout=[FALLING_SKY], **overrides
+    )
+    field = [_make_adversary(name=f"Dummy {index}") for index in range(adversaries)]
+    return caster, field, _rested_state([caster], field)
+
+
+def test_the_sky_empties_the_stress_track_to_one_spare_slot():
+    caster, field, fight = _raining(4)
+
+    result = falling_sky(caster, field[0], fight)
+
+    assert result is not None
+    assert caster.stress_marked == 5  # six slots, one held back
+    # Far reaches everyone, or one short a quarter of the time, so the floor is
+    # what is asserted rather than the whole field.
+    assert sum(1 for a in field if a.hp_marked > 0) >= FALLING_SKY_WORTH_IT
+
+
+def test_each_stress_is_a_whole_die_and_a_modifier():
+    """Five Stress is 5d20+10, so the pool is five dice rather than one."""
+    caster, field, fight = _raining(4)
+
+    result = falling_sky(caster, field[0], fight)
+
+    assert result.damage_roll.dice_groups[0] == DiceGroup(count=5, sides=20)
+
+
+def test_the_sky_declines_below_two_targets():
+    caster, field, fight = _raining(FALLING_SKY_WORTH_IT - 1)
+
+    assert falling_sky(caster, field[0], fight) is None
+    assert caster.stress_marked == 0
+
+
+def test_the_sky_declines_when_no_stress_can_be_paid():
+    caster, field, fight = _raining(4, stress_marked=5)
+
+    assert falling_sky(caster, field[0], fight) is None
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
 
@@ -971,3 +1080,8 @@ def test_the_level_nine_pair_are_assessed():
     assert assess(EARTHQUAKE).status is Status.MODELLED
     assert assess("Sensory Projection").status is Status.NO_COMBAT_EFFECT
     assert assess("Sensory Projection").reason
+
+
+def test_the_level_ten_pair_are_modelled():
+    for card in (ADJUST_REALITY, FALLING_SKY):
+        assert assess(card).status is Status.MODELLED

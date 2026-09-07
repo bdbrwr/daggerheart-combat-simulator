@@ -45,9 +45,12 @@ from content import (
 from content.conditions import (
     HIDDEN,
     HORRIFIED,
+    SPECTRAL,
     ON_A_GM_TURN,
     RESTRAINED,
     VULNERABLE,
+    WHEN_THEY_ACT,
+    WHEN_THEY_ATTACK,
     Condition,
 )
 from content.damage_types import (
@@ -60,8 +63,17 @@ from dice.common import AdvantageState
 from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityRollResult
 from domain_cards.midnight import (
+    ECLIPSE,
+    ECLIPSE_DIFFICULTY,
+    ECLIPSE_STANDING,
     MIDNIGHT_TOUCHED,
     NIGHT_TERROR,
+    SPECTER_OF_THE_DARK,
+    eclipse,
+    eclipse_breaks,
+    eclipse_smothers,
+    specter_holds,
+    specter_of_the_dark,
     SPELLCHARGE,
     SPELLCHARGE_DIE,
     SPELLCHARGE_TOKENS,
@@ -883,6 +895,176 @@ def test_the_toll_is_offered_as_a_free_ability():
     assert use_free_abilities(holder, fight, limit=1) == [TWILIGHT_TOLL]
 
 
+# --- Eclipse -----------------------------------------------------------------
+
+
+def _eclipsing(**overrides):
+    caster = _make_level_8_pc(
+        level=10, name="Caster", domain_cards_loadout=[ECLIPSE], **overrides
+    )
+    ally = _make_level_8_pc(level=10, name="Ally")
+    target = _make_adversary()
+    return caster, ally, target, _rested_state([caster, ally], [target])
+
+
+def _a_landed_hit(hope: int, fear: int) -> AttackResult:
+    """An attack that landed, with the duality outcome a case needs it to have."""
+    return AttackResult(
+        attack_roll=_roll(hope, fear, difficulty=5),
+        damage_roll=DamageRollResult(
+            dice_groups=[DiceGroup(count=1, sides=8)],
+            die_results=[[5]],
+            modifier=0,
+        ),
+        hp_marked=1,
+    )
+
+
+def _the_dark_takes():
+    return patch(
+        "content.spellcast.roll_duality",
+        return_value=_roll(12, 11, difficulty=ECLIPSE_DIFFICULTY),
+    )
+
+
+def test_the_shadow_hides_the_whole_party():
+    caster, ally, target, fight = _eclipsing()
+
+    with _the_dark_takes():
+        assert eclipse(caster, target, fight) is not None
+
+    assert fight.is_hidden(caster) is True
+    assert fight.is_hidden(ally) is True
+
+
+def test_one_fear_clears_the_whole_spell():
+    """Only the caster's darkness carries the price; every ally's follows it."""
+    caster, ally, target, fight = _eclipsing()
+    fight.fear = 3
+    with _the_dark_takes():
+        eclipse(caster, target, fight)
+
+    fight.expire_conditions(caster, ON_A_GM_TURN)
+    fight.expire_conditions(ally, ON_A_GM_TURN)
+
+    assert fight.fear == 2
+    assert fight.is_hidden(caster) is False
+    assert fight.is_hidden(ally) is False
+
+
+def test_severe_damage_on_the_caster_puts_the_light_back():
+    caster, ally, target, fight = _eclipsing()
+    with _the_dark_takes():
+        eclipse(caster, target, fight)
+
+    eclipse_breaks(caster, caster.severe_threshold, 3, fight)
+
+    assert fight.token_count(caster, ECLIPSE_STANDING) == 0
+    assert fight.is_hidden(caster) is False
+
+
+def test_a_hit_short_of_severe_leaves_the_shadow_standing():
+    caster, ally, target, fight = _eclipsing()
+    with _the_dark_takes():
+        eclipse(caster, target, fight)
+
+    eclipse_breaks(caster, caster.severe_threshold - 1, 2, fight)
+
+    assert fight.is_hidden(caster) is True
+
+
+def test_a_success_with_hope_costs_an_adversary_a_stress():
+    caster, ally, target, fight = _eclipsing()
+    with _the_dark_takes():
+        eclipse(caster, target, fight)
+
+    eclipse_smothers(caster, ally, target, _a_landed_hit(9, 4), fight)
+
+    assert target.stress_marked == 1
+
+
+def test_a_success_with_fear_costs_them_nothing():
+    caster, ally, target, fight = _eclipsing()
+    with _the_dark_takes():
+        eclipse(caster, target, fight)
+
+    eclipse_smothers(caster, ally, target, _a_landed_hit(4, 9), fight)
+
+    assert target.stress_marked == 0
+
+
+def test_no_shadow_costs_them_nothing():
+    caster, ally, target, fight = _eclipsing()
+
+    eclipse_smothers(caster, ally, target, _a_landed_hit(9, 4), fight)
+
+    assert target.stress_marked == 0
+
+
+def test_a_failed_cast_keeps_the_per_rest_use():
+    caster, ally, target, fight = _eclipsing()
+
+    with patch(
+        "content.spellcast.roll_duality",
+        return_value=_roll(2, 3, difficulty=ECLIPSE_DIFFICULTY),
+    ):
+        eclipse(caster, target, fight)
+
+    assert fight.is_hidden(caster) is False
+    assert fight.can_use_once_per_rest(caster, ECLIPSE, long=True) is True
+
+
+# --- Specter of the Dark -----------------------------------------------------
+
+
+def _spectral(kind: str = "physical", **overrides):
+    holder = _make_level_8_pc(
+        level=10, domain_cards_loadout=[SPECTER_OF_THE_DARK], **overrides
+    )
+    attacker = _make_printed_adversary(damage_type=kind)
+    return holder, attacker, _rested_state([holder], [attacker])
+
+
+def test_the_form_is_taken_against_a_field_that_deals_physical():
+    holder, attacker, fight = _spectral("physical")
+
+    assert specter_of_the_dark(holder, fight) is True
+    assert fight.has_condition(holder, SPECTRAL) is True
+    assert holder.stress_marked == 1
+
+
+def test_the_form_is_declined_against_a_field_that_deals_magic():
+    holder, attacker, fight = _spectral("magic")
+
+    assert specter_of_the_dark(holder, fight) is False
+    assert holder.stress_marked == 0
+
+
+def test_physical_damage_passes_straight_through():
+    holder, attacker, fight = _spectral("physical")
+    specter_of_the_dark(holder, fight)
+
+    assert specter_holds(holder, holder, 25, fight, DamageType.PHYSICAL) == 25
+
+
+def test_magic_damage_still_lands_on_a_spectral_holder():
+    holder, attacker, fight = _spectral("physical")
+    specter_of_the_dark(holder, fight)
+
+    assert specter_holds(holder, holder, 25, fight, DamageType.MAGIC) == 0
+
+
+def test_the_form_ends_on_the_holders_next_action_roll():
+    holder, attacker, fight = _spectral("physical")
+    specter_of_the_dark(holder, fight)
+
+    fight.expire_conditions(holder, WHEN_THEY_ACT)
+    assert fight.has_condition(holder, SPECTRAL) is True
+
+    fight.expire_conditions(holder, WHEN_THEY_ATTACK)
+    assert fight.has_condition(holder, SPECTRAL) is False
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
 
@@ -901,4 +1083,9 @@ def test_the_level_eight_pair_are_assessed():
 
 def test_the_level_nine_pair_are_modelled():
     for card in (NIGHT_TERROR, TWILIGHT_TOLL):
+        assert assess(card).status is Status.MODELLED
+
+
+def test_the_level_ten_pair_are_modelled():
+    for card in (ECLIPSE, SPECTER_OF_THE_DARK):
         assert assess(card).status is Status.MODELLED

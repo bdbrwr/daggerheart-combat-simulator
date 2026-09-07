@@ -59,6 +59,12 @@ damage - and it brings *Horrified*, a named state that comes to Vulnerable.
 rolls that succeed and deal no damage, which is the one outcome nothing in the
 loop announced, and which this domain's own conditions produce more than any
 other.
+
+Level 10 is the domain at its largest and its most personal. **Eclipse** puts the
+whole fight out - Disadvantage on every attack made at the party, expressed as
+*Hidden* on each of them, which needed no machinery at all once it was given the
+right name. **Specter of the Dark** buys one GM turn immune to physical damage
+for a single Stress, and brings *Spectral* with it.
 """
 
 import random
@@ -70,6 +76,7 @@ from content.conditions import (
     HORRIFIED,
     RESTRAINED,
     SILENCED,
+    SPECTRAL,
     VULNERABLE,
     WHEN_THEY_ACT,
     Condition,
@@ -82,7 +89,9 @@ from content.registry import (
     Fight,
     Holder,
     action,
+    ally_damage_reduction,
     ally_extra_damage,
+    ally_on_hit,
     attack_advantage,
     attack_missed,
     damage_pool,
@@ -95,6 +104,7 @@ from content.registry import (
     total_extra_damage,
 )
 from content.spellcast import spellcast
+from dice.duality import DualityOutcome
 from dice.common import AdvantageState
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
@@ -1331,6 +1341,254 @@ def twilight_toll_falls(holder: Holder, target, roll, fight: Fight = None) -> li
 
     fight.note(f"{holder.name}'s toll falls on {target.name} for {tokens}d12")
     return [DiceGroup(count=tokens, sides=TWILIGHT_TOLL_DIE, discardable=False)]
+
+
+# --- Eclipse ---------------------------------------------------------------------
+
+ECLIPSE = "Eclipse"
+
+ECLIPSE_DIFFICULTY = 16
+
+# Set on the caster while the shadow stands. The *conditions* are what the fight
+# reads; this is what the card's own Stress clause and its enders read.
+ECLIPSE_STANDING = "Eclipse standing"
+
+
+def _while_the_shadow_holds(caster):
+    """An ender for an ally's darkness: it lapses when the caster's does.
+
+    The card prints **one** effect with two ways out - the GM spending a Fear, or
+    the caster taking Severe damage - so only the caster's own darkness carries
+    `when_the_gm_pays` and everybody else's follows it. Without that the GM would
+    be charged a Fear per PC to clear a single spell.
+    """
+
+    def ended(holder, fight, moment: str) -> bool:
+        return not fight.has_condition(caster, HIDDEN)
+
+    return ended
+
+
+@action(
+    ECLIPSE,
+    unmodelled=[
+        "'the entire area within Far range' - no positions are tracked, so the "
+        "shadow covers the whole party and every adversary rather than a measured "
+        "area. It is the one card where that reading is *generous to both sides* "
+        "at once: nobody is left outside it",
+        "The darkness is modelled as **Hidden** on each PC, which is what the "
+        "simulator already means by 'rolls against them have Disadvantage'. So a "
+        "PC who was Hidden by something else keeps the shadow alive for the party "
+        "until that lapses too",
+    ],
+)
+def eclipse(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Eclipse (Midnight, level 10). Put the whole fight out.
+
+    SRD: "Make a Spellcast Roll (16). Once per long rest on a success, plunge the
+    entire area within Far range into complete darkness only you and your allies
+    can see through. Attack rolls have disadvantage when targeting you or an ally
+    within this shadow. Additionally, when you or an ally succeeds with Hope
+    against an adversary within this shadow, the target must mark a Stress. This
+    spell lasts until the GM spends a Fear on their turn to clear this effect or
+    you take Severe damage."
+
+    **The largest defensive card in the project**: Disadvantage on every attack
+    made at the party, for as long as it stands. It is expressed as *Hidden* on
+    each PC, which is precisely what this simulator already rules Hidden to be
+    worth - so the clause needed no machinery at all, only the right name.
+
+    The per-rest use is claimed on the **success**, per "once per long rest on a
+    success" - Confusing Aura's and Zone of Protection's reading.
+
+    Two enders, both the card's: the GM spends a Fear on their turn, which is the
+    standing price and here buys the whole spell rather than one PC's darkness;
+    and the caster taking Severe damage, which is read off the damage amount
+    against their printed threshold, the reading Get Back Up and Shrug It Off both
+    take.
+
+    SIMULATION RULE - policy. Cast as early as the shuffle allows, Zone of
+    Protection's ruling for the same shape - it runs until something ends it, so a
+    spotlight spent uncast throws part of it away.
+    """
+    if fight is None or fight.token_count(caster, ECLIPSE_STANDING):
+        return None
+    if not fight.can_use_once_per_rest(caster, ECLIPSE, long=True):
+        return None
+
+    attack_roll = spellcast(caster, target, fight, difficulty=ECLIPSE_DIFFICULTY)
+    if attack_roll is None:
+        return None
+    if not attack_roll.is_success:
+        fight.note(f"{caster.name} reaches for the dark and it slips ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    fight.use_once_per_rest(caster, ECLIPSE, long=True)
+    fight.set_token(caster, ECLIPSE_STANDING, 1)
+
+    fight.apply_condition(
+        caster, Condition(name=HIDDEN, end=when_the_gm_pays, source=caster)
+    )
+    for ally in fight.conscious_party:
+        if ally is caster:
+            continue
+        fight.apply_condition(
+            ally,
+            Condition(
+                name=HIDDEN, end=_while_the_shadow_holds(caster), source=caster
+            ),
+        )
+
+    fight.note(f"{caster.name} puts out the light over the whole fight")
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+@ally_on_hit(
+    ECLIPSE,
+    unmodelled=[
+        "'when you or an ally **succeeds with Hope** against an adversary' is "
+        "answered on a landed hit only. `ally_on_hit` is asked where an attack "
+        "rolled damage, so a success with Hope that applied a condition instead - "
+        "Shadowbind, Chokehold - forces no Stress. The party-wide twin of "
+        "`on_effect_landed` does not exist, and one card is not a reason to build "
+        "one",
+    ],
+)
+def eclipse_smothers(
+    holder: Holder, attacker, target, result, fight: Fight = None
+) -> None:
+    """The Stress a success with Hope costs anything standing in the dark.
+
+    Registered on the same name as the casting above, which is how one card reaches
+    two hooks. Deliberately **not** scoped away from its own holder: the card says
+    "when you *or an ally*", so the caster's own hits charge it too.
+
+    Forced rather than chosen, so a full Stress track marks a Hit Point instead -
+    the same thing Enrapture and Overwhelming Aura do to a target.
+    """
+    if fight is None or not fight.token_count(holder, ECLIPSE_STANDING):
+        return
+    if not fight.has_condition(holder, HIDDEN):
+        return
+    if result.attack_roll is None or result.attack_roll.outcome is not DualityOutcome.HOPE:
+        return
+    if target.is_defeated:
+        return
+
+    target.mark_stress(1)
+    fight.note(f"The dark closes on {target.name}, costing them a Stress")
+
+
+@on_damaged(ECLIPSE)
+def eclipse_breaks(
+    holder: Holder,
+    amount: int,
+    hp_marked: int,
+    fight: Fight = None,
+    marked_armor: bool = False,
+    damage_type=None,
+) -> None:
+    """The caster taking Severe damage, which is the card's other ender.
+
+    Read off the damage **amount** against the printed Severe threshold rather than
+    off the Hit Points it finally marked - Get Back Up's and Shrug It Off's reading
+    of the same phrase, so a hit an Armor Slot softened still puts the lights back
+    on.
+
+    Clearing the caster's own darkness is what ends it for everybody, since every
+    ally's lapses with it.
+    """
+    if fight is None or not fight.token_count(holder, ECLIPSE_STANDING):
+        return
+    if amount < holder.severe_threshold:
+        return
+
+    fight.set_token(holder, ECLIPSE_STANDING, 0)
+    fight.clear_condition(holder, HIDDEN)
+    fight.note(f"{holder.name} takes it hard, and the light comes back")
+
+
+# --- Specter of the Dark -----------------------------------------------------------
+
+SPECTER_OF_THE_DARK = "Specter of the Dark"
+
+
+@free(
+    SPECTER_OF_THE_DARK,
+    unmodelled=[
+        "'can float and pass through solid objects' - position and terrain, "
+        "neither of which is tracked. What is modelled is the immunity, which is "
+        "what the state is worth in a fight",
+    ],
+)
+def specter_of_the_dark(holder: Holder, fight: Fight) -> bool:
+    """Specter of the Dark (Midnight, level 10). A Stress, and steel stops working.
+
+    SRD: "Mark a Stress to become *Spectral* until you make an action roll
+    targeting another creature. While Spectral, you're immune to physical damage
+    and can float and pass through solid objects. Other creatures can still see you
+    while you're in this form."
+
+    **No roll**, so it is a free ability - the form is taken *and* the holder takes
+    their action roll in the same spotlight. Which is also what ends it: "until you
+    make an action roll targeting another creature" is the `WHEN_THEY_ATTACK`
+    moment, the same ender Cloaking Blast and Vanishing Dodge use, and here the
+    page and the loop say the same thing.
+
+    So what a Stress buys is one **GM turn** spent immune to physical damage, since
+    the form goes up on the holder's spotlight and comes down on their next one.
+
+    *Spectral* is a condition rather than a token, which is the standing call for a
+    state the page names and refers back to - Cloaked's and Frenzied's.
+
+    SIMULATION RULE - policy, ruled. **Taken while an adversary on the field deals
+    physical damage**, read off the printed stat blocks, and declined outright
+    against a field that deals only magic. The user's general rule for buying
+    immunity to a damage type, shared with the Book of Yarrow's *Magic Immunity* -
+    it reads a fact both sides of the table can see rather than a statistic, which
+    is what separates it from the imperfect-information cases.
+    """
+    if fight is None or fight.has_condition(holder, SPECTRAL):
+        return False
+    if not any(
+        includes(damage_type_named(a.type_of_damage()), DamageType.PHYSICAL)
+        for a in fight.living_adversaries
+    ):
+        return False
+    if not holder.will_spend_stress(1):
+        return False
+
+    holder.spend_stress(1)
+    fight.apply_condition(
+        holder,
+        Condition(name=SPECTRAL, end=when_they_attack, source=holder),
+    )
+    fight.note(f"{holder.name} goes spectral, and steel stops mattering")
+    return True
+
+
+@ally_damage_reduction(SPECTER_OF_THE_DARK)
+def specter_holds(
+    holder: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """The physical damage a Spectral holder simply does not take.
+
+    Registered on the party-wide hook and scoped back to its own holder with
+    `holder is target`, exactly as Scramble and Bone-Touched are - it is the one
+    hook that can return the **whole** amount, which is what immunity means.
+
+    Untyped damage matches no restriction, so a hit that arrives with no type
+    lands: the standing rule wherever a type gates an effect.
+    """
+    if fight is None or holder is not target:
+        return 0
+    if not fight.has_condition(holder, SPECTRAL):
+        return 0
+    if DamageType.PHYSICAL not in types_in(damage_type):
+        return 0
+
+    fight.note(f"The blow passes straight through {holder.name}")
+    return amount
 
 
 # --- Assessed and dismissed --------------------------------------------------

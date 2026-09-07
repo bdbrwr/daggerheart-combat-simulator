@@ -48,6 +48,11 @@ Level 8's **Mass Enrapture** is level 1's Enrapture over the whole Far band, and
 the ruling on it is the interesting part: the card is cast only when the Stress
 that *ends* the spell can be paid, so the compulsion never gets a spotlight and
 what the card actually does here is force a Stress on everything it caught.
+
+Level 10's **Encore** is the only card in the project whose price is *itself*: it
+costs no Hope and no Stress, and roughly half of every successful use puts it in
+the vault for good. Unlike Counterspell's vault, which the user ruled into
+existence, this one is printed on the card - and there is no way back out.
 """
 
 import random
@@ -69,6 +74,7 @@ from content.registry import (
     Holder,
     action,
     adversary_target_override,
+    ally_on_hit,
     armor_instead_of_stress,
     damage_pool,
     free,
@@ -79,6 +85,7 @@ from content.registry import (
     stress_instead_of_hp,
 )
 from content.spellcast import spellcast
+from dice.duality import DualityOutcome
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import roll_duality
@@ -992,7 +999,91 @@ def mass_enrapture(caster: Holder, target, fight: Fight) -> AttackResult | None:
     return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
 
+# --- Encore ----------------------------------------------------------------------
+
+ENCORE = "Encore"
+
+# Set once the card has vaulted itself. Unlike Counterspell's vault there is no way
+# back: the card prints no Recall clause of its own, and the standing ruling is
+# that only Counterspell buys itself out.
+ENCORE_VAULTED = "Encore vaulted"
+
+
+@ally_on_hit(
+    ENCORE,
+    unmodelled=[
+        "'an ally within Close range' - no positions are tracked, so the encore "
+        "always reaches whoever just landed a blow",
+        "The copy is typed off the **ally's** weapon, since it is their damage "
+        "being repeated - the reading Whirlwind's splash already takes. An ally "
+        "whose hit came from a card that rolled its own dice carries no weapon "
+        "type, and the copy is then untyped, which matches no resistance",
+    ],
+)
+def encore(holder: Holder, attacker, target, result, fight: Fight = None) -> None:
+    """Encore (Grace, level 10). Say it again, and hope the room stays with you.
+
+    SRD: "When an ally within Close range deals damage to an adversary, you can
+    make a Spellcast Roll. On a success, you deal the same damage to the target
+    that your ally dealt. If your Spellcast Roll succeeds with Fear, place this
+    card in your vault."
+
+    **The only card in the project whose price is itself.** It costs no Hope and no
+    Stress; what a use risks is the card, on roughly half of every success. That is
+    Shrug It Off's shape with the die replaced by the duality outcome, and the
+    vaulting is printed rather than ruled - so unlike Counterspell's, which the
+    user ruled into existence, this one needs no machinery beyond a token.
+
+    There is **no way back**: the card prints no Recall clause, and the standing
+    ruling is that Counterspell alone buys itself out of the vault.
+
+    Scoped to an *ally's* hit with `attacker is not holder`, which is what the card
+    says, and skipped against a target the ally's blow has already finished.
+
+    SIMULATION RULE - policy, ruled. **On every ally hit, until it vaults itself.**
+    The standing Reaction rule - it costs nothing, so it fires whenever the trigger
+    happens. Holding it for a bigger blow, for a hit that would not already have
+    finished the target, and for an adversary near death were all offered and
+    declined: the vaulting is the price rather than a reason to wait.
+    """
+    if fight is None or attacker is holder:
+        return
+    if fight.token_count(holder, ENCORE_VAULTED):
+        return
+    if result.damage_roll is None or target.is_defeated:
+        return
+
+    roll = spellcast(holder, target, fight)
+    if roll is None or not roll.is_success:
+        return
+
+    repeated = result.damage_roll.total
+    target.take_damage(
+        repeated, fight, damage_type=getattr(attacker, "weapon_damage_type", None)
+    )
+    fight.note(
+        f"{holder.name} calls for an encore, and {target.name} takes {repeated} again"
+    )
+
+    if roll.outcome is DualityOutcome.FEAR:
+        fight.set_token(holder, ENCORE_VAULTED, 1)
+        fight.note(f"The room turns, and {holder.name}'s Encore goes to the vault")
+
+
 # --- Assessed rather than built ----------------------------------------------
+
+no_combat_effect(
+    "Notorious",
+    "A Stress buys a +10 bonus when the holder leverages their reputation to "
+    "persuade, intimidate or get their way; their food and drink are free and "
+    "everything else is a bag of gold cheaper. Social and shopping, which is the "
+    "Deft Deceiver and Tell No Lies case - the simulator makes no roll to be "
+    "recognised and tracks no money. Its two structural clauses touch nothing "
+    "either: no loadout maximum is enforced anywhere, and the vault is modelled "
+    "for exactly one card, so a card that can never be vaulted is indistinguishable "
+    "from every other. Worth naming the size, since +10 is enormous: what has no "
+    "representation here is the roll it applies to, not the bonus.",
+)
 
 no_combat_effect(
     "Copycat",

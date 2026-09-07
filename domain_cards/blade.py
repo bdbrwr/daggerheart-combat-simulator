@@ -33,6 +33,12 @@ Level 9's **Reaper's Strike** forces five Hit Points to be marked outright, whic
 is two more than any damage roll can reach: the thresholds cap a hit at three, and
 this card doesn't deal damage at all. It is also the first card to sweep the band
 its **weapon** prints rather than one named on the card.
+
+Level 10 finishes the domain the way it started, on the damage a swing is worth.
+**Battle Monster** is the only card anywhere that scales with how badly its holder
+is doing, and **Onslaught** is the reason `damage_floor` exists - nothing a
+swinger carried could previously raise what their own blow was worth once the dice
+had been read.
 """
 
 import random
@@ -55,12 +61,14 @@ from content.registry import (
     adjust_damage_pool,
     ally_attack_advantage,
     ally_damage_reduction,
+    ally_on_damaged,
     ally_on_roll,
     attack_advantage,
     attack_failed,
     damage_bonus,
     damage_die_maximum,
     damage_die_reroll,
+    damage_floor,
     dealt_damage_type,
     death_move_ward,
     extra_damage,
@@ -73,6 +81,7 @@ from content.registry import (
 )
 from content.spellcast import spellcast
 from dice.common import AdvantageState
+from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import DualityOutcome
 from items.registry import find_weapon
@@ -1236,6 +1245,186 @@ def _reaped(beaten: list):
     toughest = max(adversary.hp_unmarked for adversary in among)
     return random.choice(
         [adversary for adversary in among if adversary.hp_unmarked == toughest]
+    )
+
+
+# --- Battle Monster --------------------------------------------------------------
+
+BATTLE_MONSTER = "Battle Monster"
+
+BATTLE_MONSTER_STRESS = 4
+
+# SIMULATION RULE - policy, ruled. The threshold bands cap **any** damage roll at 3
+# marked Hit Points, so from 4 marked the card forces more than a hit could ever
+# deal. That reads printed numbers both sides of the table can see rather than
+# comparing expected damage, which is the line the Reaper ruling drew.
+BATTLE_MONSTER_WORTH_IT = 4
+
+
+@action(
+    BATTLE_MONSTER,
+    unmodelled=[
+        "The attack is rolled through `content/spellcast.py` on the weapon's "
+        "trait rather than through `items/weapons.py`, since the card replaces the "
+        "damage roll entirely and `attack_with` always makes one. So the swing "
+        "collects none of a weapon's own features and none of the on-hit riders - "
+        "the same route and the same cost Reaper's Strike carries, plus the "
+        "`spellcast_bonus` overreach it declares",
+    ],
+)
+def battle_monster(holder: Holder, target, fight: Fight) -> AttackResult | None:
+    """Battle Monster (Blade, level 10). Give back exactly what you have taken.
+
+    SRD: "When you make a successful attack against an adversary, you can mark 4
+    Stress to force the target to mark a number of Hit Points equal to the number
+    of Hit Points you currently have marked instead for damage."
+
+    **The Hit Points are marked directly, not dealt as damage** - "instead for
+    damage" is the card saying so outright. No threshold is read, no resistance
+    applies and nothing keyed on being damaged fires, which is Champion's Edge's
+    and Reaper's Strike's reading of the same wording.
+
+    So the card scales with how badly its holder is doing, and it is the only thing
+    in the project that does. A Blade on their last legs forces more Hit Points
+    than any weapon in the book could.
+
+    SIMULATION RULE - policy, ruled. **Taken from `BATTLE_MONSTER_WORTH_IT` marked
+    Hit Points**, which is the point where it beats the best a damage roll can do -
+    see the constant. Below that the 4 Stress buys less than the swing it replaces.
+    Firing whenever the Stress can be paid, and holding it until near death, were
+    both offered and declined.
+
+    Four Stress is the largest Stress price any ported card pays, one more than
+    Full Surge's.
+    """
+    if fight is None:
+        return None
+
+    carried = getattr(holder, "primary_weapon", "")
+    if not carried:
+        return None
+
+    weapon = find_weapon(carried)
+    if weapon.trait not in holder.traits:
+        return None
+    if holder.hp_marked < BATTLE_MONSTER_WORTH_IT:
+        return None
+    if not holder.will_spend_stress(BATTLE_MONSTER_STRESS):
+        return None
+
+    attack_roll = spellcast(holder, target, fight, trait=weapon.trait)
+    if attack_roll is None:
+        return None
+    if not attack_roll.is_success:
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    # Read before the Stress is marked: a cost that fits changes no HP, and reading
+    # it first means it cannot ever be read after one that didn't.
+    forced = holder.hp_marked
+    holder.spend_stress(BATTLE_MONSTER_STRESS)
+    target.mark_hp(forced)
+    fight.note(
+        f"{holder.name} gives {target.name} everything they have taken "
+        f"({forced} Hit Points)"
+    )
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=None, hp_marked=forced
+    )
+
+
+# --- Onslaught ---------------------------------------------------------------------
+
+ONSLAUGHT = "Onslaught"
+
+ONSLAUGHT_REACTION = 15
+
+
+@damage_floor(
+    ONSLAUGHT,
+    unmodelled=[
+        "The floor reaches a **weapon swing** and nothing else. "
+        "`dealt_damage_floor` is asked from `items/weapons.py`, so a card rolling "
+        "its own damage never consults it - which suits the clause, since it says "
+        "'when you successfully make an attack with your weapon'",
+        "The `DamageRollResult` keeps recording what the dice said, so the "
+        "play-by-play reports the roll rather than the floored figure. What the "
+        "target takes is the floored one",
+    ],
+)
+def onslaught(attacker: Holder, target, fight: Fight = None) -> int:
+    """Onslaught (Blade, level 10), first clause. The least this blow can be worth.
+
+    SRD: "When you successfully make an attack with your weapon, you never deal
+    damage beneath a target's Major damage threshold (the target always marks a
+    minimum of 2 Hit Points)."
+
+    **The card prints both readings of the same rule**, and the one the pipeline
+    can hear is the first: flooring the damage at the target's Major threshold is
+    exactly "the target always marks a minimum of 2 Hit Points", since that is
+    what the bands do with a number at the threshold.
+
+    It is the only content anywhere on the `damage_floor` hook, which exists for
+    it - nothing a swinger carried could previously raise what their own blow was
+    worth after the dice were read.
+
+    No policy at all: it costs nothing, has no limit and is simply on.
+    """
+    return target.major_threshold
+
+
+@ally_on_damaged(
+    ONSLAUGHT,
+    unmodelled=[
+        "'a creature within **your weapon's range**' - no positions are tracked, "
+        "so the clause always reaches whoever hurt the ally",
+        "Who dealt the damage comes from `fight.spotlighted`, since damage reaches "
+        "a PC with no attacker attached. Damage the party did to itself - On Fire "
+        "burning its holder - is correctly answered by nobody",
+    ],
+)
+def onslaught_answers(
+    holder: Holder, target, amount: int, hp_marked: int, fight: Fight
+) -> None:
+    """Onslaught's second clause - a Stress spent on whoever went past you.
+
+    SRD: "when a creature within your weapon's range deals damage to an ally with
+    an attack that doesn't include you, you can mark a Stress to force them to make
+    a Reaction Roll (15). On a failure, the target must mark a Hit Point."
+
+    Registered on the same name as the floor above, which is how one card reaches
+    two hooks - Ferocity's and Frenzy's arrangement.
+
+    "An attack that doesn't include you" is `target is not holder`, read literally.
+    The Hit Point is **marked**, not dealt: the card says the adversary marks one,
+    so no threshold or resistance touches it.
+
+    A flat d20 against the printed 15, since adversaries have no traits to roll -
+    the standing rule for an adversary's Reaction Roll.
+
+    SIMULATION RULE - policy. A Reaction, so the standing rule applies: it fires
+    whenever its trigger happens and the shared last-slot rule allows the Stress,
+    with no desperation gate. Keyed on **damage dealt** rather than HP marked,
+    exactly as the card says, so a hit an ally's Armor Slot swallowed whole still
+    provokes it.
+    """
+    if fight is None or target is holder or amount <= 0:
+        return
+
+    attacker = fight.spotlighted
+    if attacker is None:
+        return
+    if not holder.will_spend_stress(1):
+        return
+
+    holder.spend_stress(1)
+    if roll_d20(evasion=ONSLAUGHT_REACTION).is_success:
+        fight.note(f"{attacker.name} rides out {holder.name}'s onslaught")
+        return
+
+    attacker.mark_hp(1)
+    fight.note(
+        f"{holder.name} answers for {target.name}, and {attacker.name} marks a "
+        f"Hit Point"
     )
 
 

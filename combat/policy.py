@@ -58,6 +58,7 @@ from content import (
     apply_on_effect_landed,
     apply_on_hit,
     apply_on_spotlight,
+    apply_on_targeted,
     attacks_on_are_aided,
     find_shielder,
     forced_adversary_target,
@@ -711,6 +712,19 @@ def take_adversary_turn(adversary: Adversary, state: FightState) -> AttackResult
     # party swinging. Nothing here knows what any of it is.
     if result.made_an_attack and result.damage_roll is None:
         apply_attack_missed(target, adversary, result.attack_roll, state)
+
+    # And content the target carries that answers simply having been **aimed at**,
+    # hit or miss - Splendor's Overwhelming Aura, which charges an adversary a
+    # Stress for choosing them. The last corner of the incoming-attack table:
+    # `before_attacked` and `on_attacked` are asked from `items/weapons.py`, which
+    # only ever sees the party swinging, and the call above fires on a failure
+    # alone. Asked once the activation is known to have attacked, since a feature
+    # can resolve into no attack at all. Nothing here knows what any of it is.
+    #
+    # A swept attack announces only the PC the loop chose, so a sweep is answered
+    # by at most one of them - the gap Redirect and Rapid Riposte already declare.
+    if result.made_an_attack:
+        apply_on_targeted(target, adversary, result.attack_roll, state)
 
     if not result.made_an_attack:
         pass  # the feature narrated itself; there is no roll to report

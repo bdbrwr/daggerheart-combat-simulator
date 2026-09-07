@@ -47,6 +47,12 @@ rolls, Spellcast dice counts, and the damage Body Basher and Rage Up read off a
 trait. **Ground Pound** is the second card to roll a named trait through the
 shared cast shape, after Grace's Troublemaker, and the first to be typed by
 ruling rather than by the page.
+
+Level 9 is the domain holding ground and handing it on. **Hold the Line** is the
+first card whose trigger is an adversary *moving*, ruled to the area rule rather
+than dismissed, and the first party-applied condition anywhere that costs the GM
+**2** Fear to shake off. **Lead by Example** is Breaking Blow's shape with the
+payout pointed at the party instead of at a damage roll.
 """
 
 import random
@@ -61,6 +67,8 @@ from content.aoe import (
     targets_in_area,
 )
 from content.conditions import (
+    ON_A_GM_TURN,
+    RESTRAINED,
     TAUNTED,
     VULNERABLE,
     Condition,
@@ -75,6 +83,7 @@ from content.registry import (
     action_roll_advantage,
     adversary_attack_disadvantage,
     adversary_target_override,
+    ally_on_hit,
     ally_on_roll,
     condition_refusal,
     damage_bonus,
@@ -1117,6 +1126,186 @@ def ground_pound(holder: Holder, target, fight: Fight) -> AttackResult | None:
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
     )
+
+
+# --- Hold the Line ---------------------------------------------------------------
+
+HOLD_THE_LINE = "Hold the Line"
+
+# "Or the GM spends 2 Fear on their turn to clear it" - twice what every other
+# party-applied condition costs, which is the whole of what the card is worth here.
+HOLD_THE_LINE_FEAR = 2
+
+# Set on the holder while the stance is up, so it is taken once per fight rather
+# than every spotlight.
+LINE_HELD = "Hold the Line stance"
+
+
+def _when_the_gm_pays_twice(holder, fight, moment: str) -> bool:
+    """Ends when the GM spends `HOLD_THE_LINE_FEAR` on their turn to clear it.
+
+    `when_the_gm_pays` charges one Fear, which is the standing price for a
+    condition the party puts on an adversary. This card prints two, so it carries
+    its own ender rather than settling for the shared one - and a GM who cannot
+    afford it does not clear it, exactly as the shared ender behaves.
+    """
+    if moment != ON_A_GM_TURN:
+        return False
+    return fight.spend_fear(HOLD_THE_LINE_FEAR)
+
+
+@free(
+    HOLD_THE_LINE,
+    unmodelled=[
+        "'they're pulled into Melee range' - repositioning, and no positions are "
+        "tracked. What is modelled is the Restrain it arrives wrapped in",
+        "'This condition lasts until you move or fail a roll with Fear' - two of "
+        "the three enders. The first is movement, which has no representation; the "
+        "second could be written, and is left off because it would end the stance "
+        "for reasons the GM never paid for. So the only way out here is the GM's 2 "
+        "Fear, which errs **generous** to the party",
+    ],
+)
+def hold_the_line(holder: Holder, fight: Fight) -> bool:
+    """Hold the Line (Valor, level 9). A Hope, and the front rank stops moving.
+
+    SRD: "Describe the defensive stance you take and spend a Hope. If an adversary
+    moves within Very Close range, they're pulled into Melee range and *Restrained*.
+    This condition lasts until you move or fail a roll with Fear, or the GM spends 2
+    Fear on their turn to clear it."
+
+    SIMULATION RULE - rules interpretation, ruled. **The trigger is answered by the
+    area rule.** "An adversary moves within Very Close range" is a question about
+    where somebody is standing, and the standing answer for those is the range band
+    - so whoever the Very Close band reaches is who closed on the line. Dismissing
+    the card on its trigger, the Gifted Tracker reading, was offered and declined.
+
+    **No roll**, so it is a free ability: the stance goes up *and* the holder takes
+    their action roll in the same spotlight.
+
+    What the Restrain is worth here is the GM's Fear pool and nothing else -
+    Restrained does nothing by itself in this simulator, which is Shadowbind's
+    ruling. What is new is the price: **2 Fear each**, twice what any other
+    party-applied condition costs to shake off, so a line held across three
+    adversaries is six Fear the GM has to find or live with.
+
+    SIMULATION RULE - policy. Nothing to rule beyond the standing default: one
+    Hope, taken whenever there is one and no stance already stands. Declines
+    against an adversary already Restrained, per the standing don't-re-apply rule,
+    and declines entirely when the band reaches nobody new - the zero-benefit rule.
+    """
+    if fight is None or fight.token_count(holder, LINE_HELD):
+        return False
+    if not holder.can_spend_hope(1):
+        return False
+
+    closing = [
+        adversary
+        for adversary in targets_in_area(Range.VERY_CLOSE, fight.living_adversaries)
+        if not fight.has_condition(adversary, RESTRAINED)
+    ]
+    if not closing:
+        return False
+
+    holder.spend_hope(1)
+    fight.set_token(holder, LINE_HELD, 1)
+    for adversary in closing:
+        fight.apply_condition(
+            adversary,
+            Condition(name=RESTRAINED, end=_when_the_gm_pays_twice, source=holder),
+        )
+    fight.note(
+        f"{holder.name} holds the line, catching {len(closing)} in Melee"
+    )
+    return True
+
+
+# --- Lead by Example -------------------------------------------------------------
+
+LEAD_BY_EXAMPLE = "Lead by Example"
+
+# Placed on the **adversary**, because what the card marks is a creature: the next
+# ally to hit it collects. Breaking Blow's arrangement exactly.
+LEAD_BY_EXAMPLE_MARK = "Lead by Example encouragement"
+
+
+@on_hit(
+    LEAD_BY_EXAMPLE,
+    unmodelled=[
+        "A landed attack that dealt **no damage** never reaches this hook - the "
+        "gap Champion's Edge, Breaking Blow and Gore and Glory all declare",
+    ],
+)
+def lead_by_example(attacker: Holder, target, result, fight: Fight) -> None:
+    """Lead by Example (Valor, level 9). A Stress now, a lift for whoever follows.
+
+    SRD: "When you deal damage to an adversary, you can mark a Stress and describe
+    how you encourage your allies. The next PC to make an attack against that
+    adversary can clear a Stress or gain a Hope."
+
+    The encouragement is laid here and collected by `lead_by_example_lifts` below,
+    which is the arrangement one card uses to reach two hooks - Breaking Blow's,
+    and this card is Breaking Blow's shape with the payout pointed at the party
+    instead of at the damage roll.
+
+    Declines against a target the hit just finished off - nobody will be attacking
+    it next - and against one already carrying an encouragement, per the standing
+    don't-re-apply rule, which also keeps the Stress off a second mark that would
+    replace the first rather than add to it.
+
+    SIMULATION RULE - policy. The standing default for a Stress cost: marked
+    whenever the shared last-slot rule allows, the same answer Reckless, Versatile
+    Fighter, Rage Up and Breaking Blow get.
+    """
+    if fight is None or target.is_defeated:
+        return
+    if fight.token_count(target, LEAD_BY_EXAMPLE_MARK):
+        return
+    if not attacker.will_spend_stress(1):
+        return
+
+    attacker.spend_stress(1)
+    fight.set_token(target, LEAD_BY_EXAMPLE_MARK, 1)
+    fight.note(f"{attacker.name} marks a Stress and calls the party on")
+
+
+@ally_on_hit(
+    LEAD_BY_EXAMPLE,
+    unmodelled=[
+        "'The next PC to make an **attack**' is read as the next ally to **hit**, "
+        "since `ally_on_hit` is asked where a landed attack rolled damage and "
+        "nothing announces an ally merely swinging at a particular creature. So an "
+        "ally who misses does not collect, and the encouragement waits",
+        "The holder collects nothing from their own next attack. The card says "
+        "'the next PC', which includes them; it is scoped to allies because the "
+        "clause it sits in is 'describe how you encourage your **allies**', and "
+        "because both hooks are asked on the same landed attack - without the "
+        "scope the holder would collect the mark they had just laid",
+    ],
+)
+def lead_by_example_lifts(
+    holder: Holder, attacker, target, result, fight: Fight = None
+) -> None:
+    """The lift the next ally to hit the encouraged adversary takes.
+
+    SIMULATION RULE - policy, ruled. **Clear a Stress if one is marked, otherwise
+    gain a Hope** - the user's general rule for every card offering that choice,
+    the same one Gore and Glory follows. Each ally answers off their own sheet.
+
+    Spent on being collected, so one encouragement lifts one ally.
+    """
+    if fight is None or attacker is holder:
+        return
+    if not fight.token_count(target, LEAD_BY_EXAMPLE_MARK):
+        return
+
+    fight.set_token(target, LEAD_BY_EXAMPLE_MARK, 0)
+    if attacker.stress_marked > 0:
+        attacker.clear_stress(1)
+        fight.note(f"{attacker.name} takes heart, clearing a Stress")
+    else:
+        attacker.gain_hope(1)
+        fight.note(f"{attacker.name} takes heart, gaining a Hope")
 
 
 # --- Valor-Touched ---------------------------------------------------------------

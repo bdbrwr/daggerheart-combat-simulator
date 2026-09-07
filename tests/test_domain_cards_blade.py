@@ -42,6 +42,7 @@ from content import (
     apply_attack_failed,
     apply_on_hit,
     assess,
+    dealt_damage_floor,
     granted_attack_advantage,
     reroll_damage_dice,
     soften_damage,
@@ -57,7 +58,15 @@ from dice.duality import DualityRollResult
 from domain_cards.blade import (
     BATTLE_CRY,
     BATTLE_CRY_RALLIED,
+    BATTLE_MONSTER,
+    BATTLE_MONSTER_STRESS,
+    BATTLE_MONSTER_WORTH_IT,
     BLADE_TOUCHED,
+    ONSLAUGHT,
+    ONSLAUGHT_REACTION,
+    battle_monster,
+    onslaught,
+    onslaught_answers,
     FRENZY,
     FRENZY_DAMAGE,
     GLANCING_BLOW,
@@ -941,6 +950,152 @@ def test_a_roll_that_beats_nobody_still_costs_the_hope():
     assert holder.hope_marked == 5
 
 
+# --- Battle Monster ----------------------------------------------------------
+
+
+def _monstrous(marked: int, **overrides):
+    holder = _make_level_8_pc(
+        level=10, domain_cards_loadout=[BATTLE_MONSTER], **overrides
+    )
+    holder.mark_hp(marked)
+    target = _make_adversary()
+    return holder, target, _rested_state([holder], [target])
+
+
+def test_battle_monster_gives_back_what_its_holder_has_taken():
+    holder, target, fight = _monstrous(BATTLE_MONSTER_WORTH_IT)
+
+    result = battle_monster(holder, target, fight)
+
+    assert result is not None
+    assert target.hp_marked == BATTLE_MONSTER_WORTH_IT
+    assert holder.stress_marked == BATTLE_MONSTER_STRESS
+    assert result.damage_roll is None
+
+
+def test_the_hit_points_are_marked_rather_than_dealt():
+    """No threshold is read, so a target nothing could wound still marks them."""
+    holder, target, fight = _monstrous(5)
+    target.major_threshold = 1000
+    target.severe_threshold = 2000
+
+    battle_monster(holder, target, fight)
+
+    assert target.hp_marked == 5
+
+
+def test_it_declines_below_the_floor():
+    """At three marked it would force less than a damage roll's best."""
+    holder, target, fight = _monstrous(BATTLE_MONSTER_WORTH_IT - 1)
+
+    assert battle_monster(holder, target, fight) is None
+    assert holder.stress_marked == 0
+
+
+def test_it_declines_without_the_four_stress():
+    holder, target, fight = _monstrous(BATTLE_MONSTER_WORTH_IT, stress_marked=3)
+
+    assert battle_monster(holder, target, fight) is None
+    assert target.hp_marked == 0
+
+
+# --- Onslaught ---------------------------------------------------------------
+
+
+def test_the_floor_is_the_targets_major_threshold():
+    holder = _make_level_8_pc(level=10, domain_cards_loadout=[ONSLAUGHT])
+    target = _make_adversary(major_threshold=50)
+    fight = _rested_state([holder], [target])
+
+    assert onslaught(holder, target, fight) == 50
+    assert dealt_damage_floor(holder, target, fight) == 50
+
+
+def test_a_swing_never_falls_beneath_it():
+    """3d8+3 cannot reach 50, so the floor is what the target actually takes."""
+    random.seed(4)
+    holder = _make_level_8_pc(
+        level=10, domain_cards_loadout=[ONSLAUGHT], **NOTHING_ELSE
+    )
+    target = _make_adversary(major_threshold=50, severe_threshold=1000)
+    fight = _rested_state([holder], [target])
+
+    attack_with(holder, find_weapon("Broadsword"), target, fight=fight)
+
+    assert target.hp_marked == 2
+
+
+def test_a_swing_without_the_card_marks_what_it_rolled():
+    random.seed(4)
+    holder = _make_level_8_pc(level=10, **NOTHING_ELSE)
+    target = _make_adversary(major_threshold=50, severe_threshold=1000)
+    fight = _rested_state([holder], [target])
+
+    attack_with(holder, find_weapon("Broadsword"), target, fight=fight)
+
+    assert target.hp_marked == 1
+
+
+def test_a_stress_punishes_whoever_went_past_you():
+    holder = _make_level_8_pc(
+        level=10, name="Blade", domain_cards_loadout=[ONSLAUGHT]
+    )
+    ally = _make_level_8_pc(level=10, name="Ally")
+    attacker = _make_adversary()
+    fight = _rested_state([holder, ally], [attacker])
+    fight.spotlighted = attacker
+
+    with patch("domain_cards.blade.roll_d20") as rolled:
+        rolled.return_value.is_success = False
+        onslaught_answers(holder, ally, 12, 2, fight)
+
+    assert holder.stress_marked == 1
+    assert attacker.hp_marked == 1
+
+
+def test_an_adversary_that_rides_it_out_marks_nothing():
+    holder = _make_level_8_pc(
+        level=10, name="Blade", domain_cards_loadout=[ONSLAUGHT]
+    )
+    ally = _make_level_8_pc(level=10, name="Ally")
+    attacker = _make_adversary()
+    fight = _rested_state([holder, ally], [attacker])
+    fight.spotlighted = attacker
+
+    with patch("domain_cards.blade.roll_d20") as rolled:
+        rolled.return_value.is_success = True
+        onslaught_answers(holder, ally, 12, 2, fight)
+
+    assert holder.stress_marked == 1  # the Stress buys the roll either way
+    assert attacker.hp_marked == 0
+
+
+def test_an_attack_that_included_you_is_not_answered():
+    """"An attack that doesn't include you" - read literally."""
+    holder = _make_level_8_pc(
+        level=10, name="Blade", domain_cards_loadout=[ONSLAUGHT]
+    )
+    attacker = _make_adversary()
+    fight = _rested_state([holder], [attacker])
+    fight.spotlighted = attacker
+
+    onslaught_answers(holder, holder, 12, 2, fight)
+
+    assert holder.stress_marked == 0
+
+
+def test_damage_the_party_did_to_itself_is_answered_by_nobody():
+    holder = _make_level_8_pc(
+        level=10, name="Blade", domain_cards_loadout=[ONSLAUGHT]
+    )
+    ally = _make_level_8_pc(level=10, name="Ally")
+    fight = _rested_state([holder, ally], [_make_adversary()])
+
+    onslaught_answers(holder, ally, 12, 2, fight)
+
+    assert holder.stress_marked == 0
+
+
 # --- Assessed ----------------------------------------------------------------
 
 
@@ -951,4 +1106,9 @@ def test_the_level_eight_pair_are_modelled():
 
 def test_the_level_nine_pair_are_modelled():
     for card in (GORE_AND_GLORY, REAPERS_STRIKE):
+        assert assess(card).status is Status.MODELLED
+
+
+def test_the_level_ten_pair_are_modelled():
+    for card in (BATTLE_MONSTER, ONSLAUGHT):
         assert assess(card).status is Status.MODELLED

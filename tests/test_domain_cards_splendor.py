@@ -37,6 +37,7 @@ from content import (
     Status,
     ally_soften_damage,
     apply_on_hit,
+    apply_on_targeted,
     assess,
     party_damage_reduction,
     soften_damage,
@@ -49,7 +50,16 @@ from dice.common import AdvantageState
 from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityRollResult
 from domain_cards.splendor import (
+    AURA_STANDING,
     HEALING_STRIKE,
+    OVERWHELMING_AURA,
+    OVERWHELMING_AURA_DIFFICULTY,
+    OVERWHELMING_AURA_HOPE,
+    SALVATION_BEAM,
+    SALVATION_BEAM_DIFFICULTY,
+    overwhelming_aura,
+    overwhelming_aura_costs,
+    salvation_beam,
     RESTORATION,
     RESTORATION_TOKENS,
     SHIELD_AURA,
@@ -660,6 +670,162 @@ def test_a_target_that_saves_takes_damage_and_is_not_stunned():
     assert sum(1 for a in field if a.hp_marked > 0) == 2
 
 
+# --- Overwhelming Aura -------------------------------------------------------
+
+
+def _auraing(**overrides):
+    caster = _make_level_8_pc(
+        level=9, domain_cards_loadout=[OVERWHELMING_AURA], **overrides
+    )
+    adversary = _make_adversary()
+    return caster, adversary, _rested_state([caster], [adversary])
+
+
+def test_the_aura_goes_up_for_two_hope():
+    caster, adversary, fight = _auraing()
+
+    with _succeeding(OVERWHELMING_AURA_DIFFICULTY):
+        assert overwhelming_aura(caster, adversary, fight) is not None
+
+    assert fight.token_count(caster, AURA_STANDING) == 1
+    assert caster.hope_marked == 6 - OVERWHELMING_AURA_HOPE
+
+
+def test_an_adversary_pays_a_stress_for_aiming_at_the_caster():
+    caster, adversary, fight = _auraing()
+    fight.set_token(caster, AURA_STANDING, 1)
+
+    overwhelming_aura_costs(caster, adversary, _roll(9, 4, 5), fight)
+
+    assert adversary.stress_marked == 1
+
+
+def test_the_stress_is_owed_on_a_miss_as_much_as_on_a_hit():
+    """The trigger is being aimed at, which is why the hook fires either way."""
+    caster, adversary, fight = _auraing()
+    fight.set_token(caster, AURA_STANDING, 1)
+
+    apply_on_targeted(caster, adversary, _roll(2, 3, 20), fight)
+
+    assert adversary.stress_marked == 1
+
+
+def test_no_aura_costs_an_adversary_nothing():
+    caster, adversary, fight = _auraing()
+
+    apply_on_targeted(caster, adversary, _roll(9, 4, 5), fight)
+
+    assert adversary.stress_marked == 0
+
+
+def test_the_aura_declines_while_one_already_stands():
+    caster, adversary, fight = _auraing()
+    fight.set_token(caster, AURA_STANDING, 1)
+
+    with _succeeding(OVERWHELMING_AURA_DIFFICULTY):
+        assert overwhelming_aura(caster, adversary, fight) is None
+
+
+def test_the_aura_declines_without_the_two_hope():
+    caster, adversary, fight = _auraing(hope_marked=1)
+
+    with _succeeding(OVERWHELMING_AURA_DIFFICULTY):
+        assert overwhelming_aura(caster, adversary, fight) is None
+
+
+def test_a_failed_cast_raises_nothing_and_keeps_the_hope():
+    caster, adversary, fight = _auraing()
+
+    with patch(
+        "content.spellcast.roll_duality",
+        return_value=_roll(2, 3, OVERWHELMING_AURA_DIFFICULTY),
+    ):
+        result = overwhelming_aura(caster, adversary, fight)
+
+    assert result is not None and not result.attack_roll.is_success
+    assert fight.token_count(caster, AURA_STANDING) == 0
+    assert caster.hope_marked == 6
+
+
+def test_the_presence_clause_is_declared_as_a_gap():
+    """`gain_trait_bonus` grants to every trait at once, so one trait needs more."""
+    assert assess(OVERWHELMING_AURA).is_partial is True
+    assert "Presence" in " ".join(assess(OVERWHELMING_AURA).unmodelled)
+
+
+# --- Salvation Beam ----------------------------------------------------------
+
+
+def _beaming(*marked: int, **overrides):
+    """A caster and one ally per entry, each with that many Hit Points marked."""
+    caster = _make_level_8_pc(
+        level=9, name="Seraph", domain_cards_loadout=[SALVATION_BEAM], **overrides
+    )
+    allies = []
+    for index, hurt in enumerate(marked):
+        ally = _make_level_8_pc(level=9, name=f"Ally {index}")
+        ally.mark_hp(hurt)
+        allies.append(ally)
+    target = _make_adversary()
+    return caster, allies, _rested_state([caster, *allies], [target]), target
+
+
+def test_the_beam_spends_stress_and_clears_hit_points():
+    caster, allies, fight, target = _beaming(4, 4)
+
+    with _succeeding(SALVATION_BEAM_DIFFICULTY):
+        assert salvation_beam(caster, target, fight) is not None
+
+    # Five of six Stress marked, one held back by the shared last-slot rule.
+    assert caster.stress_marked == 5
+    assert sum(ally.hp_marked for ally in allies) == 8 - 5
+
+
+def test_each_point_goes_to_whoever_is_worst_off():
+    caster, allies, fight, target = _beaming(3, 1, stress_marked=4)
+
+    with _succeeding(SALVATION_BEAM_DIFFICULTY):
+        salvation_beam(caster, target, fight)
+
+    # One point to spend, and it goes to the ally with three marked.
+    assert allies[0].hp_marked == 2
+    assert allies[1].hp_marked == 1
+
+
+def test_the_beam_stops_once_there_is_nothing_left_to_clear():
+    caster, allies, fight, target = _beaming(1)
+
+    with _succeeding(SALVATION_BEAM_DIFFICULTY):
+        salvation_beam(caster, target, fight)
+
+    assert allies[0].hp_marked == 0
+    assert caster.stress_marked == 1
+
+
+def test_the_beam_declines_for_a_party_with_nothing_marked():
+    caster, allies, fight, target = _beaming(0)
+
+    assert salvation_beam(caster, target, fight) is None
+    assert caster.stress_marked == 0
+
+
+def test_the_beam_declines_when_no_stress_can_be_paid():
+    caster, allies, fight, target = _beaming(4, stress_marked=5)
+
+    assert salvation_beam(caster, target, fight) is None
+
+
+def test_the_caster_is_not_one_of_the_beams_targets():
+    """"A line of **allies**" - Rune Ward's and Life Ward's reading of the word."""
+    caster, allies, fight, target = _beaming(4)
+    caster.mark_hp(6)
+
+    with _succeeding(SALVATION_BEAM_DIFFICULTY):
+        salvation_beam(caster, target, fight)
+
+    assert caster.hp_marked == 6
+
+
 # --- Assessed ----------------------------------------------------------------
 
 
@@ -671,5 +837,7 @@ def test_the_later_cards_are_modelled():
         SPLENDOR_TOUCHED,
         SHIELD_AURA,
         STUNNING_SUNLIGHT,
+        OVERWHELMING_AURA,
+        SALVATION_BEAM,
     ):
         assert assess(card).status is Status.MODELLED

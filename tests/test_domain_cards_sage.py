@@ -57,6 +57,9 @@ from dice.duality import DualityRollResult
 from domain_cards.sage import (
     BARRIER_STANDING,
     BEETLES,
+    FANE_OF_THE_WILDS,
+    FANE_TOKENS,
+    fane_watches,
     FOREST_SPRITES,
     FOREST_SPRITES_ATTACK_BONUS,
     FOREST_SPRITES_HOPE_FLOOR,
@@ -805,6 +808,116 @@ def test_no_barrier_reduces_nothing():
     assert party_damage_reduction(caster, 15, fight, DamageType.PHYSICAL) == 0
 
 
+# --- Fane of the Wilds -------------------------------------------------------
+
+
+def _faning(*carried: str, vault: tuple = (), **overrides):
+    caster = _make_level_8_pc(
+        level=9,
+        domain_cards_loadout=[FANE_OF_THE_WILDS, *carried],
+        domain_cards_vault=list(vault),
+        **overrides,
+    )
+    target = _make_adversary()
+    return caster, target, _rested_state([caster], [target])
+
+
+def _cast_coming_up(short: int):
+    """A cast that lands `short` points below the Difficulty it was rolled against."""
+    return patch(
+        "content.spellcast.roll_duality",
+        return_value=_roll(hope=2, fear=3, modifier=0, difficulty=5 + short),
+    )
+
+
+def test_the_pool_counts_sage_cards_in_loadout_and_vault():
+    """The card itself, one more in the loadout, one in the vault."""
+    caster, target, fight = _faning("Vicious Entangle", vault=("Wild Surge",))
+
+    fane_watches(caster, target, fight)
+
+    assert fight.token_count(caster, FANE_TOKENS) == 3
+
+
+def test_a_card_from_another_domain_does_not_count():
+    caster, target, fight = _faning("Get Back Up")
+
+    fane_watches(caster, target, fight)
+
+    assert fight.token_count(caster, FANE_TOKENS) == 1
+
+
+def test_a_dismissed_sage_card_still_counts():
+    """The card counts what is carried, not what this simulator runs."""
+    caster, target, fight = _faning("Plant Dominion")
+
+    fane_watches(caster, target, fight)
+
+    assert fight.token_count(caster, FANE_TOKENS) == 2
+
+
+def test_a_failed_cast_is_bought_back_by_the_fewest_tokens():
+    caster, target, fight = _faning("Vicious Entangle", vault=("Wild Surge",))
+
+    with _cast_coming_up(2):
+        roll = spellcast(caster, target, fight)
+
+    assert roll.modifier == 2
+    assert roll.is_success is True
+    assert fight.token_count(caster, FANE_TOKENS) == 1
+
+
+def test_a_cast_that_already_succeeded_spends_nothing():
+    caster, target, fight = _faning("Vicious Entangle", vault=("Wild Surge",))
+
+    with patch(
+        "content.spellcast.roll_duality",
+        return_value=_roll(hope=9, fear=8, modifier=0, difficulty=5),
+    ):
+        roll = spellcast(caster, target, fight)
+
+    assert roll.modifier == 0
+    assert fight.token_count(caster, FANE_TOKENS) == 3
+
+
+def test_a_shortfall_no_pool_could_cover_spends_nothing():
+    """Three tokens cannot reach a roll ten short, so they are kept."""
+    caster, target, fight = _faning("Vicious Entangle", vault=("Wild Surge",))
+
+    with _cast_coming_up(10):
+        roll = spellcast(caster, target, fight)
+
+    assert roll.is_success is False
+    assert fight.token_count(caster, FANE_TOKENS) == 3
+
+
+def test_a_critical_cast_puts_a_token_back():
+    caster, target, fight = _faning("Vicious Entangle", vault=("Wild Surge",))
+
+    with patch(
+        "content.spellcast.roll_duality",
+        return_value=_roll(hope=7, fear=7, modifier=0, difficulty=20),
+    ):
+        spellcast(caster, target, fight)
+
+    assert fight.token_count(caster, FANE_TOKENS) == 4
+
+
+def test_a_party_that_did_not_long_rest_walks_in_with_an_empty_fane():
+    caster = _make_level_8_pc(
+        level=9,
+        domain_cards_loadout=[FANE_OF_THE_WILDS, "Vicious Entangle"],
+    )
+    target = _make_adversary()
+    fight = FightState(
+        encounter_name="Test", party=[caster], adversaries=[target], rest=Rest.NONE
+    )
+
+    fane_watches(caster, target, fight)
+
+    assert fight.token_count(caster, FANE_TOKENS) == 0
+
+
 # --- Assessed rather than built ----------------------------------------------
 
 
@@ -831,3 +944,9 @@ def test_the_out_of_combat_declarations_say_why():
 def test_the_later_cards_are_modelled():
     for card in (SAGE_TOUCHED, WILD_SURGE, FOREST_SPRITES, REJUVENATION_BARRIER):
         assert assess(card).status is Status.MODELLED
+
+
+def test_the_level_nine_pair_are_assessed():
+    assert assess(FANE_OF_THE_WILDS).status is Status.MODELLED
+    assert assess("Plant Dominion").status is Status.NO_COMBAT_EFFECT
+    assert assess("Plant Dominion").reason

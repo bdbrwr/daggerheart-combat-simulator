@@ -220,6 +220,19 @@ CLOAKED = "Cloaked"
 # damage response.
 FRENZIED = "Frenzied"
 
+# **Spectral**, from Midnight's *Specter of the Dark*: "mark a Stress to become
+# Spectral until you make an action roll targeting another creature. While
+# Spectral, you're immune to physical damage and can float and pass through solid
+# objects."
+#
+# A condition rather than a token, the call Cloaked and Frenzied already got: the
+# page names the state and refers back to it. What it does is read by the card's
+# own damage hook rather than by anything here, so the name carries no machinery -
+# it is the record that the state is on, and what a play-by-play line says the PC
+# is. The floating and the solid objects have no representation, which is declared
+# where the card registers.
+SPECTRAL = "Spectral"
+
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to
 # fire. The same vocabulary serves both, so a condition that costs something at a

@@ -32,6 +32,7 @@ import pytest
 from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.policy import choose_adversary_target
+from combat.results import AttackResult
 from combat.rest import Rest
 from combat.state import FightState
 from content import (
@@ -43,10 +44,13 @@ from content import (
 )
 from content.conditions import ENRAPTURED, ON_A_GM_TURN, Condition, when_the_gm_pays
 from dice.common import AdvantageState
-from dice.damage import DiceGroup
+from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityRollResult
 from domain_cards.grace import (
+    ENCORE,
+    ENCORE_VAULTED,
     ENRAPTURE,
+    encore,
     GRACE_TOUCHED,
     MASS_ENRAPTURE,
     MASS_ENRAPTURE_WORTH_IT,
@@ -597,6 +601,104 @@ def test_enrapture_and_mass_enrapture_are_separate_cards():
     assert fight.has_condition(field[0], ENRAPTURED)
 
 
+# --- Encore ------------------------------------------------------------------
+
+
+def _encoring(**overrides):
+    holder = _make_level_8_pc(
+        level=10, name="Bard", domain_cards_loadout=[ENCORE], **overrides
+    )
+    ally = _make_level_8_pc(level=10, name="Ally")
+    target = _make_adversary()
+    return holder, ally, target, _rested_state([holder, ally], [target])
+
+
+def _an_ally_hit(total: int = 9) -> AttackResult:
+    return AttackResult(
+        attack_roll=_roll(9, 4, difficulty=5),
+        damage_roll=DamageRollResult(
+            dice_groups=[DiceGroup(count=1, sides=8)],
+            die_results=[[total - 1]],
+            modifier=1,
+        ),
+        hp_marked=1,
+    )
+
+
+def _with_hope():
+    return patch(
+        "content.spellcast.roll_duality", return_value=_roll(11, 4, difficulty=0)
+    )
+
+
+def _with_fear():
+    return patch(
+        "content.spellcast.roll_duality", return_value=_roll(4, 11, difficulty=0)
+    )
+
+
+def test_the_encore_repeats_an_allys_damage():
+    holder, ally, target, fight = _encoring()
+
+    with _with_hope():
+        encore(holder, ally, target, _an_ally_hit(9), fight)
+
+    assert target.hp_marked > 0
+    assert fight.token_count(holder, ENCORE_VAULTED) == 0
+
+
+def test_a_success_with_fear_vaults_the_card():
+    holder, ally, target, fight = _encoring()
+
+    with _with_fear():
+        encore(holder, ally, target, _an_ally_hit(9), fight)
+
+    assert target.hp_marked > 0  # the damage still lands
+    assert fight.token_count(holder, ENCORE_VAULTED) == 1
+
+
+def test_a_vaulted_encore_never_fires_again():
+    holder, ally, target, fight = _encoring()
+    fight.set_token(holder, ENCORE_VAULTED, 1)
+
+    with _with_hope():
+        encore(holder, ally, target, _an_ally_hit(9), fight)
+
+    assert target.hp_marked == 0
+
+
+def test_the_holders_own_hit_calls_for_nothing():
+    """"When an **ally** deals damage" - read literally."""
+    holder, ally, target, fight = _encoring()
+
+    with _with_hope():
+        encore(holder, holder, target, _an_ally_hit(9), fight)
+
+    assert target.hp_marked == 0
+
+
+def test_a_failed_spellcast_repeats_nothing_and_keeps_the_card():
+    holder, ally, target, fight = _encoring()
+
+    with patch(
+        "content.spellcast.roll_duality", return_value=_roll(2, 3, difficulty=20)
+    ):
+        encore(holder, ally, target, _an_ally_hit(9), fight)
+
+    assert target.hp_marked == 0
+    assert fight.token_count(holder, ENCORE_VAULTED) == 0
+
+
+def test_an_ally_hit_that_finished_the_target_calls_for_nothing():
+    holder, ally, target, fight = _encoring()
+    target.hp_marked = target.hp_max
+
+    with _with_hope():
+        encore(holder, ally, target, _an_ally_hit(9), fight)
+
+    assert fight.token_count(holder, ENCORE_VAULTED) == 0
+
+
 # --- Assessed rather than built ----------------------------------------------
 
 
@@ -620,6 +722,12 @@ def test_endless_charisma_is_declared_with_a_reason():
 def test_the_level_eight_pair_are_assessed():
     assert assess(MASS_ENRAPTURE).status is Status.MODELLED
     assert assess("Astral Projection").status is Status.NO_COMBAT_EFFECT
+
+
+def test_the_level_ten_pair_are_assessed():
+    assert assess(ENCORE).status is Status.MODELLED
+    assert assess("Notorious").status is Status.NO_COMBAT_EFFECT
+    assert assess("Notorious").reason
 
 
 @pytest.mark.parametrize("card", ["Copycat", "Master of the Craft"])

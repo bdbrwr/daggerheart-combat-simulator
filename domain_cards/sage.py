@@ -38,9 +38,15 @@ twin before - a flat bonus on an ally's roll, and a second Armor Slot for an
 ally's hit. **Rejuvenation Barrier** is the first party-wide *resistance*, and it
 is expressed as a reduction rather than a real one, since resistance is
 holder-scoped and this barrier belongs to whoever cast it.
+
+Level 9's **Fane of the Wilds** is the first thing anywhere to ask which *domain*
+a card belongs to - nothing records it as data, and the nine *X*-Touched cards
+settled the same question by not counting. It is also the first bonus spent
+**after** the roll it pays for, which is why it sits on the `reroll` hook.
 """
 
 import random
+from dataclasses import replace
 
 from combat.results import AttackResult
 from content.aoe import (
@@ -60,10 +66,12 @@ from content.registry import (
     ally_damage_reduction,
     ally_extra_armor_slot,
     ally_roll_bonus,
+    assess,
     extra_damage,
     free,
     no_combat_effect,
     out_of_combat_ability,
+    reroll,
     roll_bonus,
     severity_response,
     spellcast_bonus,
@@ -72,6 +80,162 @@ from content.registry import (
 from content.spellcast import spellcast
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
+
+# --- Fane of the Wilds -----------------------------------------------------------
+
+FANE_OF_THE_WILDS = "Fane of the Wilds"
+
+FANE_TOKENS = "Fane of the Wilds tokens"
+FANE_PRIMED = "Fane of the Wilds primed"
+
+# Set while a Spellcast Roll is in flight, so the reroll hook below can tell a cast
+# from a weapon swing. Cloaking Blast's arrangement, and the only thing that can:
+# `reroll` is offered every action roll and cannot otherwise see which it is.
+FANE_CASTING = "Fane of the Wilds cast in flight"
+
+# The module a Sage card is registered in. Read off the assessment rather than
+# written down per card, so a card added later counts itself.
+SAGE_MODULE = __name__
+
+
+def _sage_cards(holder) -> int:
+    """How many Sage cards this PC carries, loadout and vault together.
+
+    **The first thing anywhere to ask which domain a card belongs to.** Nothing
+    records it as data, and the *X*-Touched ruling settled the same question by not
+    counting - but this card's pool *size* is the count, so a proxy would be
+    arbitrary where the printed number is not. The user's ruling is to count.
+
+    An `Assessment` already records the module a name was registered in, so the
+    answer is exact and includes Sage cards that are **dismissed** - which is right,
+    since the card counts what is in the loadout and vault rather than what this
+    simulator runs.
+    """
+    carried = [
+        *getattr(holder, "domain_cards_loadout", []),
+        *getattr(holder, "domain_cards_vault", []),
+    ]
+    return sum(1 for name in carried if assess(name).source == SAGE_MODULE)
+
+
+def _prime_fane(caster: Holder, fight: Fight) -> None:
+    """Place the card's tokens the first time it is looked at in this fight.
+
+    Strategic Approach's arrangement: "after a long rest" means a party that did
+    not long rest walks in with the card empty, and the rest is asked through
+    `can_use_once_per_rest` so nothing is ever claimed. Two tokens rather than one,
+    because a count of zero has to mean "spent" and not "never placed".
+    """
+    if fight.token_count(caster, FANE_PRIMED):
+        return
+    fight.set_token(caster, FANE_PRIMED, 1)
+
+    if not fight.can_use_once_per_rest(caster, FANE_OF_THE_WILDS, long=True):
+        return
+    fight.set_token(caster, FANE_TOKENS, _sage_cards(caster))
+
+
+@spellcast_bonus(FANE_OF_THE_WILDS)
+def fane_watches(caster: Holder, target, fight: Fight = None) -> int:
+    """Marks that a Spellcast Roll is being made, and adds nothing to it.
+
+    A bonus hook used as a *notice*, exactly as Cloaking Blast uses one: this is
+    asked from `content/spellcast.py` and nowhere else, so being asked is the fact
+    the card needs. The tokens are only ever spent on a cast, so this is also where
+    the pool is filled.
+
+    Returns 0 always - what the card grants is spent afterwards, not before.
+    """
+    if fight is not None:
+        _prime_fane(caster, fight)
+        fight.set_token(caster, FANE_CASTING, 1)
+    return 0
+
+
+@reroll(
+    FANE_OF_THE_WILDS,
+    unmodelled=[
+        "'when you critically succeed on a Spellcast Roll **for a Sage domain "
+        "spell**' - which card made the cast is not something the roll carries, so "
+        "any critical Spellcast Roll returns a token. It errs generous, and only "
+        "for a caster whose loadout mixes domains",
+        "The tokens are placed **at the start of each fight** rather than after a "
+        "long rest, since nothing carries between encounters yet - the same "
+        "simplification Unleash Chaos and Strategic Approach declare",
+    ],
+)
+def fane_of_the_wilds(
+    holder: Holder, roller: Holder, roll, remake, fight: Fight = None
+):
+    """Fane of the Wilds (Sage, level 9). Buy a failed cast back, a point at a time.
+
+    SRD: "After a long rest, place a number of tokens equal to the number of Sage
+    domain cards in your loadout and vault on this card. When you would make a
+    Spellcast Roll, you can spend any number of tokens after the roll to gain a +1
+    bonus for each token spent. When you critically succeed on a Spellcast Roll for
+    a Sage domain spell, gain a token. When you take a long rest, clear all unspent
+    tokens."
+
+    **Spent after the roll**, which is what puts it on the `reroll` hook rather than
+    on `spellcast_bonus`: that one is asked before the dice and could only ever be a
+    standing bonus. This is Support Tank's and Arcana-Touched's shape - rewriting a
+    resolved roll rather than throwing fresh dice - so `remake` is deliberately
+    unused.
+
+    **This is not the imperfect-information case.** The caster sees their own total
+    and the Difficulty they were rolling against before deciding, which is exactly
+    what a player at the table sees; nothing here reads a number nobody could know.
+    That is what separates it from the Faerie's Wings.
+
+    SIMULATION RULE - policy. **The fewest tokens that turn a failure into a
+    success, and none on a roll that already succeeded** - Thorn Skin's rule for a
+    pool spent against a known number. A cast that no number of tokens could reach
+    buys nothing and keeps them.
+
+    Scoped to its own holder with `holder is roller`: the card says *your*
+    Spellcast Rolls.
+    """
+    if fight is None or holder is not roller or roll is None:
+        return None
+    if not fight.token_count(holder, FANE_CASTING):
+        return None
+
+    # Cleared whichever way the roll went, so a later weapon swing cannot read a
+    # stale mark as a cast of its own.
+    fight.set_token(holder, FANE_CASTING, 0)
+
+    if roll.is_critical:
+        held = fight.token_count(holder, FANE_TOKENS) + 1
+        fight.set_token(holder, FANE_TOKENS, held)
+        fight.note(f"{holder.name}'s fane gains a token ({held})")
+        return None
+
+    held = fight.token_count(holder, FANE_TOKENS)
+    if not held or roll.difficulty is None or roll.is_success:
+        return None
+
+    short = roll.difficulty - roll.total
+    if short <= 0 or short > held:
+        return None
+
+    fight.spend_tokens(holder, FANE_TOKENS, short)
+    lifted = replace(roll, modifier=roll.modifier + short)
+    fight.note(
+        f"{holder.name} spends {short} from the fane, and the cast holds ({lifted})"
+    )
+    return lifted
+
+
+no_combat_effect(
+    "Plant Dominion",
+    "A Spellcast Roll (18), then once per long rest on a success the caster "
+    "reshapes the plant life anywhere within Far range - growing trees instantly, "
+    "clearing a path through dense vines, raising a wall of roots. Terrain, and "
+    "neither terrain nor position is tracked: the **Manifest Wall** ruling exactly, "
+    "which turned on that card printing no damage. This one prints none either, so "
+    "there is nothing to place. At a table it is the largest thing a Sage does to a "
+    "battlefield, and here there is nothing for it to touch.",
+)
 
 CORROSIVE_PROJECTILE = "Corrosive Projectile"
 

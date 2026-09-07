@@ -27,6 +27,7 @@ from content import (
     apply_on_damaged,
     death_move_prevented,
     extra_armor_slots,
+    bearer_of_marked_hp,
     harden_damage,
     marks_armor_instead_of_stress,
     party_damage_reduction,
@@ -699,7 +700,21 @@ class PlayerCharacter:
         The check is asked before the death move rather than inside
         `avoid_death`, so a prevented death move leaves nothing behind - no
         unconsciousness, no `death_moves` tally, no scar roll.
+
+        **Party content may move the Hit Points onto somebody else** before any of
+        that - the Codex spell *Transcendent Union*, whose connected creatures
+        choose which of them marks. Asked here because this is the one place every
+        route to a marked Hit Point passes through: damage, Stress that would not
+        fit, and a feature saying "mark an additional Hit Point" outright. The
+        bearer marks through this same method, so their own death move, wards and
+        tally all run exactly as they would have. Nothing here knows what any of
+        it is.
         """
+        bearer = bearer_of_marked_hp(self, amount, fight)
+        if bearer is not None and bearer is not self:
+            bearer.mark_hp_and_check_death(amount, fight)
+            return
+
         self.mark_hp(amount)
         if self.hp_marked >= self.hp_max and not self.unconscious:
             if death_move_prevented(self, fight):

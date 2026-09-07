@@ -31,6 +31,12 @@ is the first card that changes an *ally's* threshold bands - Rune Ward reaches
 somebody else's hit but only as a number, and moving a band is a different thing -
 which is what `ally_severity_response` exists for. **Stunning Sunlight** is Chain
 Lightning's shape with nobody escaping: a save is 3d20+3 rather than nothing.
+
+Level 9 gives the domain the first card anywhere that charges for being *aimed
+at*. **Overwhelming Aura** costs an adversary a Stress for choosing its holder,
+hit or miss, which is what `on_targeted` exists for - the last empty corner of the
+incoming-attack table. **Salvation Beam** is the second card in the project to
+turn one resource straight into another, and the first to do it across the party.
 """
 
 import random
@@ -62,6 +68,7 @@ from content.registry import (
     hope_die_for,
     no_combat_effect,
     on_hit,
+    on_targeted,
     out_of_combat_ability,
     reroll,
     severity_response,
@@ -71,6 +78,189 @@ from content.spellcast import spellcast
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import DualityOutcome, roll_duality
+
+# --- Overwhelming Aura -----------------------------------------------------------
+
+OVERWHELMING_AURA = "Overwhelming Aura"
+
+OVERWHELMING_AURA_DIFFICULTY = 15
+OVERWHELMING_AURA_HOPE = 2
+
+# Set on the caster while the aura is up. It carries no ender, so it stands for the
+# rest of the fight - "while this spell is active", with nothing printed to end it.
+AURA_STANDING = "Overwhelming Aura standing"
+
+
+@action(
+    OVERWHELMING_AURA,
+    unmodelled=[
+        "'make your Presence equal to your Spellcast trait' - a character sheet "
+        "carries its traits resolved, and the standing rule is that a temporary "
+        "change to one is recorded as a tracked bonus on the PC rather than "
+        "approximated through a roll hook. `PlayerCharacter.gain_trait_bonus` "
+        "grants to **every** trait at once (it was built for Full Surge), so a "
+        "per-trait version is what this clause needs and does not have yet. "
+        "Declared rather than approximated",
+        "'while this spell is active' prints no ender at all, so the aura runs to "
+        "the end of the fight - the same reading *Frenzied* gets of a state with "
+        "no printed way out",
+    ],
+)
+def overwhelming_aura(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Overwhelming Aura (Splendor, level 9). Charge an adversary for looking at you.
+
+    SRD: "Make a Spellcast Roll (15) to magically empower your aura. On a success,
+    spend 2 Hope to make your Presence equal to your Spellcast trait. While this
+    spell is active, an adversary must mark a Stress when they target you with an
+    attack."
+
+    **The first content anywhere that charges for being *aimed at*.** Every other
+    thing on this side of the table answers a hit or a miss; this one answers the
+    choice, so the Stress is owed on an attack that misses as much as on one that
+    lands. That is the whole reason `on_targeted` exists - see its docstring for
+    the corner of the incoming-attack table it fills.
+
+    Worth knowing what filling an adversary's Stress track buys, since it is all
+    this does: an adversary with no free Stress cannot pay for its Action features,
+    and a forced Stress that will not fit marks an HP instead.
+
+    A flat Difficulty of 15 rather than anybody's own, printed on the card: the
+    aura goes up around the caster and no adversary is resisting it. The roll still
+    passes through `content/spellcast.py`, so it can be helped, rerolled and hobbled
+    like any other action roll.
+
+    SIMULATION RULE - policy. **Cast as early as the option shuffle allows**, which
+    is Zone of Protection's and Rejuvenation Barrier's ruling for the same shape:
+    the aura runs until the fight ends, so every spotlight spent uncast throws part
+    of it away and there is no later moment worth waiting for. Declines while one
+    already stands, per the standing don't-re-apply rule, and declines before
+    rolling without the 2 Hope, since the whole effect sits inside the payment -
+    the Bolt Beacon and Glyph of Nightfall reading.
+    """
+    if fight is None:
+        return None
+    if fight.token_count(caster, AURA_STANDING):
+        return None
+    if not caster.can_spend_hope(OVERWHELMING_AURA_HOPE):
+        return None
+
+    attack_roll = spellcast(
+        caster, target, fight, difficulty=OVERWHELMING_AURA_DIFFICULTY
+    )
+    if attack_roll is None:
+        return None
+    if not attack_roll.is_success:
+        fight.note(f"{caster.name}'s aura fails to take ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    caster.spend_hope(OVERWHELMING_AURA_HOPE)
+    fight.set_token(caster, AURA_STANDING, 1)
+    fight.note(f"{caster.name}'s aura becomes overwhelming to look upon")
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+
+@on_targeted(OVERWHELMING_AURA)
+def overwhelming_aura_costs(
+    holder: Holder, attacker, roll, fight: Fight = None
+) -> None:
+    """The Stress an adversary pays for aiming at the caster.
+
+    Registered on the same name as the action above, which is how one card reaches
+    two hooks - Ferocity's, Boost's and Frenzy's arrangement.
+
+    `mark_stress` rather than a willingness check: this is **forced**, not
+    something the adversary chooses, so a full Stress track means it marks an HP
+    instead. That is the same thing Enrapture and Mass Enrapture do to a target.
+
+    No policy at all - the card states its own trigger and the adversary gets no
+    say in it.
+    """
+    if fight is None or not fight.token_count(holder, AURA_STANDING):
+        return
+
+    attacker.mark_stress(1)
+    fight.note(f"{attacker.name} marks a Stress to look at {holder.name} at all")
+
+
+# --- Salvation Beam --------------------------------------------------------------
+
+SALVATION_BEAM = "Salvation Beam"
+
+SALVATION_BEAM_DIFFICULTY = 16
+
+
+@action(
+    SALVATION_BEAM,
+    unmodelled=[
+        "'target a **line** of allies within Far range' - no positions are "
+        "tracked, so the area rule stands in for the line, drawn over the rest of "
+        "the party. A line is a shape rather than a band, and nothing here can "
+        "express one",
+        "The caster is not one of the beam's targets. The card says *allies*, "
+        "which is Rune Ward's and Life Ward's reading of the same word",
+    ],
+)
+def salvation_beam(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Salvation Beam (Splendor, level 9). Stress into other people's Hit Points.
+
+    SRD: "Make a Spellcast Roll (16). On a success, mark any number of Stress to
+    target a line of allies within Far range. You can clear Hit Points on the
+    targets equal to the number of Stress marked, divided among them however you'd
+    like."
+
+    **The second card in the project that turns one resource straight into
+    another**, after Grace's *Share the Burden* - and this one converts across the
+    party rather than within it, so the caster pays and somebody else recovers.
+
+    A flat Difficulty of 16, printed on the card, so no adversary is resisting it.
+
+    SIMULATION RULE - policy, ruled. **As many Stress as the shared last-slot rule
+    allows, each point to whoever has the most Hit Points marked.** Two decisions,
+    both the user's, and both bounded by the standing zero-benefit rule: a point is
+    never spent on a party with nothing left to clear, and the beam declines before
+    rolling when nobody is wounded or no Stress can be paid. Healing Field's floor
+    of two, one Stress per cast, and spreading the points evenly were all offered
+    and declined.
+
+    Whoever is worst off is re-asked after every point, so a beam of three can clear
+    one Hit Point from each of three allies or three from one, depending on how they
+    stand - which is what "divided among them however you'd like" comes to when the
+    division is made by a rule rather than a player.
+    """
+    if fight is None:
+        return None
+
+    allies = [pc for pc in fight.conscious_party if pc is not caster]
+    reached = [pc for pc in targets_in_area(Range.FAR, allies) if pc.hp_marked > 0]
+    if not reached:
+        return None
+    if not caster.will_spend_stress(1):
+        return None
+
+    attack_roll = spellcast(
+        caster, target, fight, difficulty=SALVATION_BEAM_DIFFICULTY
+    )
+    if attack_roll is None:
+        return None
+    if not attack_roll.is_success:
+        fight.note(f"{caster.name}'s beam gutters out ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    cleared = 0
+    while caster.will_spend_stress(1):
+        wounded = [pc for pc in reached if pc.hp_marked > 0]
+        if not wounded:
+            break
+        caster.spend_stress(1)
+        max(wounded, key=lambda pc: pc.hp_marked).clear_hp(1)
+        cleared += 1
+
+    fight.note(
+        f"{caster.name} marks {cleared} Stress and clears {cleared} Hit "
+        f"Point{'s' if cleared != 1 else ''} across the party"
+    )
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
 
 HEALING_HANDS_DIFFICULTY = 13
 

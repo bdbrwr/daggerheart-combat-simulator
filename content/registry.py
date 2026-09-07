@@ -373,6 +373,9 @@ _stress_for_hp: dict[str, Callable] = {}
 _armor_for_stress: dict[str, Callable] = {}
 _fear_conversions: dict[str, Callable] = {}
 _effect_landings: dict[str, Callable] = {}
+_targetings: dict[str, Callable] = {}
+_damage_floors: dict[str, Callable] = {}
+_hp_transfers: dict[str, Callable] = {}
 
 _discovered = False
 _discovering = False
@@ -472,6 +475,107 @@ def damage_die_reroll(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_damage_die_rerolls, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def hp_transfer(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that moves marked Hit Points onto somebody else.
+
+    Signature: `(holder, target, amount, fight) -> Holder | None` - who should mark
+    the Hit Points instead, or None to leave them where they landed. Returning
+    `target` itself is the same as declining.
+
+    **The first thing that changes *who* marks a wound.** `severity_response` and
+    its neighbours change how many Hit Points a hit is worth, `guard` moves an
+    attack onto a different PC before it is rolled, and `stress_instead_of_hp`
+    changes which track it lands on - none of them can say "that one, not this
+    one" once the marking is happening. The Codex spell *Transcendent Union* is
+    the reason it exists.
+
+    Asked party-wide from `PlayerCharacter.mark_hp_and_check_death`, which is the
+    one place every route to a marked Hit Point passes through - damage, Stress
+    that would not fit, and a feature saying "mark an additional Hit Point"
+    outright. So a union bears all three.
+
+    **Recursion terminates because the answer is a function of the state**, not of
+    who was asked: the chosen bearer marks through the same path, is offered the
+    same choice, and picks itself. Content here must therefore answer with
+    somebody it would still answer with when asked about them.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_hp_transfers, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def damage_floor(name: str, unmodelled: Iterable[str] = ()):
+    """Register content the **attacker** carries that puts a floor under a swing.
+
+    Signature: `(attacker, target, fight) -> int` - the least damage this attack
+    should deal, or 0 for no floor. The largest floor offered wins; they do not
+    sum, since each is a minimum rather than a contribution.
+
+    **The one direction the damage hooks did not reach.** `damage_bonus` and
+    `extra_damage` add to a roll before it is read, `damage_scaling` multiplies it,
+    and `severity_increase` and `harden_damage` are both scoped to whoever is
+    *taking* the hit - so nothing a swinger carried could say "this blow is never
+    worth less than that". Blade's *Onslaught* is the reason it exists: "you never
+    deal damage beneath a target's Major damage threshold".
+
+    Asked once, after the damage roll is read and before the target takes it, so
+    the floor is measured against what was actually rolled. It reaches the number
+    the target is dealt and **not** the `DamageRollResult`, which keeps recording
+    what the dice said - so a play-by-play line reading off the roll shows the roll
+    rather than the floored figure. That is declared as a gap where the content
+    registers.
+
+    Expressed as a floor on the **damage** rather than on the Hit Points it marks,
+    which is the same thing said the way the pipeline can hear it: flooring at the
+    target's Major threshold is exactly "the target always marks a minimum of 2
+    Hit Points".
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_damage_floors, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def on_targeted(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that answers an adversary aiming an attack at its holder.
+
+    Signature: `(holder, attacker, roll, fight) -> None`. Asked once per adversary
+    attack against `holder`, **whether it hit or missed** - the trigger is being
+    chosen as the target, not being wounded.
+
+    **The last empty corner of the incoming-attack table.** `before_attacked` and
+    `on_attacked` are both asked from `items/weapons.py`, which only ever sees the
+    party swinging, and `attack_missed` is asked from the GM turn but only on a
+    failure. Nothing announced an adversary simply *attacking* a PC. Splendor's
+    *Overwhelming Aura* is the reason it exists - "an adversary must mark a Stress
+    when they target you with an attack" - and the Stress is owed on a miss as
+    much as on a hit.
+
+    Holder-scoped on whoever was aimed at, and everything registered is asked with
+    nothing short-circuiting.
+
+    Asked **after** the attack resolves rather than before, since that is the one
+    place the loop knows an attack was actually made - an activation can resolve
+    into a feature that attacks nobody. Nothing here can change whether the attack
+    landed, so the ordering costs only that a Stress marked by this cannot make its
+    holder Vulnerable in time for the attack that provoked it.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_targetings, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -2749,6 +2853,52 @@ def apply_attack_failed(attacker, target, roll, fight: Fight = None) -> None:
         respond = _registered(_attack_failures, name)
         if respond is not None:
             respond(attacker, target, roll, fight)
+
+
+def bearer_of_marked_hp(target, amount: int, fight: Fight = None):
+    """Who should mark these Hit Points - `None` unless party content moves them.
+
+    The first offer wins; candidates are shuffled so which one does not depend on
+    the order a party was written in. Scanned across the conscious party, since
+    the content belongs to whoever cast it rather than to whoever was hit. See
+    `hp_transfer`.
+
+    None without a fight, since there is no party to scan.
+    """
+    _discover()
+    for holder, move in _party_offers(fight, _hp_transfers):
+        bearer = move(holder, target, amount, fight)
+        if bearer is not None and bearer is not target:
+            return bearer
+    return None
+
+
+def dealt_damage_floor(attacker: Holder, target, fight: Fight = None) -> int:
+    """The least damage this attack should deal - 0 unless content says otherwise.
+
+    The **largest** floor offered rather than the sum, since each registrant states
+    a minimum. Holder-scoped on whoever is swinging; see `damage_floor`.
+    """
+    _discover()
+    floors = [
+        found(attacker, target, fight)
+        for name in attacker.named_features
+        if (found := _registered(_damage_floors, name)) is not None
+    ]
+    return max(floors, default=0)
+
+
+def apply_on_targeted(holder, attacker, roll, fight: Fight = None) -> None:
+    """Let the target's own content answer having been aimed at - see `on_targeted`.
+
+    Holder-scoped on whoever was attacked. Everything registered is asked and
+    nothing short-circuits: being targeted is not a resource anybody competes for.
+    """
+    _discover()
+    for name in holder.named_features:
+        respond = _registered(_targetings, name)
+        if respond is not None:
+            respond(holder, attacker, roll, fight)
 
 
 def apply_on_effect_landed(holder, target, result, fight: Fight = None) -> None:

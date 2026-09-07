@@ -53,6 +53,14 @@ Level 9 is the domain at its most final. The **Book of Ronin** carries the first
 out lifts when the GM pays a Fear - and **Disintegration Wave** is the only thing
 in the project that kills without dealing damage: a Stress per adversary, no roll
 against them, and every unmarked Hit Point marked at once.
+
+Level 10 closes the domain on two things it had never been able to say. The
+**Book of Yarrow** buys outright *immunity* to a damage type, where everything
+before it could only resist or reduce; and **Transcendent Union** moves a marked
+Hit Point onto somebody else, which is the first content anywhere to change *who*
+marks a wound rather than how many it is worth. It is also the ruling that parts
+company with the domain's own *Shared Clarity*: Stress pooling is symmetrical and
+Hit Point pooling is not.
 """
 
 import random
@@ -66,7 +74,12 @@ from content.aoe import (
     targets_in_area,
 )
 from content.conditions import RESTRAINED, VULNERABLE, Condition, when_the_gm_pays
-from content.damage_types import DamageType, types_in
+from content.damage_types import (
+    DamageType,
+    damage_type_named,
+    includes,
+    types_in,
+)
 from content.grimoire import Grimoire
 from content.registry import (
     Fight,
@@ -79,6 +92,7 @@ from content.registry import (
     extra_damage,
     free,
     hope_die_for,
+    hp_transfer,
     no_combat_effect,
     out_of_combat_ability,
     spellcast_bonus,
@@ -1809,6 +1823,216 @@ no_combat_effect(
     "spell would make the party *worse*. At a table it is how somebody hides in "
     "plain sight or waits out a patrol, and none of that is a fight.",
 )
+
+
+# --- Book of Yarrow --------------------------------------------------------------
+
+BOOK_OF_YARROW = "Book of Yarrow"
+MAGIC_IMMUNITY = "Magic Immunity"
+
+MAGIC_IMMUNITY_HOPE = 5
+
+# Set on the caster once bought. No ender: "until your next rest" is the rest of
+# the fight, since nothing carries between encounters.
+MAGIC_IMMUNE = "Magic Immunity standing"
+
+YARROW = Grimoire(BOOK_OF_YARROW)
+
+
+def _deals(adversary, kind: DamageType) -> bool:
+    """Whether this stat block's printed attack deals `kind`.
+
+    Read off the page rather than inferred, and through `damage_type_named` rather
+    than `types_in`, which would treat the printed string as a bag of letters -
+    the bug Hush's `_casts_with_magic` had.
+    """
+    return includes(damage_type_named(adversary.type_of_damage()), kind)
+
+
+@YARROW.free(
+    MAGIC_IMMUNITY,
+    unmodelled=[
+        "'until your next rest' is the rest of the fight, since nothing carries "
+        "between encounters yet - the standing simplification",
+    ],
+)
+def magic_immunity(caster: Holder, fight: Fight) -> bool:
+    """Magic Immunity (Book of Yarrow, Codex level 10). Five Hope, and magic stops.
+
+    SRD: "Spend 5 Hope to become immune to magic damage until your next rest."
+
+    **Immunity rather than resistance**, so it is registered on the hook that can
+    return the whole amount rather than on `damage_resistance`, which halves. That
+    is Scramble's and Bone-Touched's route, scoped back to its own holder.
+
+    SIMULATION RULE - policy, ruled. **Bought at the first spotlight a magic
+    attacker is on the field**, and declined outright against a field that deals
+    only physical damage - read off the printed stat blocks, which is a fact both
+    sides of the table can see and the same thing Vanishing Dodge reads. Five Hope
+    is most of a pool, and against the wrong field it would buy nothing at all.
+    """
+    if fight is None or fight.token_count(caster, MAGIC_IMMUNE):
+        return False
+    if not caster.can_spend_hope(MAGIC_IMMUNITY_HOPE):
+        return False
+    if not any(_deals(a, DamageType.MAGIC) for a in fight.living_adversaries):
+        return False
+
+    caster.spend_hope(MAGIC_IMMUNITY_HOPE)
+    fight.set_token(caster, MAGIC_IMMUNE, 1)
+    fight.note(f"{caster.name} spends {MAGIC_IMMUNITY_HOPE} Hope; magic stops working")
+    return True
+
+
+@ally_damage_reduction(BOOK_OF_YARROW)
+def magic_immunity_holds(
+    holder: Holder, target, amount: int, fight: Fight, damage_type=None
+) -> int:
+    """The magic that simply does not land. Returns the damage this hit should lose.
+
+    Registered under the **book's** name rather than the spell's, which is what a
+    character sheet carries and therefore what dispatch scans. A Grimoire holds its
+    spells for the action and free hooks; anything else one of them needs has to be
+    claimed by the book.
+
+    Scoped to its own holder with `holder is target` - the spell makes *you*
+    immune - and the whole amount is returned, so no Armor Slot is spent on a hit
+    that never landed.
+    """
+    if fight is None or holder is not target:
+        return 0
+    if not fight.token_count(holder, MAGIC_IMMUNE):
+        return 0
+    if DamageType.MAGIC not in types_in(damage_type):
+        return 0
+
+    fight.note(f"The magic washes over {holder.name}")
+    return amount
+
+
+YARROW.note_gap(
+    "Timejammer",
+    "assessed and declared under its own name as having no combat effect - see "
+    "the declaration below",
+)
+
+no_combat_effect(
+    "Timejammer",
+    "A Spellcast Roll (18) halts time for everyone within Far range except the "
+    "caster, and it resumes 'the next time you make an action roll that targets "
+    "another creature'. A spotlight here already resolves into exactly one action, "
+    "so the freeze ends on the very action it was bought for and the loop is "
+    "identical either way - there is no second action for the caster to take while "
+    "the world is stopped, and no position for them to change. At a table it is a "
+    "held breath: you walk somewhere, set something up, and let time start again. "
+    "Dismissed on that rather than on the size of it, which is the Stealth "
+    "Expertise reading.",
+)
+
+
+# --- Transcendent Union ----------------------------------------------------------
+
+TRANSCENDENT_UNION = "Transcendent Union"
+
+TRANSCENDENT_UNION_HOPE = 5
+
+# Set on the caster while the union holds. No ender printed beyond the rest, so it
+# runs to the end of the fight.
+UNION_STANDING = "Transcendent Union standing"
+
+# "On two or more willing creatures" - the caster and at least one ally.
+UNION_WORTH_IT = 2
+
+
+@free(
+    TRANSCENDENT_UNION,
+    unmodelled=[
+        "The **Stress** half of the union. `PlayerCharacter.spend_stress` and "
+        "`mark_stress` are called from dozens of places with no fight in hand, so "
+        "a partner cannot be found from there - and threading a fight through the "
+        "Stress path was offered and declined when Codex's own *Shared Clarity* "
+        "was assessed. The Hit Point half needs no such change, since "
+        "`mark_hp_and_check_death` already carries one",
+        "Who is 'connected' is the whole conscious party rather than a chosen two "
+        "or more. Nothing records which PCs a spell was cast on, and the card is "
+        "cast once for the fight",
+    ],
+)
+def transcendent_union(caster: Holder, fight: Fight) -> bool:
+    """Transcendent Union (Codex, level 10). Whoever can take it, takes it.
+
+    SRD: "Once per long rest, spend 5 Hope to cast this spell on two or more
+    willing creatures. When a creature connected by this union would mark Stress or
+    Hit Points, the connected creatures can choose who marks it."
+
+    **Shared Clarity's shape, and ruled the other way.** That card pools Stress
+    alone and was dismissed as symmetrical: the pair mark the same total either
+    way, and all it decides is which track fills first. Hit Points are not
+    symmetrical - a PC at zero leaves the fight - so moving a wound onto whoever
+    can absorb it changes outcomes rather than only bookkeeping. The user ruled
+    this one modelled on exactly that difference.
+
+    **No roll**, so it is a free ability: the union is formed *and* the caster
+    takes their action roll in the same spotlight.
+
+    SIMULATION RULE - policy. Cast as early as the shuffle allows, which is Zone of
+    Protection's ruling for the same shape - it runs until the fight ends, so a
+    spotlight spent uncast throws part of it away. Declines below
+    `UNION_WORTH_IT` conscious creatures, since a union of one is nobody to share
+    with, and declines without the 5 Hope, which is where the whole effect sits.
+    """
+    if fight is None or fight.token_count(caster, UNION_STANDING):
+        return False
+    if len(fight.conscious_party) < UNION_WORTH_IT:
+        return False
+    if not caster.can_spend_hope(TRANSCENDENT_UNION_HOPE):
+        return False
+    if not fight.use_once_per_rest(caster, TRANSCENDENT_UNION, long=True):
+        return False
+
+    caster.spend_hope(TRANSCENDENT_UNION_HOPE)
+    fight.set_token(caster, UNION_STANDING, 1)
+    fight.note(f"{caster.name} binds the party into a transcendent union")
+    return True
+
+
+@hp_transfer(TRANSCENDENT_UNION)
+def transcendent_union_bears(
+    caster: Holder, target, amount: int, fight: Fight = None
+):
+    """Who marks these Hit Points instead - the one best able to carry them.
+
+    Registered on the same name as the casting above, which is how one card reaches
+    two hooks.
+
+    SIMULATION RULE - policy. **The connected creature with the most unmarked Hit
+    Points**, which is the mirror of Salvation Beam's worst-off-first: a heal goes
+    where it is needed and a wound goes where it can be absorbed. It is the natural
+    extension of the allocation rulings rather than a number of its own, and it is
+    what keeps the union from being a way to knock somebody else out.
+
+    **The answer is a function of the state rather than of who was asked**, which
+    is what makes the transfer terminate: the bearer marks through the same path,
+    is offered the same choice, and picks itself. Ties fall to the first in party
+    order, deterministically, for the same reason.
+    """
+    if fight is None or not fight.token_count(caster, UNION_STANDING):
+        return None
+
+    connected = fight.conscious_party
+    # By identity: `PlayerCharacter` is a dataclass, so two PCs with identical
+    # sheets compare equal and `in` would confuse them.
+    if not any(pc is target for pc in connected):
+        return None
+    if len(connected) < UNION_WORTH_IT:
+        return None
+
+    bearer = max(connected, key=lambda pc: pc.hp_unmarked)
+    if bearer is target:
+        return None
+
+    fight.note(f"The union moves {amount} onto {bearer.name}")
+    return bearer
 
 
 # --- Disintegration Wave ---------------------------------------------------------

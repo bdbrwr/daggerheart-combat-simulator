@@ -24,12 +24,14 @@ targets. If any of those change, these are the tests that should fail.
 """
 
 import random
+from contextlib import contextmanager
 from unittest.mock import patch
 
 from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.policy import _shield
 from combat.rest import Rest
+from combat.results import AttackResult
 from combat.state import FightState
 from content import (
     Status,
@@ -42,13 +44,21 @@ from content import (
     take_action,
     use_free_abilities,
 )
-from content.conditions import RESTRAINED, VULNERABLE, Condition
+from content.conditions import ON_A_GM_TURN, RESTRAINED, VULNERABLE, Condition
 from content.spellcast import spellcast
 from dice.common import AdvantageState
 from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityRollResult
 from domain_cards.valor import (
     FULL_SURGE,
+    HOLD_THE_LINE,
+    HOLD_THE_LINE_FEAR,
+    LEAD_BY_EXAMPLE,
+    LEAD_BY_EXAMPLE_MARK,
+    LINE_HELD,
+    hold_the_line,
+    lead_by_example,
+    lead_by_example_lifts,
     FULL_SURGE_BONUS,
     FULL_SURGE_STRESS,
     GROUND_POUND,
@@ -896,6 +906,172 @@ def test_a_target_that_saves_takes_half():
     assert saved.hp_marked * 2 == struck.hp_marked
 
 
+# --- Hold the Line -----------------------------------------------------------
+
+
+@contextmanager
+def _bunched():
+    """Every band at its best reach, so a case is about the card not the spread."""
+    with patch("content.aoe.random.random", return_value=0.0):
+        yield
+
+
+def _holding(adversaries: int, fear: int = 6, **overrides):
+    holder = _make_level_8_pc(
+        level=9, domain_cards_loadout=[HOLD_THE_LINE], **overrides
+    )
+    field = [_make_adversary(name=f"Dummy {index}") for index in range(adversaries)]
+    return holder, field, _rested_state([holder], field, fear=fear)
+
+
+def test_the_line_restrains_what_the_band_reaches():
+    holder, field, fight = _holding(6)
+
+    with _bunched():
+        assert hold_the_line(holder, fight) is True
+
+    assert any(fight.has_condition(a, RESTRAINED) for a in field)
+    assert holder.hope_marked == 5
+
+
+def test_the_gm_pays_two_fear_to_break_one_free():
+    """Twice what every other party-applied condition costs to shake off."""
+    holder, field, fight = _holding(6, fear=6)
+
+    with _bunched():
+        hold_the_line(holder, fight)
+
+    held = [a for a in field if fight.has_condition(a, RESTRAINED)][0]
+    ended = fight.expire_conditions(held, ON_A_GM_TURN)
+
+    assert RESTRAINED in ended
+    assert fight.fear == 6 - HOLD_THE_LINE_FEAR
+
+
+def test_a_gm_who_cannot_afford_it_watches_them_stand_there():
+    holder, field, fight = _holding(6, fear=1)
+
+    with _bunched():
+        hold_the_line(holder, fight)
+
+    held = [a for a in field if fight.has_condition(a, RESTRAINED)][0]
+
+    assert fight.expire_conditions(held, ON_A_GM_TURN) == []
+    assert fight.fear == 1
+
+
+def test_the_stance_is_taken_once():
+    holder, field, fight = _holding(6)
+
+    with _bunched():
+        assert hold_the_line(holder, fight) is True
+        assert hold_the_line(holder, fight) is False
+    assert fight.token_count(holder, LINE_HELD) == 1
+
+
+def test_the_line_declines_without_a_hope():
+    holder, field, fight = _holding(6, hope_marked=0)
+
+    with _bunched():
+        assert hold_the_line(holder, fight) is False
+    assert not any(fight.has_condition(a, RESTRAINED) for a in field)
+
+
+def test_the_line_declines_when_everything_it_reaches_is_already_held():
+    holder, field, fight = _holding(1)
+    fight.apply_condition(field[0], Condition(name=RESTRAINED))
+
+    with _bunched():
+        assert hold_the_line(holder, fight) is False
+    assert holder.hope_marked == 6
+
+
+# --- Lead by Example ---------------------------------------------------------
+
+
+def _leading(**overrides):
+    holder = _make_level_8_pc(
+        level=9, name="Leader", domain_cards_loadout=[LEAD_BY_EXAMPLE], **overrides
+    )
+    ally = _make_level_8_pc(level=9, name="Ally")
+    target = _make_adversary()
+    return holder, ally, target, _rested_state([holder, ally], [target])
+
+
+def _a_hit() -> AttackResult:
+    return AttackResult(
+        attack_roll=_roll(9, 4, 5),
+        damage_roll=DamageRollResult(
+            dice_groups=[DiceGroup(count=1, sides=4)],
+            die_results=[[4]],
+            modifier=0,
+        ),
+        hp_marked=1,
+    )
+
+
+def test_the_encouragement_costs_a_stress_and_marks_the_adversary():
+    holder, ally, target, fight = _leading()
+
+    lead_by_example(holder, target, _a_hit(), fight)
+
+    assert holder.stress_marked == 1
+    assert fight.token_count(target, LEAD_BY_EXAMPLE_MARK) == 1
+
+
+def test_the_next_ally_to_hit_clears_a_stress():
+    holder, ally, target, fight = _leading()
+    ally.mark_stress(2)
+    lead_by_example(holder, target, _a_hit(), fight)
+
+    lead_by_example_lifts(holder, ally, target, _a_hit(), fight)
+
+    assert ally.stress_marked == 1
+    assert fight.token_count(target, LEAD_BY_EXAMPLE_MARK) == 0
+
+
+def test_an_ally_with_nothing_to_clear_gains_a_hope():
+    """The general rule set for Gore and Glory, read here for the second time."""
+    holder, ally, target, fight = _leading()
+    ally.spend_hope(6)
+    lead_by_example(holder, target, _a_hit(), fight)
+
+    lead_by_example_lifts(holder, ally, target, _a_hit(), fight)
+
+    assert ally.hope_marked == 1
+
+
+def test_the_holder_never_collects_their_own_encouragement():
+    holder, ally, target, fight = _leading()
+    holder.mark_stress(1)
+    lead_by_example(holder, target, _a_hit(), fight)
+
+    lead_by_example_lifts(holder, holder, target, _a_hit(), fight)
+
+    assert holder.stress_marked == 2  # the one the card cost, and no clear
+    assert fight.token_count(target, LEAD_BY_EXAMPLE_MARK) == 1
+
+
+def test_the_encouragement_pays_out_once():
+    holder, ally, target, fight = _leading()
+    ally.mark_stress(2)
+    lead_by_example(holder, target, _a_hit(), fight)
+
+    lead_by_example_lifts(holder, ally, target, _a_hit(), fight)
+    lead_by_example_lifts(holder, ally, target, _a_hit(), fight)
+
+    assert ally.stress_marked == 1
+
+
+def test_it_declines_against_a_target_the_hit_just_defeated():
+    holder, ally, target, fight = _leading()
+    target.hp_marked = target.hp_max
+
+    lead_by_example(holder, target, _a_hit(), fight)
+
+    assert holder.stress_marked == 0
+
+
 # --- Assessed, but used between fights ---------------------------------------
 
 
@@ -915,5 +1091,13 @@ def test_out_of_combat_content_is_neither_dismissed_nor_missing():
 
 
 def test_the_later_cards_are_modelled():
-    for card in (INEVITABLE, SHRUG_IT_OFF, VALOR_TOUCHED, FULL_SURGE, GROUND_POUND):
+    for card in (
+        INEVITABLE,
+        SHRUG_IT_OFF,
+        VALOR_TOUCHED,
+        FULL_SURGE,
+        GROUND_POUND,
+        HOLD_THE_LINE,
+        LEAD_BY_EXAMPLE,
+    ):
         assert assess(card).status is Status.MODELLED

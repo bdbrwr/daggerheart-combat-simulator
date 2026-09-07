@@ -20,11 +20,22 @@ from combat.rest import Rest
 from combat.state import FightState
 from content import Status, assess, total_spellcast_bonus
 from content.conditions import ON_A_GM_TURN, VULNERABLE, Condition
+from content.damage_types import DamageType
 from dice.common import AdvantageState
 from dice.damage import DiceGroup
 from dice.duality import DualityRollResult
 from domain_cards.codex import (
     BOOK_OF_RONIN,
+    BOOK_OF_YARROW,
+    MAGIC_IMMUNE,
+    MAGIC_IMMUNITY_HOPE,
+    TRANSCENDENT_UNION,
+    TRANSCENDENT_UNION_HOPE,
+    UNION_STANDING,
+    magic_immunity,
+    magic_immunity_holds,
+    transcendent_union,
+    transcendent_union_bears,
     CODEX_TOUCHED,
     CODEX_TOUCHED_STRESS_CEILING,
     DISINTEGRATION_CEILING,
@@ -133,6 +144,19 @@ def _failing(difficulty: int):
         "content.spellcast.roll_duality",
         return_value=_roll(2, 3, difficulty=difficulty),
     )
+
+
+def _the_whole_field():
+    """Pin the Far band open, so a case is about the card and not the spread.
+
+    Far reaches everyone, **or one short a quarter of the time** - and a draw
+    below that share is the short case, so this passes 0.99 rather than the 0.0
+    the `_bunched` helpers elsewhere use for bands whose best case is the low
+    draw. Without it a two-adversary case silently becomes a one-adversary case
+    a quarter of the time, and `targets_in_area` drops the *second* of the two,
+    since equally wounded adversaries keep their list order.
+    """
+    return patch("content.aoe.random.random", return_value=0.99)
 
 
 # --- Codex-Touched -----------------------------------------------------------
@@ -257,7 +281,7 @@ def _disintegrating(*adversaries, **overrides):
 def test_the_wave_unmakes_one_adversary_per_stress():
     caster, field, fight = _disintegrating((5, 10), (5, 10), (5, 10))
 
-    with _landing(DISINTEGRATION_DIFFICULTY):
+    with _the_whole_field(), _landing(DISINTEGRATION_DIFFICULTY):
         result = disintegration_wave(caster, field[0], fight)
 
     assert result is not None
@@ -269,7 +293,7 @@ def test_the_wave_stops_where_the_shared_stress_rule_stops():
     """Six eligible, six slots - the last is held back while the caster is healthy."""
     caster, field, fight = _disintegrating(*[(5, 10)] * 6)
 
-    with _landing(DISINTEGRATION_DIFFICULTY):
+    with _the_whole_field(), _landing(DISINTEGRATION_DIFFICULTY):
         disintegration_wave(caster, field[0], fight)
 
     assert sum(1 for adversary in field if adversary.is_defeated) == 5
@@ -284,7 +308,7 @@ def test_the_wave_takes_the_toughest_first():
     """
     caster, field, fight = _disintegrating((4, 10), (12, 10), stress_marked=4)
 
-    with _landing(DISINTEGRATION_DIFFICULTY):
+    with _the_whole_field(), _landing(DISINTEGRATION_DIFFICULTY):
         disintegration_wave(caster, field[0], fight)
 
     # The one Stress goes on the adversary damage would take longest to remove.
@@ -298,7 +322,7 @@ def test_an_adversary_above_the_ceiling_is_not_on_the_list():
         (5, DISINTEGRATION_CEILING), (5, DISINTEGRATION_CEILING + 1)
     )
 
-    with _landing(DISINTEGRATION_DIFFICULTY):
+    with _the_whole_field(), _landing(DISINTEGRATION_DIFFICULTY):
         disintegration_wave(caster, field[0], fight)
 
     assert field[0].is_defeated is True
@@ -338,6 +362,136 @@ def test_the_wave_declines_when_no_stress_can_be_paid():
     assert fight.can_use_once_per_rest(caster, DISINTEGRATION_WAVE, long=True) is True
 
 
+# --- Magic Immunity (Book of Yarrow) -----------------------------------------
+
+
+def _immunising(kind: str = "magic", **overrides):
+    caster = _make_level_7_pc(
+        level=10, domain_cards_loadout=[BOOK_OF_YARROW], **overrides
+    )
+    adversary = _make_adversary(damage_type=kind)
+    return caster, adversary, _rested_state([caster], [adversary])
+
+
+def test_immunity_is_bought_against_a_field_that_deals_magic():
+    caster, _, fight = _immunising("magic")
+
+    assert magic_immunity(caster, fight) is True
+    assert caster.hope_marked == 6 - MAGIC_IMMUNITY_HOPE
+    assert fight.token_count(caster, MAGIC_IMMUNE) == 1
+
+
+def test_immunity_is_declined_against_a_field_that_deals_physical():
+    """Five Hope against the wrong field would buy nothing at all."""
+    caster, _, fight = _immunising("physical")
+
+    assert magic_immunity(caster, fight) is False
+    assert caster.hope_marked == 6
+
+
+def test_immunity_declines_without_the_five_hope():
+    caster, _, fight = _immunising("magic", hope_marked=4)
+
+    assert magic_immunity(caster, fight) is False
+
+
+def test_the_whole_magic_hit_is_returned():
+    """Immunity rather than resistance, so nothing of it lands."""
+    caster, _, fight = _immunising("magic")
+    magic_immunity(caster, fight)
+
+    assert magic_immunity_holds(caster, caster, 12, fight, DamageType.MAGIC) == 12
+
+
+def test_physical_damage_still_lands_on_an_immune_caster():
+    caster, _, fight = _immunising("magic")
+    magic_immunity(caster, fight)
+
+    assert magic_immunity_holds(caster, caster, 12, fight, DamageType.PHYSICAL) == 0
+
+
+def test_the_immunity_never_answers_for_an_ally():
+    caster, _, fight = _immunising("magic")
+    ally = _make_level_7_pc(level=10, name="Ally")
+    magic_immunity(caster, fight)
+
+    assert magic_immunity_holds(caster, ally, 12, fight, DamageType.MAGIC) == 0
+
+
+# --- Transcendent Union ------------------------------------------------------
+
+
+def _uniting(*unmarked: int, **overrides):
+    """A caster plus one PC per entry, each already down to that many unmarked HP."""
+    caster = _make_level_7_pc(
+        level=10, name="Wizard", domain_cards_loadout=[TRANSCENDENT_UNION], **overrides
+    )
+    party = [caster]
+    for index, left in enumerate(unmarked):
+        pc = _make_level_7_pc(level=10, name=f"Ally {index}")
+        pc.mark_hp(pc.hp_max - left)
+        party.append(pc)
+    return caster, party, _rested_state(party, [_make_adversary()])
+
+
+def test_the_union_costs_five_hope_and_holds():
+    caster, party, fight = _uniting(8)
+
+    assert transcendent_union(caster, fight) is True
+    assert caster.hope_marked == 6 - TRANSCENDENT_UNION_HOPE
+    assert fight.token_count(caster, UNION_STANDING) == 1
+
+
+def test_the_union_declines_for_a_lone_pc():
+    """"On two or more willing creatures" - a union of one is nobody to share with."""
+    caster, party, fight = _uniting()
+
+    assert transcendent_union(caster, fight) is False
+
+
+def test_the_union_declines_without_the_five_hope():
+    caster, party, fight = _uniting(8, hope_marked=4)
+
+    assert transcendent_union(caster, fight) is False
+
+
+def test_the_wound_goes_to_whoever_can_best_carry_it():
+    caster, party, fight = _uniting(2)
+    transcendent_union(caster, fight)
+    hurt = party[1]
+
+    assert transcendent_union_bears(caster, hurt, 2, fight) is caster
+
+
+def test_the_bearer_is_offered_the_same_choice_and_picks_itself():
+    """What makes the transfer terminate rather than bouncing back and forth."""
+    caster, party, fight = _uniting(2)
+    transcendent_union(caster, fight)
+
+    assert transcendent_union_bears(caster, caster, 2, fight) is None
+
+
+def test_the_union_reaches_the_real_marking_path():
+    caster, party, fight = _uniting(2)
+    transcendent_union(caster, fight)
+    hurt = party[1]
+
+    hurt.mark_hp_and_check_death(2, fight)
+
+    assert hurt.hp_marked == hurt.hp_max - 2  # unchanged
+    assert caster.hp_marked == 2
+
+
+def test_nothing_moves_without_a_union():
+    caster, party, fight = _uniting(2)
+    hurt = party[1]
+
+    hurt.mark_hp_and_check_death(2, fight)
+
+    assert hurt.hp_marked == hurt.hp_max
+    assert caster.hp_marked == 0
+
+
 # --- The books that reach no fight -------------------------------------------
 
 
@@ -367,6 +521,13 @@ def test_the_level_nine_pair_are_assessed():
     assert assess(DISINTEGRATION_WAVE).status is Status.MODELLED
     assert assess("Transform").status is Status.NO_COMBAT_EFFECT
     assert assess("Transform").reason
+
+
+def test_the_level_ten_pair_are_assessed():
+    assert assess(BOOK_OF_YARROW).status is Status.MODELLED
+    assert assess(TRANSCENDENT_UNION).status is Status.MODELLED
+    assert assess("Timejammer").status is Status.NO_COMBAT_EFFECT
+    assert assess("Timejammer").reason
 
 
 def test_the_book_declares_the_spell_it_does_not_run():

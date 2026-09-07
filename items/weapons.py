@@ -32,6 +32,7 @@ from combat.results import AttackResult
 from content import (
     DamagePool,
     adjust_damage_pool,
+    dealt_damage_floor,
     dealt_damage_scaling,
     dealt_damage_type,
     remake_action_roll,
@@ -317,8 +318,20 @@ def attack_with(
     # "this attack deals magic damage regardless of the weapon's damage type".
     # Asked generically, and the weapon's own type is what comes back when nothing
     # answers.
+    # And content the attacker carries that puts a **floor** under what this blow
+    # is worth - Blade's Onslaught, which never deals beneath the target's Major
+    # threshold. The one direction the damage hooks did not reach: everything else
+    # either adds to the pool before it is thrown or belongs to whoever is taking
+    # the hit. Asked after the dice are read, so the floor is measured against what
+    # was actually rolled, and applied to the number dealt rather than written back
+    # into the roll - see `damage_floor`. Nothing here knows what any of it is.
+    # Compared only when something actually answers, so a swing with no floor on
+    # it hands `take_damage` exactly the object it always did.
+    floor = dealt_damage_floor(attacker, target, fight)
+    dealt = max(damage_roll.total, floor) if floor else damage_roll.total
+
     marked = target.take_damage(
-        damage_roll.total,
+        dealt,
         fight,
         damage_type=dealt_damage_type(attacker, target, weapon.damage_type, fight),
     )
@@ -331,7 +344,7 @@ def attack_with(
     #
     # Both figures the hit produced go through: the damage rolled, and the HP it
     # finally cost. The SRD keys such features on either - see `on_attacked`.
-    apply_on_attacked(target, attacker, weapon, damage_roll.total, marked, fight)
+    apply_on_attacked(target, attacker, weapon, dealt, marked, fight)
 
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked

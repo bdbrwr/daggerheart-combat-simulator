@@ -45,17 +45,22 @@ from domain_cards.bone import (
     BREAKING_BLOW_CHARGE,
     CRUEL_PRECISION,
     FEROCITY_BONUS,
+    DEATHRUN,
+    DEATHRUN_HOPE,
     ON_THE_BRINK,
     SPLINTERING_STRIKE,
+    SWIFT_STEP,
     STRATEGIC_OPENED,
     STRATEGIC_TOKENS,
     _finishing_share,
     _splintered,
+    deathrun,
     ferocity,
     ferocity_evades,
     on_the_brink,
     splintering_strike,
     strategic_approach,
+    swift_step,
 )
 
 FEROCITY = "Ferocity"
@@ -780,6 +785,115 @@ def test_a_roll_that_beats_nobody_keeps_the_per_rest_use():
     assert fight.can_use_once_per_rest(holder, SPLINTERING_STRIKE, long=True) is True
 
 
+# --- Deathrun ----------------------------------------------------------------
+
+
+def _running(*hit_points: int, **overrides):
+    holder = _make_level_8_pc(level=10, domain_cards_loadout=[DEATHRUN], **overrides)
+    field = [
+        _make_adversary(
+            name=f"Dummy {index}",
+            hp_max=points,
+            major_threshold=10,
+            severe_threshold=20,
+        )
+        for index, points in enumerate(hit_points)
+    ]
+    return holder, field, _rested_state([holder], field)
+
+
+def _a_fixed_pool():
+    """26 across four dice - so the bundles are 26 and then 24, 18 and 12."""
+    return patch(
+        "domain_cards.bone.roll_damage",
+        return_value=DamageRollResult(
+            dice_groups=[DiceGroup(count=4, sides=8)],
+            die_results=[[8, 8, 8, 2]],
+            modifier=0,
+        ),
+    )
+
+
+def test_the_run_spends_three_hope_and_deals_down_the_line():
+    holder, field, fight = _running(3, 1)
+
+    with _bunched(), _a_fixed_pool():
+        result = deathrun(holder, field[0], fight)
+
+    assert result is not None
+    assert holder.hope_marked == 6 - DEATHRUN_HOPE
+    assert all(adversary.is_defeated for adversary in field)
+
+
+def test_the_first_bundle_goes_where_it_finishes_the_most():
+    """26 marks 3 Hit Points, so it is spent on the target that needs all three."""
+    holder, field, fight = _running(1, 3)
+
+    with _bunched(), _a_fixed_pool():
+        deathrun(holder, field[0], fight)
+
+    assert field[1].hp_marked == 3
+    assert field[0].is_defeated is True
+
+
+def test_no_adversary_is_dealt_to_twice():
+    """"You can't target the same adversary more than once per attack."
+
+    Both are far too big to finish, so nothing about the order hides a second
+    helping: one bundle each is three marked Hit Points each.
+    """
+    holder, field, fight = _running(50, 50)
+
+    with _bunched(), _a_fixed_pool():
+        deathrun(holder, field[0], fight)
+
+    assert [adversary.hp_marked for adversary in field] == [3, 3]
+
+
+def test_the_run_declines_without_the_three_hope():
+    holder, field, fight = _running(3, 1, hope_marked=2)
+
+    with _bunched():
+        assert deathrun(holder, field[0], fight) is None
+
+
+# --- Swift Step --------------------------------------------------------------
+
+
+def _stepping(**overrides):
+    holder = _make_level_8_pc(level=10, domain_cards_loadout=[SWIFT_STEP], **overrides)
+    attacker = _make_adversary()
+    return holder, attacker, _rested_state([holder], [attacker])
+
+
+def test_a_failed_attack_clears_a_stress():
+    holder, attacker, fight = _stepping(stress_marked=2)
+
+    swift_step(holder, attacker, _roll(2, 3, 20), fight)
+
+    assert holder.stress_marked == 1
+
+
+def test_it_hands_over_a_hope_when_there_is_no_stress_to_clear():
+    """The card prints the fallback the general rule already states."""
+    holder, attacker, fight = _stepping(hope_marked=2)
+
+    swift_step(holder, attacker, _roll(2, 3, 20), fight)
+
+    assert holder.hope_marked == 3
+    assert holder.stress_marked == 0
+
+
+def test_it_reaches_the_missed_attack_trigger_through_dispatch():
+    from content import apply_attack_missed
+
+    holder, attacker, fight = _stepping(stress_marked=2)
+
+    apply_attack_missed(holder, attacker, _roll(2, 3, 20), fight)
+
+    assert holder.stress_marked == 1
+
+
 # --- Assessed and dismissed --------------------------------------------------
 
 
@@ -803,4 +917,9 @@ def test_breaking_blow_is_modelled_and_wrangle_is_dismissed():
 
 def test_the_level_nine_pair_are_modelled():
     for card in (ON_THE_BRINK, SPLINTERING_STRIKE):
+        assert assess(card).status is Status.MODELLED
+
+
+def test_the_level_ten_pair_are_modelled():
+    for card in (DEATHRUN, SWIFT_STEP):
         assert assess(card).status is Status.MODELLED

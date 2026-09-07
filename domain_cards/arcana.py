@@ -32,6 +32,11 @@ away costs it a layer.
 Level 9's **Earthquake** is the first content anywhere to reach **Very Far**, and
 the band exists because of it - see `content/aoe.py`, where it is the one band
 with no spread roll on it.
+
+Level 10 is the domain at its most expensive. **Adjust Reality** is the widest
+thing any party card watches - every action roll anybody makes - and the priciest
+at 5 Hope. **Falling Sky** is the first card whose damage is bought by the
+handful: each Stress is a whole 1d20+2, so a full track empties into one cast.
 """
 
 import random
@@ -1499,6 +1504,160 @@ def earthquake(caster: Holder, target, fight: Fight) -> AttackResult | None:
             )
             fight.note(f"{adversary.name} is thrown down and left Vulnerable")
 
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
+# --- Adjust Reality --------------------------------------------------------------
+
+ADJUST_REALITY = "Adjust Reality"
+
+ADJUST_REALITY_HOPE = 5
+
+
+@reroll(
+    ADJUST_REALITY,
+    unmodelled=[
+        "'change the numerical result of that roll' is applied as a **modifier** "
+        "rather than by rewriting the dice. The two are identical for the total, "
+        "the success and the outcome, and the card's own constraint - 'plausible "
+        "within the range of the dice' - is checked separately against what the "
+        "dice could have shown. Rewriting the faces would let a lift land the two "
+        "dice equal and manufacture a critical, which is a bigger card than this",
+        "An advantage or help die is not counted toward what the roll could have "
+        "reached, so the ceiling is slightly conservative and the card declines on "
+        "a handful of rolls it could just have rescued",
+    ],
+)
+def adjust_reality(holder: Holder, roller: Holder, roll, remake, fight: Fight = None):
+    """Adjust Reality (Arcana, level 10). Five Hope, and the roll simply went better.
+
+    SRD: "After you or a willing ally make any roll, you can spend 5 Hope to change
+    the numerical result of that roll to a result of your choice instead. The result
+    must be plausible within the range of the dice."
+
+    **The most expensive thing any party card does**, and the widest: it watches
+    every action roll anybody in the party makes, which is why it is on the
+    party-wide `reroll` hook without the `holder is roller` scoping every other
+    registrant there carries.
+
+    SIMULATION RULE - policy, ruled. **A failed roll, lifted to exactly what it
+    needed.** Fane of the Wilds' rule at a much larger price: nothing is spent on a
+    roll that already succeeded, nothing on one the dice could never have reached,
+    and a rescue goes no further than the Difficulty. Setting it to a critical - "a
+    result of your choice" read at its strongest - was offered and declined.
+
+    "Plausible within the range of the dice" is what the ceiling below checks: a
+    roll whose two dice and modifier could not have reached the Difficulty is left
+    alone, which is the one thing stopping this card from making any roll succeed.
+    """
+    if fight is None or roll is None:
+        return None
+    if roll.difficulty is None or roll.is_success:
+        return None
+
+    ceiling = roll.hope_die_sides + roll.fear_die_sides + roll.modifier
+    if roll.difficulty > ceiling:
+        return None
+
+    short = roll.difficulty - roll.total
+    if short <= 0 or not holder.can_spend_hope(ADJUST_REALITY_HOPE):
+        return None
+
+    holder.spend_hope(ADJUST_REALITY_HOPE)
+    lifted = replace(roll, modifier=roll.modifier + short)
+    fight.note(
+        f"{holder.name} spends {ADJUST_REALITY_HOPE} Hope, and {roller.name}'s roll "
+        f"was always going to land ({lifted})"
+    )
+    return lifted
+
+
+# --- Falling Sky -----------------------------------------------------------------
+
+FALLING_SKY = "Falling Sky"
+
+FALLING_SKY_DIE = 20
+FALLING_SKY_MODIFIER = 2
+
+# The card costs Stress beyond the roll, so it waits for a second target - the Rain
+# of Blades and Chain Lightning gate.
+FALLING_SKY_WORTH_IT = 2
+
+
+@action(
+    FALLING_SKY,
+    unmodelled=[
+        "'against all adversaries within Far range' - no positions are tracked, so "
+        "the area rule in SIMULATION-RULES.md decides how many the shards catch",
+    ],
+)
+def falling_sky(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Falling Sky (Arcana, level 10). Stress, by the handful, straight into damage.
+
+    SRD: "Make a Spellcast Roll against all adversaries within Far range. Mark any
+    number of Stress to make shards of arcana rain down from above. Targets you
+    succeed against take 1d20+2 magic damage for each Stress marked."
+
+    One roll against the whole area, each adversary checked against its own
+    Difficulty - the Wild Flame shape.
+
+    **Each Stress is a whole 1d20+2**, so the pool is `n` d20s and a modifier of
+    `2n`, and the damage is rolled once and dealt to everything the roll beat -
+    the standing reading of one roll landing on several targets.
+
+    SIMULATION RULE - policy. **As many Stress as the shared last-slot rule
+    allows**, which is the standing answer for a Stress-priced "any number" -
+    Rage Up's and Disintegration Wave's shape, asked once per shard. So a caster
+    with a full track empties it down to one spare slot on a single cast, which is
+    what this card is for and worth knowing before reading its numbers.
+
+    Declines below `FALLING_SKY_WORTH_IT` in the band, since it costs a resource
+    beyond the roll - the Rain of Blades side of the split rather than the
+    Preservation Blast side. Both gates are checked before the roll and paid after
+    it, so declining costs nothing.
+    """
+    if fight is None:
+        return None
+
+    area = targets_in_area(Range.FAR, fight.living_adversaries)
+    if len(area) < FALLING_SKY_WORTH_IT:
+        return None
+    if not caster.will_spend_stress(1):
+        return None
+
+    attack_roll = spellcast(caster, target, fight, difficulty=area_difficulty(area))
+    if attack_roll is None:
+        return None
+
+    beaten = targets_beaten(attack_roll, area)
+    if not beaten:
+        fight.note(f"{caster.name}'s shards find nobody ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    shards = 0
+    while caster.will_spend_stress(1):
+        caster.spend_stress(1)
+        shards += 1
+
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=shards, sides=FALLING_SKY_DIE)]
+        + total_extra_damage(caster, target, attack_roll, fight),
+        modifier=FALLING_SKY_MODIFIER * shards,
+        is_critical=attack_roll.is_critical,
+    )
+
+    marked = 0
+    for adversary in beaten:
+        marked += adversary.take_damage(
+            damage_roll.total, fight, damage_type=DamageType.MAGIC
+        )
+
+    fight.note(
+        f"{caster.name} marks {shards} Stress and brings the sky down on "
+        f"{len(beaten)} for {damage_roll.total}"
+    )
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
     )

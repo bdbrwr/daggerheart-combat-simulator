@@ -42,6 +42,12 @@ several people's problem: **On the Brink** is the only wholly passive card Bone
 prints, and **Splintering Strike** is the first anywhere that rolls one pool of
 damage and lets the player *choose* how it lands - which is what made the
 allocation ruling in SIMULATION-RULES.md necessary.
+
+Level 10 asks that question once more and answers it differently. **Deathrun**'s
+pool does not divide, it *decays* - one roll dealt in full to the first target and
+a die lighter for each after - so the choice is an order rather than a split.
+**Swift Step** is the fourth card on the missed-attack trigger and the only one
+that costs nothing at all.
 """
 
 import random
@@ -1194,6 +1200,218 @@ def _splintered(pool: int, beaten: list) -> list[tuple]:
         for adversary in beaten
         if shares[id(adversary)] > 0
     ]
+
+
+# --- Deathrun --------------------------------------------------------------------
+
+DEATHRUN = "Deathrun"
+
+DEATHRUN_HOPE = 3
+
+# "Roll your weapon damage with a +1 bonus to your Proficiency" - one more of the
+# weapon's own dice, and the pool every later target is carved out of.
+DEATHRUN_PROFICIENCY = 1
+
+
+def _marks(adversary, damage: int) -> int:
+    """How many Hit Points `damage` would mark on `adversary`.
+
+    The threshold bands, read forwards. Deathrun needs it because the *order* it
+    chooses turns on which of its shrinking bundles would still finish somebody,
+    and that cannot be asked without knowing what a bundle is worth.
+    """
+    if damage <= 0:
+        return 0
+    if damage >= adversary.severe_threshold:
+        return 3
+    if damage >= adversary.major_threshold:
+        return 2
+    return 1
+
+
+@action(
+    DEATHRUN,
+    unmodelled=[
+        "'run in a straight path through the battlefield to a point within Far "
+        "range' - the path is the whole shape of the card and no positions are "
+        "tracked, so the area rule stands in for who is standing along it. A line "
+        "is not a band, and nothing here can express one",
+        "The roll is made through `content/spellcast.py` on the weapon's trait, "
+        "which carries the `spellcast_bonus` overreach Reaper's Strike and "
+        "Splintering Strike both declare",
+        "Which die is removed for each subsequent target is not stated on the "
+        "card. The **lowest** is taken each time, which keeps every bundle as "
+        "large as it can be - the reading that suits the run rather than one the "
+        "page settles",
+    ],
+)
+def deathrun(holder: Holder, target, fight: Fight) -> AttackResult | None:
+    """Deathrun (Bone, level 10). One pool, carved down as you go past.
+
+    SRD: "Spend 3 Hope to run in a straight path through the battlefield to a point
+    within Far range, making an attack against all adversaries within your weapon's
+    range along that path. Choose the order in which you deal damage to the targets
+    you succeeded against. For the first, roll your weapon damage with a +1 bonus to
+    your Proficiency. Then remove a die from your damage roll and deal the remaining
+    damage to the next target. Continue to remove a die for each subsequent target
+    until you have no more damage dice or adversaries. You can't target the same
+    adversary more than once per attack."
+
+    One roll re-checked against each target's own Difficulty, over the band the
+    **weapon** prints - Reaper's Strike's and Splintering Strike's shape. What is
+    new is that the damage does not divide, it *decays*: one pool, dealt in full to
+    the first and one die lighter for each after, which is a different question
+    from Splintering Strike's sharing-out.
+
+    The pool is built the way `items/weapons.py` builds a swing's, at Proficiency +
+    1 - so a Greatsword's Massive discards its lowest here exactly as it would on a
+    swing. The modifier and any critical bonus ride **every** bundle, since what the
+    card removes is a die.
+
+    SIMULATION RULE - policy, ruled. **The order defeats as many as possible.**
+    Each bundle, largest first, goes to the biggest adversary it would still
+    finish, and to the toughest remaining when it would finish nobody - the user's
+    allocation rule from Reaper's Strike and Splintering Strike, applied to a
+    sequence rather than to a split. It is automated scoring, which that ruling
+    settled. Ties are drawn at random.
+
+    The run stops when it runs out of dice or of adversaries, which is the card's
+    own limit, and no adversary is dealt to twice.
+    """
+    if fight is None or holder.proficiency <= 0:
+        return None
+
+    carried = getattr(holder, "primary_weapon", "")
+    if not carried:
+        return None
+
+    weapon = find_weapon(carried)
+    if weapon.trait not in holder.traits:
+        return None
+    if not holder.can_spend_hope(DEATHRUN_HOPE):
+        return None
+
+    area = targets_in_area(band_named(weapon.range), fight.living_adversaries)
+    if not area:
+        return None
+
+    holder.spend_hope(DEATHRUN_HOPE)
+    attack_roll = spellcast(
+        holder, target, fight, trait=weapon.trait, difficulty=area_difficulty(area)
+    )
+    if attack_roll is None:
+        return None
+
+    beaten = targets_beaten(attack_roll, area)
+    if not beaten:
+        fight.note(f"{holder.name}'s deathrun finds nobody ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    pool = adjust_damage_pool(
+        holder,
+        weapon,
+        DamagePool(
+            dice_groups=[
+                DiceGroup(
+                    count=holder.proficiency + DEATHRUN_PROFICIENCY,
+                    sides=weapon.damage_die,
+                )
+            ],
+            drop_lowest=0,
+            modifier=weapon.damage_modifier,
+        ),
+        fight,
+        roll=attack_roll,
+    )
+    pool = adjust_damage_pool(
+        holder, weapon, pool, fight, names=weapon.named_features, roll=attack_roll
+    )
+    damage_roll = roll_damage(
+        dice_groups=pool.dice_groups,
+        modifier=pool.modifier,
+        is_critical=attack_roll.is_critical,
+        drop_lowest=pool.drop_lowest,
+    )
+
+    fight.note(
+        f"{holder.name} runs the line, {damage_roll.total} into the first of "
+        f"{len(beaten)}"
+    )
+
+    faces = sorted(face for group in damage_roll.die_results for face in group)
+    marked = 0
+    # Shuffled first, so two adversaries the order cannot separate are not
+    # separated by the order the encounter spawned them in.
+    remaining = list(beaten)
+    random.shuffle(remaining)
+
+    for removed in range(min(len(remaining), len(faces))):
+        bundle = max(damage_roll.total - sum(faces[:removed]), 0)
+        finishable = [
+            adversary
+            for adversary in remaining
+            if _marks(adversary, bundle) >= adversary.hp_unmarked
+        ]
+        among = finishable or remaining
+        struck = max(among, key=lambda adversary: adversary.hp_unmarked)
+        # By identity: `Adversary` is a plain dataclass, so two spawned copies of
+        # one stat block compare equal and a value-based removal would drop both.
+        remaining = [
+            adversary for adversary in remaining if adversary is not struck
+        ]
+
+        marked += struck.take_damage(
+            bundle,
+            fight,
+            damage_type=dealt_damage_type(holder, struck, weapon.damage_type, fight),
+        )
+        fight.note(f"{struck.name} takes {bundle} as the run goes past")
+
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
+# --- Swift Step ------------------------------------------------------------------
+
+SWIFT_STEP = "Swift Step"
+
+
+@attack_missed(
+    SWIFT_STEP,
+    unmodelled=[
+        "An adversary's **area** attack. Only the PC the attack was aimed at is "
+        "announced as having been missed, so a swept attack that failed against "
+        "several lifts at most one of them. Redirect, Rapid Riposte and Vanishing "
+        "Dodge all declare the same gap",
+    ],
+)
+def swift_step(holder: Holder, attacker, roll, fight: Fight = None) -> None:
+    """Swift Step (Bone, level 10). Every miss is worth something.
+
+    SRD: "When an attack made against you fails, clear a Stress. If you can't clear
+    a Stress, gain a Hope."
+
+    **The fourth card on the missed-attack trigger**, after Redirect, Rapid Riposte
+    and Vanishing Dodge - and the only one that costs nothing at all. No Stress, no
+    Hope, no per-rest use and no range clause, so it fires on every failed attack
+    for the whole fight.
+
+    SIMULATION RULE - policy, ruled. Nothing to rule: the card prints the "clear a
+    Stress, otherwise gain a Hope" choice **as a fallback rather than a choice**,
+    which is the general rule the user set for Gore and Glory arriving already
+    written on the page. `gain_hope` clamps, so a holder at their Hope cap with
+    nothing marked simply gains nothing.
+    """
+    if fight is None:
+        return
+
+    if holder.stress_marked > 0:
+        holder.clear_stress(1)
+        fight.note(f"{holder.name} steps aside, clearing a Stress")
+    else:
+        holder.gain_hope(1)
+        fight.note(f"{holder.name} steps aside, gaining a Hope")
 
 
 # --- Assessed and dismissed --------------------------------------------------

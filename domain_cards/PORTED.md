@@ -338,7 +338,7 @@ Healing Hands' Stress option. The two Grimoires carry three spells each;
 Telepathy inside the Book of Illiat is separately dismissed as having no combat
 effect.
 
-## Level 9 — in progress
+## Level 9
 
 | Domain | Level 9 |
 |---|---|
@@ -348,13 +348,21 @@ effect.
 | **Codex** | ✅ Book of Ronin · ✅ Disintegration Wave |
 | **Grace** | 🚫 Copycat · 🚫 Master of the Craft |
 | **Midnight** | ✅ Night Terror · ✅ Twilight Toll |
-| **Sage** | ⬜ · ⬜ |
-| **Splendor** | ⬜ · ⬜ |
-| **Valor** | ⬜ · ⬜ |
+| **Sage** | ✅ Fane of the Wilds · 🚫 Plant Dominion |
+| **Splendor** | ✅ Overwhelming Aura · ✅ Salvation Beam |
+| **Valor** | ✅ Hold the Line · ✅ Lead by Example |
 
-**9 modelled, 3 no effect, 6 outstanding.** Batches 27 (Arcana, Blade, Bone) and
-28 (Codex, Grace, Midnight) cover twelve of the eighteen; Sage, Splendor and Valor
-are what is left of the level.
+**14 modelled, 4 no effect, 0 outstanding.**
+
+**Levels 1 to 9 are complete across all nine domains** - 171 cards. Batches 27
+(Arcana, Blade, Bone), 28 (Codex, Grace, Midnight) and 29 (Sage, Splendor, Valor)
+cover the eighteen. What is left of the SRD is **level 10**, eighteen cards.
+
+**Level 9 cost three new hooks**, which is more than any level since 7, and all
+three fill corners of the same table: `Range.VERY_FAR` (the area rule's outermost
+band), `on_effect_landed` (an action roll that succeeded and dealt no damage) and
+`on_targeted` (an adversary aiming an attack at a PC, hit or miss). Between them
+the incoming-attack table now has no empty corner left.
 
 **Grace is the fourth domain to have a whole level dismissed**, after Grace's own
 level 4, Midnight's level 6 and Sage's level 6 (which went out of combat rather
@@ -393,6 +401,40 @@ only thing in the project that **kills without dealing damage**. Eternal
 Enervation is the first **permanent** condition anybody applies. And Night Terror
 is the first card whose payload is the **GM's Fear pool** - it is worth most
 exactly when the GM is richest, which is a shape nothing else has.
+
+### Batch 29 — Sage, Splendor and Valor at level 9 (6 cards)
+
+**Verified against the printed page** (SRD pp. 131, 133 and 135). This closes the
+level.
+
+| Card | Disposition |
+|---|---|
+| **Fane of the Wilds** (Sg 9) | Modelled, partial. Tokens equal to the Sage cards in loadout and vault, spent **after** a Spellcast Roll to buy a failure back a point at a time |
+| **Plant Dominion** (Sg 9) | No combat effect - terrain, the Manifest Wall ruling |
+| **Overwhelming Aura** (Sp 9) | Modelled, partial. An adversary marks a Stress for aiming at the caster, hit or miss; the Presence clause is a declared gap |
+| **Salvation Beam** (Sp 9) | Modelled. Stress into other people's Hit Points, worst-off first |
+| **Hold the Line** (Vl 9) | Modelled, partial. A Hope Restrains everything the Very Close band reaches, at **2 Fear each** to clear |
+| **Lead by Example** (Vl 9) | Modelled. A Stress marks an adversary; the next ally to hit it clears a Stress or gains a Hope |
+
+One piece of shared machinery, and one thing that is not machinery at all:
+
+- **`on_targeted`** - content answering an adversary aiming an attack at its
+  holder, asked once per attack **whether it hit or missed**. The last empty
+  corner of the incoming-attack table: `before_attacked` and `on_attacked` are
+  asked from `items/weapons.py`, which only ever sees the party swinging, and
+  `attack_missed` fires on a failure alone. Overwhelming Aura is the only content
+  that could not be written without it.
+- **A card's domain is now countable.** Not a hook - `Assessment.source` already
+  recorded the module a name was registered in, and Fane of the Wilds is the first
+  thing to read it. Worth knowing because the nine *X*-Touched cards were ruled
+  the other way, and that ruling is now revisitable rather than blocked.
+
+**Two rulings went against a precedent, deliberately.** Hold the Line's movement
+trigger is answered by the area rule rather than dismissed the way Gifted Tracker
+and Stealth Expertise were; and Fane of the Wilds counts card domains where the
+*X*-Touched cards do not. SIMULATION-RULES.md says why in both cases - the short
+version is that a gate can take a proxy and a pool's *size* cannot.
+
 
 ### Batch 27 — Arcana, Blade and Bone at level 9 (6 cards)
 
@@ -438,6 +480,92 @@ threshold the share alone did not reach; and Reaper's Strike and Splintering
 Strike both roll through `content/spellcast.py` on the weapon's trait, which means
 `spellcast_bonus` content is asked about a weapon attack. Both are declared as
 gaps on the cards.
+
+## Level 10 — in progress
+
+| Domain | Level 10 |
+|---|---|
+| **Arcana** | ✅ Adjust Reality · ✅ Falling Sky |
+| **Blade** | ✅ Battle Monster · ✅ Onslaught |
+| **Bone** | ✅ Deathrun · ✅ Swift Step |
+| **Codex** | ✅ Book of Yarrow · ✅ Transcendent Union |
+| **Grace** | ✅ Encore · 🚫 Notorious |
+| **Midnight** | ✅ Eclipse · ✅ Specter of the Dark |
+| **Sage** | ⬜ · ⬜ |
+| **Splendor** | ⬜ · ⬜ |
+| **Valor** | ⬜ · ⬜ |
+
+**11 modelled, 1 dismissed, 6 outstanding.** The last level of the SRD. Batches 30
+(Arcana, Blade, Bone) and 31 (Codex, Grace, Midnight) cover twelve of the
+eighteen; Sage, Splendor and Valor finish the book.
+
+**Level 10 dismisses almost nothing** - one card and one spell across twelve, where
+level 5 dismissed seven of eighteen. The capstones are mechanical.
+
+### Batch 31 — Codex, Grace and Midnight at level 10 (6 cards, 2 spells)
+
+**Verified against the printed page** (SRD pp. 126, 127 and 129).
+
+| Card | Disposition |
+|---|---|
+| **Book of Yarrow** (Cx 10) | Modelled, partial. *Magic Immunity* buys outright immunity to magic damage for 5 Hope; *Timejammer* is dismissed |
+| **Transcendent Union** (Cx 10) | Modelled, partial. A marked Hit Point is borne by whoever can best carry it; the Stress half stays a declared gap |
+| **Encore** (Gr 10) | Modelled. Copies an ally's damage onto the same target, and vaults itself on a success with Fear |
+| **Notorious** (Gr 10) | No combat effect - social leverage and shopping |
+| **Eclipse** (Mid 10) | Modelled, partial. The whole party goes *Hidden* until the GM pays a Fear or the caster takes Severe damage |
+| **Specter of the Dark** (Mid 10) | Modelled, partial. A Stress buys one GM turn immune to physical damage |
+
+One piece of shared machinery, and one condition:
+
+- **`hp_transfer`** - content that changes **who** marks a Hit Point. Everything
+  before it could change how many a hit was worth (`severity_response`), which
+  track it landed on (`stress_instead_of_hp`) or who was attacked in the first
+  place (`guard`); none of them could say "that one, not this one" once the
+  marking was happening. Asked from `mark_hp_and_check_death`, which is the one
+  place every route to a marked Hit Point passes through - damage, Stress that
+  would not fit, and a feature saying "mark an additional Hit Point" outright.
+- **`SPECTRAL`**, a named state carrying no machinery: what it does is read by
+  Specter of the Dark's own damage hook, and the name is what a report says the
+  PC is.
+
+**The ruling worth reading twice** is Transcendent Union's, because it parts
+company with a dismissal this domain already has. *Shared Clarity* pools Stress
+and was dismissed as symmetrical; this pools Hit Points too, and a PC at zero
+leaves the fight - so the same shape of card lands in two different states, on the
+asymmetry rather than on the size. The Stress half of *this* card is a declared gap
+for Shared Clarity's own reason.
+
+**Two cards here buy immunity rather than resistance**, which nothing had done:
+`damage_resistance` halves, so both go through the hook that can return the whole
+amount.
+
+### Batch 30 — Arcana, Blade and Bone at level 10 (6 cards)
+
+**Verified against the printed page** (SRD pp. 120, 122 and 123).
+
+| Card | Disposition |
+|---|---|
+| **Adjust Reality** (Ar 10) | Modelled, partial. 5 Hope lifts any failed roll in the party to exactly what it needed |
+| **Falling Sky** (Ar 10) | Modelled. Each Stress is a whole 1d20+2, dealt to everything a Far sweep beat |
+| **Battle Monster** (Bl 10) | Modelled, partial. 4 Stress forces Hit Points equal to the number the Blade has marked |
+| **Onslaught** (Bl 10) | Modelled, partial. A swing never deals beneath the target's Major threshold; a Stress punishes whoever goes past you |
+| **Deathrun** (Bo 10) | Modelled, partial. One pool dealt in full to the first target and a die lighter for each after |
+| **Swift Step** (Bo 10) | Modelled. Every failed attack against you clears a Stress, or hands you a Hope |
+
+One piece of shared machinery:
+
+- **`damage_floor`** - content the **attacker** carries that puts a floor under
+  what a swing deals, asked after the dice are read. The one direction the damage
+  hooks did not reach: everything else either adds to the pool before it is thrown
+  or belongs to whoever is taking the hit. Onslaught is the only registrant, and
+  the floor lands on the number dealt rather than on the `DamageRollResult`, so a
+  play-by-play line still reports the dice.
+
+**Three cards mark Hit Points without dealing damage** by now - Reaper's Strike,
+Disintegration Wave and Battle Monster - and this one is the first that scales
+with how badly its holder is doing. Worth watching alongside **Falling Sky**,
+which converts a whole Stress track into damage in one cast, and **Adjust
+Reality**, the only content that watches every roll anybody in the party makes.
 
 ## Batches
 
