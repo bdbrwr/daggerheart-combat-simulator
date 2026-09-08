@@ -233,6 +233,18 @@ FRENZIED = "Frenzied"
 # where the card registers.
 SPECTRAL = "Spectral"
 
+# **Transformed**, from Sage's *Force of Nature*: "mark a Stress to transform into
+# a hulking nature spirit", with four clauses read back off the state and a Hope
+# owed before every action roll.
+#
+# **The SRD gives this state no keyword**, unlike Frenzied or Spectral - the card
+# describes a transformation and then lists its benefits. The name is the
+# simulator's own label so a report can say what the PC is, and so the upkeep has
+# somewhere to live: the Hope is charged through `Condition.effect` at
+# `BEFORE_AN_ACTION_ROLL`, which is the Giant Scorpion's Poison shape and the only
+# place a cost owed *per action roll* can be taken.
+TRANSFORMED = "Transformed"
+
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to
 # fire. The same vocabulary serves both, so a condition that costs something at a

@@ -20,6 +20,13 @@ preferring Hope and marking Stress only to stay standing; Shield Aura answering
 only a hit that marked an Armor Slot; and Stunning Sunlight emptying the Hope pool
 one target at a time.
 
+Level 10 puts two restorations here that nothing else in the project does.
+Invigoration hands a **spent per-rest use** back, so its cases are about
+`FightState.refresh_once_per_rest` and the Hope floor that prices it; Resurrection
+puts an unconscious PC back on their feet, which is the one exception to the
+standing policy that an unconscious PC takes no further part - so its cases pin
+both the revival and what it does *not* undo.
+
 Determinism comes from a target with a Difficulty of 0 so no case turns on whether
 a roll landed, from patching `content.spellcast.roll_duality` where a card casts
 against a printed Difficulty, and from patching the `random.random()` draw that
@@ -52,6 +59,13 @@ from dice.duality import DualityRollResult
 from domain_cards.splendor import (
     AURA_STANDING,
     HEALING_STRIKE,
+    INVIGORATION,
+    INVIGORATION_HOPE_FLOOR,
+    RESURRECTION,
+    RESURRECTION_DIFFICULTY,
+    RESURRECTION_VAULTED,
+    invigoration,
+    resurrection,
     OVERWHELMING_AURA,
     OVERWHELMING_AURA_DIFFICULTY,
     OVERWHELMING_AURA_HOPE,
@@ -826,6 +840,183 @@ def test_the_caster_is_not_one_of_the_beams_targets():
     assert caster.hp_marked == 6
 
 
+# --- Invigoration ------------------------------------------------------------
+
+# Any per-rest ability at all: the card looks for a *spent use*, and never asks
+# what it was.
+A_SPENT_CARD = "Towering Stalk"
+
+
+def _invigorating(**overrides):
+    caster = _make_level_8_pc(
+        level=10, name="Seraph", domain_cards_loadout=[INVIGORATION], **overrides
+    )
+    ally = _make_level_8_pc(level=10, name="Ally")
+    return caster, ally, _rested_state([caster, ally], [])
+
+
+def test_a_six_hands_a_spent_use_back():
+    caster, ally, fight = _invigorating()
+    fight.use_once_per_rest(ally, A_SPENT_CARD)
+
+    with patch("domain_cards.splendor.random.randint", return_value=6):
+        assert invigoration(caster, fight) is True
+
+    assert fight.can_use_once_per_rest(ally, A_SPENT_CARD) is True
+
+
+def test_nothing_comes_back_without_a_six_and_the_hope_is_gone():
+    caster, ally, fight = _invigorating()
+    fight.use_once_per_rest(ally, A_SPENT_CARD)
+
+    with patch("domain_cards.splendor.random.randint", return_value=1):
+        assert invigoration(caster, fight) is True
+
+    assert fight.can_use_once_per_rest(ally, A_SPENT_CARD) is False
+    assert caster.hope_marked == INVIGORATION_HOPE_FLOOR
+
+
+def test_the_pool_is_drawn_to_the_floor_and_one_die_is_rolled_per_hope():
+    caster, ally, fight = _invigorating()
+    fight.use_once_per_rest(ally, A_SPENT_CARD)
+
+    with patch("domain_cards.splendor.random.randint", return_value=6) as rolled:
+        invigoration(caster, fight)
+
+    assert caster.hope_marked == INVIGORATION_HOPE_FLOOR
+    assert rolled.call_count == 6 - INVIGORATION_HOPE_FLOOR
+
+
+def test_the_casters_own_spent_use_is_reachable():
+    """'You **or** an ally' - unlike most of this domain, it can pay itself."""
+    caster, ally, fight = _invigorating()
+    fight.use_once_per_rest(caster, A_SPENT_CARD)
+
+    with patch("domain_cards.splendor.random.randint", return_value=6):
+        invigoration(caster, fight)
+
+    assert fight.can_use_once_per_rest(caster, A_SPENT_CARD) is True
+
+
+def test_it_declines_while_nobody_has_spent_anything():
+    caster, ally, fight = _invigorating()
+
+    assert invigoration(caster, fight) is False
+    assert caster.hope_marked == 6
+
+
+def test_it_declines_at_the_hope_floor():
+    caster, ally, fight = _invigorating(hope_marked=INVIGORATION_HOPE_FLOOR)
+    fight.use_once_per_rest(ally, A_SPENT_CARD)
+
+    assert invigoration(caster, fight) is False
+    assert caster.hope_marked == INVIGORATION_HOPE_FLOOR
+
+
+# --- Resurrection ------------------------------------------------------------
+
+
+def _resurrecting(**overrides):
+    caster = _make_level_8_pc(
+        level=10, name="Seraph", domain_cards_loadout=[RESURRECTION], **overrides
+    )
+    fallen = _make_level_8_pc(level=10, name="Fallen")
+    target = _make_adversary()
+    return caster, fallen, target, _rested_state([caster, fallen], [target])
+
+
+def _down(pc):
+    """A PC who has taken a death move, with everything a death move leaves."""
+    pc.hp_marked = pc.hp_max
+    pc.stress_marked = pc.stress_max
+    pc.unconscious = True
+    return pc
+
+
+def test_a_successful_cast_puts_a_fallen_pc_back_on_their_feet():
+    """The one exception to 'an unconscious PC takes no further part' - ruled."""
+    caster, fallen, target, fight = _resurrecting()
+    _down(fallen)
+
+    with (
+        _succeeding(RESURRECTION_DIFFICULTY),
+        patch("domain_cards.splendor.random.randint", return_value=6),
+    ):
+        result = resurrection(caster, target, fight)
+
+    assert result is not None and result.attack_roll.is_success
+    assert fallen.is_conscious is True
+    assert fallen.hp_marked == 0
+    assert fallen.stress_marked == 0
+    assert fight.conscious_party == [caster, fallen]
+
+
+def test_a_six_leaves_the_card_in_hand():
+    caster, fallen, target, fight = _resurrecting()
+    _down(fallen)
+
+    with (
+        _succeeding(RESURRECTION_DIFFICULTY),
+        patch("domain_cards.splendor.random.randint", return_value=6),
+    ):
+        resurrection(caster, target, fight)
+
+    assert fight.token_count(caster, RESURRECTION_VAULTED) == 0
+
+
+def test_anything_lower_spends_the_card_for_good():
+    caster, fallen, target, fight = _resurrecting()
+    _down(fallen)
+
+    with (
+        _succeeding(RESURRECTION_DIFFICULTY),
+        patch("domain_cards.splendor.random.randint", return_value=5),
+    ):
+        resurrection(caster, target, fight)
+
+    assert fight.token_count(caster, RESURRECTION_VAULTED) == 1
+
+    # Vaulted, so a second casualty gets nothing.
+    _down(fallen)
+    assert resurrection(caster, target, fight) is None
+
+
+def test_a_failed_cast_vaults_it_too_and_raises_nobody():
+    """'You can't cast Resurrection again for a week' - which is this fight."""
+    caster, fallen, target, fight = _resurrecting()
+    _down(fallen)
+
+    with patch(
+        "content.spellcast.roll_duality",
+        return_value=_roll(2, 3, RESURRECTION_DIFFICULTY),
+    ):
+        result = resurrection(caster, target, fight)
+
+    assert result is not None and not result.attack_roll.is_success
+    assert fallen.is_conscious is False
+    assert fight.token_count(caster, RESURRECTION_VAULTED) == 1
+
+
+def test_it_declines_while_the_whole_party_is_standing():
+    caster, fallen, target, fight = _resurrecting()
+
+    assert resurrection(caster, target, fight) is None
+
+
+def test_the_scar_the_death_move_took_is_not_undone():
+    caster, fallen, target, fight = _resurrecting()
+    _down(fallen)
+    fallen.scars = 1
+
+    with (
+        _succeeding(RESURRECTION_DIFFICULTY),
+        patch("domain_cards.splendor.random.randint", return_value=6),
+    ):
+        resurrection(caster, target, fight)
+
+    assert fallen.scars == 1
+
+
 # --- Assessed ----------------------------------------------------------------
 
 
@@ -839,5 +1030,7 @@ def test_the_later_cards_are_modelled():
         STUNNING_SUNLIGHT,
         OVERWHELMING_AURA,
         SALVATION_BEAM,
+        INVIGORATION,
+        RESURRECTION,
     ):
         assert assess(card).status is Status.MODELLED

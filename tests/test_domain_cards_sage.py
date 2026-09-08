@@ -30,6 +30,11 @@ Sage-Touched's +2 running in every fight because terrain is not modelled, Wild
 Surge climbing 1 through 6 and then charging a forced Stress on the way out, and
 Forest Sprites spending Hope down to a floor of 2 and burning one sprite per
 benefit.
+
+Level 10 adds two more of the same kind. Force of Nature is entered only above a
+Hope floor and drops itself the moment the upkeep cannot be paid, which is what
+the `BEFORE_AN_ACTION_ROLL` cases are about; and Tempest keeps all three weathers
+on the menu, so the cases pin each one's own rider rather than which gets picked.
 """
 
 from unittest.mock import patch
@@ -37,10 +42,13 @@ from unittest.mock import patch
 from adversaries.adversary import Adversary
 from characters.player_character import PlayerCharacter
 from combat.rest import Rest
+from combat.results import AttackResult
 from combat.state import FightState
 from content import (
     Status,
+    adversary_attack_is_hobbled,
     ally_extra_armor_slots,
+    apply_on_hit,
     assess,
     party_damage_reduction,
     take_action,
@@ -48,6 +56,14 @@ from content import (
     total_roll_bonus,
     total_spellcast_bonus,
     use_free_abilities,
+)
+from content.conditions import (
+    BEFORE_AN_ACTION_ROLL,
+    ON_A_GM_TURN,
+    RESTRAINED,
+    TRANSFORMED,
+    VULNERABLE,
+    Condition,
 )
 from content.damage_types import DamageType
 from content.spellcast import spellcast
@@ -57,21 +73,34 @@ from dice.duality import DualityRollResult
 from domain_cards.sage import (
     BARRIER_STANDING,
     BEETLES,
+    BLIZZARD,
     FANE_OF_THE_WILDS,
     FANE_TOKENS,
     fane_watches,
+    FORCE_OF_NATURE,
+    FORCE_OF_NATURE_DAMAGE,
+    FORCE_OF_NATURE_HOPE_FLOOR,
     FOREST_SPRITES,
     FOREST_SPRITES_ATTACK_BONUS,
     FOREST_SPRITES_HOPE_FLOOR,
+    HURRICANE,
     REJUVENATION_BARRIER,
     SAGE_TOUCHED,
+    SANDSTORM,
+    SANDSTORM_SHROUD,
     SPRITES_STANDING,
+    TEMPEST,
+    TEMPESTS,
     WILD_SURGE,
     WILD_SURGE_DIE,
     WILD_SURGE_MAX,
     beetles_take_the_hit,
     fire_flies,
+    force_of_nature,
+    force_of_nature_strikes,
+    sandstorm_blinds,
     tekaira_armored_beetles,
+    tempest,
     vicious_entangle,
 )
 
@@ -918,6 +947,271 @@ def test_a_party_that_did_not_long_rest_walks_in_with_an_empty_fane():
     assert fight.token_count(caster, FANE_TOKENS) == 0
 
 
+# --- Force of Nature ---------------------------------------------------------
+
+
+def _a_hit() -> AttackResult:
+    """A landed blow for the on-hit riders to read."""
+    return AttackResult(attack_roll=HIT, damage_roll=_damage(6), hp_marked=1)
+
+
+def _transforming(**overrides):
+    holder = _make_level_8_pc(
+        level=10, domain_cards_loadout=[FORCE_OF_NATURE], **overrides
+    )
+    target = _make_adversary()
+    return holder, target, _rested_state([holder], [target])
+
+
+def test_the_form_costs_a_stress_and_lands_as_a_condition():
+    holder, _, fight = _transforming()
+
+    assert force_of_nature(holder, fight) is True
+    assert holder.stress_marked == 1
+    assert fight.has_condition(holder, TRANSFORMED) is True
+
+
+def test_the_form_is_not_taken_on_a_pool_that_cannot_keep_it_up():
+    holder, _, fight = _transforming(hope_marked=FORCE_OF_NATURE_HOPE_FLOOR - 1)
+
+    assert force_of_nature(holder, fight) is False
+    assert holder.stress_marked == 0
+
+
+def test_the_form_is_taken_once():
+    holder, _, fight = _transforming()
+
+    assert force_of_nature(holder, fight) is True
+    assert force_of_nature(holder, fight) is False
+    assert holder.stress_marked == 1
+
+
+def test_the_upkeep_is_charged_before_every_action_roll():
+    holder, _, fight = _transforming()
+    force_of_nature(holder, fight)
+
+    fight.apply_condition_effects(holder, BEFORE_AN_ACTION_ROLL)
+    fight.apply_condition_effects(holder, BEFORE_AN_ACTION_ROLL)
+
+    assert holder.hope_marked == 4
+    assert fight.has_condition(holder, TRANSFORMED) is True
+
+
+def test_nothing_is_owed_at_any_other_moment():
+    """The cost is per action roll, which is the one moment announced that often."""
+    holder, _, fight = _transforming()
+    force_of_nature(holder, fight)
+
+    fight.apply_condition_effects(holder, ON_A_GM_TURN)
+
+    assert holder.hope_marked == 6
+
+
+def test_an_empty_pool_drops_the_form():
+    holder, _, fight = _transforming()
+    force_of_nature(holder, fight)
+    holder.spend_hope(holder.hope_marked)
+
+    fight.apply_condition_effects(holder, BEFORE_AN_ACTION_ROLL)
+
+    assert fight.has_condition(holder, TRANSFORMED) is False
+
+
+def test_a_transformed_sage_hits_ten_harder():
+    holder, target, fight = _transforming()
+
+    assert force_of_nature_strikes(holder, target, fight) == 0
+
+    force_of_nature(holder, fight)
+
+    assert force_of_nature_strikes(holder, target, fight) == FORCE_OF_NATURE_DAMAGE
+
+
+def test_absorbing_a_defeated_creature_mends_a_slot():
+    holder, target, fight = _transforming(armor_max=2)
+    holder.armor_marked = 2
+    force_of_nature(holder, fight)
+    target.hp_marked = target.hp_max
+
+    apply_on_hit(holder, target, _a_hit(), fight)
+
+    assert holder.armor_marked == 1
+
+
+def test_a_creature_left_standing_mends_nothing():
+    holder, target, fight = _transforming(armor_max=2)
+    holder.armor_marked = 2
+    force_of_nature(holder, fight)
+
+    apply_on_hit(holder, target, _a_hit(), fight)
+
+    assert holder.armor_marked == 2
+
+
+def test_the_form_cannot_be_restrained():
+    holder, _, fight = _transforming()
+    force_of_nature(holder, fight)
+
+    fight.apply_condition(holder, Condition(name=RESTRAINED))
+
+    assert fight.has_condition(holder, RESTRAINED) is False
+
+
+def test_an_untransformed_sage_is_held_like_anybody_else():
+    """The refusal is a fact about the form, not about the card being carried."""
+    holder, _, fight = _transforming()
+
+    fight.apply_condition(holder, Condition(name=RESTRAINED))
+
+    assert fight.has_condition(holder, RESTRAINED) is True
+
+
+# --- Tempest -----------------------------------------------------------------
+
+
+def _the_whole_field():
+    """Every band at full reach. Far falls one short on a **low** draw, so 0.99."""
+    return patch("content.aoe.random.random", return_value=0.99)
+
+
+def _blowing(weather: str):
+    """Pin which of the three the shuffle picks."""
+    return patch("domain_cards.sage.random.choice", return_value=weather)
+
+
+def _calling(adversaries: int = 1, fear: int = 3, **overrides):
+    caster = _make_level_8_pc(level=10, domain_cards_loadout=[TEMPEST], **overrides)
+    field = [_make_adversary(name=f"Dummy {index}") for index in range(adversaries)]
+    return caster, field, _rested_state([caster], field, fear=fear)
+
+
+def test_the_three_tempests_are_all_on_the_menu():
+    """Hurricane stays a candidate although its own rider is unrepresented."""
+    assert set(TEMPESTS) == {BLIZZARD, HURRICANE, SANDSTORM}
+    assert TEMPESTS[BLIZZARD] == (2, 20, 8)
+    assert TEMPESTS[HURRICANE] == (3, 10, 10)
+    assert TEMPESTS[SANDSTORM] == (5, 6, 9)
+
+
+def test_a_blizzard_leaves_what_it_catches_vulnerable():
+    caster, field, fight = _calling()
+
+    with (
+        _blowing(BLIZZARD),
+        patch("content.spellcast.roll_duality", return_value=HIT),
+        patch("domain_cards.sage.roll_damage", return_value=_damage(30)),
+    ):
+        result = tempest(caster, field[0], fight)
+
+    assert result.damage_roll.total == 30
+    assert field[0].hp_marked == 1
+    assert fight.has_condition(field[0], VULNERABLE) is True
+
+
+def test_the_gm_pays_a_fear_to_clear_the_blizzard():
+    caster, field, fight = _calling()
+
+    with (
+        _blowing(BLIZZARD),
+        patch("content.spellcast.roll_duality", return_value=HIT),
+        patch("domain_cards.sage.roll_damage", return_value=_damage(30)),
+    ):
+        tempest(caster, field[0], fight)
+
+    assert fight.expire_conditions(field[0], ON_A_GM_TURN) == [VULNERABLE]
+    assert fight.fear == 2
+
+
+def test_a_hurricane_leaves_nothing_behind_but_the_damage():
+    caster, field, fight = _calling()
+
+    with (
+        _blowing(HURRICANE),
+        patch("content.spellcast.roll_duality", return_value=HIT),
+        patch("domain_cards.sage.roll_damage", return_value=_damage(30)),
+    ):
+        tempest(caster, field[0], fight)
+
+    assert field[0].hp_marked == 1
+    assert fight.conditions_on(field[0]) == []
+    assert fight.conditions_on(caster) == []
+
+
+def test_a_sandstorm_hangs_over_the_caster_until_the_gm_pays():
+    caster, field, fight = _calling()
+
+    with (
+        _blowing(SANDSTORM),
+        patch("content.spellcast.roll_duality", return_value=HIT),
+        patch("domain_cards.sage.roll_damage", return_value=_damage(30)),
+    ):
+        tempest(caster, field[0], fight)
+
+    assert fight.has_condition(caster, SANDSTORM_SHROUD) is True
+    assert fight.expire_conditions(caster, ON_A_GM_TURN) == [SANDSTORM_SHROUD]
+    assert fight.fear == 2
+
+
+def test_the_sandstorm_blinds_anything_shooting_through_it():
+    """Read off the printed band, so a Melee adversary is correctly unaffected.
+
+    Asked through the dispatch rather than of the card, so the registration is
+    pinned alongside the answer.
+    """
+    caster, field, fight = _calling()
+    archer = _make_adversary(name="Archer", range="Far")
+    brawler = _make_adversary(name="Brawler", range="Melee")
+    fight.apply_condition(caster, Condition(name=SANDSTORM_SHROUD, source=caster))
+
+    assert adversary_attack_is_hobbled(archer, caster, fight) is True
+    assert adversary_attack_is_hobbled(brawler, caster, fight) is False
+
+
+def test_no_sandstorm_hobbles_nobody():
+    caster, field, fight = _calling()
+    archer = _make_adversary(name="Archer", range="Far")
+
+    assert adversary_attack_is_hobbled(archer, caster, fight) is False
+    assert sandstorm_blinds(caster, archer, caster, fight) is False
+
+
+def test_the_tempest_catches_the_whole_far_band():
+    caster, field, fight = _calling(adversaries=4)
+
+    with (
+        _the_whole_field(),
+        _blowing(HURRICANE),
+        patch("content.spellcast.roll_duality", return_value=HIT),
+        patch("domain_cards.sage.roll_damage", return_value=_damage(30)),
+    ):
+        tempest(caster, field[0], fight)
+
+    assert all(adversary.hp_marked == 1 for adversary in field)
+
+
+def test_a_missed_tempest_rolls_no_damage():
+    caster = _make_level_8_pc(level=10, domain_cards_loadout=[TEMPEST])
+    adversary = _make_bandit()
+    fight = _rested_state([caster], [adversary], fear=3)
+
+    with (
+        _blowing(BLIZZARD),
+        patch("content.spellcast.roll_duality", return_value=MISS),
+        patch("domain_cards.sage.roll_damage") as rolled,
+    ):
+        result = tempest(caster, adversary, fight)
+
+    assert result.damage_roll is None
+    assert fight.has_condition(adversary, VULNERABLE) is False
+    rolled.assert_not_called()
+
+
+def test_the_tempest_declines_over_an_empty_field():
+    caster, _, fight = _calling(adversaries=0)
+
+    assert tempest(caster, None, fight) is None
+
+
 # --- Assessed rather than built ----------------------------------------------
 
 
@@ -950,3 +1244,8 @@ def test_the_level_nine_pair_are_assessed():
     assert assess(FANE_OF_THE_WILDS).status is Status.MODELLED
     assert assess("Plant Dominion").status is Status.NO_COMBAT_EFFECT
     assert assess("Plant Dominion").reason
+
+
+def test_the_level_ten_pair_are_modelled():
+    assert assess(FORCE_OF_NATURE).status is Status.MODELLED
+    assert assess(TEMPEST).status is Status.MODELLED

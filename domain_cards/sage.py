@@ -43,6 +43,13 @@ Level 9's **Fane of the Wilds** is the first thing anywhere to ask which *domain
 a card belongs to - nothing records it as data, and the nine *X*-Touched cards
 settled the same question by not counting. It is also the first bonus spent
 **after** the roll it pays for, which is why it sits on the `reroll` hook.
+
+Level 10 closes the domain on a transformation and a storm. **Force of Nature** is
+Frenzy's shape with an *upkeep* rather than a sacrifice - a Hope before every
+action roll, and the form drops the moment one cannot be paid, which is what put a
+cost on `BEFORE_AN_ACTION_ROLL` for the first time on the party's side.
+**Tempest** is the domain's second menu after Death Grip, and the first where
+every option on it is live.
 """
 
 import random
@@ -56,20 +63,32 @@ from content.aoe import (
     targets_beaten,
     targets_in_area,
 )
-from content.conditions import RESTRAINED, SHELTERED, Condition, when_the_gm_pays
+from content.conditions import (
+    BEFORE_AN_ACTION_ROLL,
+    RESTRAINED,
+    SHELTERED,
+    TRANSFORMED,
+    VULNERABLE,
+    Condition,
+    when_the_gm_pays,
+)
 from content.damage_types import DamageType, types_in
 from content.grimoire import Grimoire
 from content.registry import (
     Fight,
     Holder,
     action,
+    adversary_attack_disadvantage,
     ally_damage_reduction,
     ally_extra_armor_slot,
     ally_roll_bonus,
     assess,
+    condition_refusal,
+    damage_bonus,
     extra_damage,
     free,
     no_combat_effect,
+    on_hit,
     out_of_combat_ability,
     reroll,
     roll_bonus,
@@ -80,6 +99,286 @@ from content.registry import (
 from content.spellcast import spellcast
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
+
+# --- Force of Nature -------------------------------------------------------------
+
+FORCE_OF_NATURE = "Force of Nature"
+
+FORCE_OF_NATURE_DAMAGE = 10
+
+# SIMULATION RULE - policy, ruled. The form charges a Hope before **every** action
+# roll and drops the moment one cannot be paid, so it is entered only while the
+# pool can keep it up for a while. Below this a transformation would revert on the
+# next roll or two and the Stress would buy almost nothing.
+FORCE_OF_NATURE_HOPE_FLOOR = 4
+
+
+def _the_form_holds(holder, fight, moment: str) -> None:
+    """The Hope owed before each action roll, and the reversion when it isn't there.
+
+    The Giant Scorpion's Poison shape - a cost taken at `BEFORE_AN_ACTION_ROLL`,
+    which is the only moment announced *per action roll* rather than per spotlight.
+    `combat/policy.py` announces it once per roll the PC makes, so a rescinded move
+    that comes back through the whole spotlight is charged again, correctly.
+    """
+    if moment != BEFORE_AN_ACTION_ROLL:
+        return
+
+    if holder.can_spend_hope(1):
+        holder.spend_hope(1)
+        return
+
+    fight.clear_condition(holder, TRANSFORMED)
+    fight.note(f"{holder.name} runs out of Hope and shrinks back to themselves")
+
+
+@free(
+    FORCE_OF_NATURE,
+    unmodelled=[
+        "The state has no printed keyword - the card describes a transformation "
+        "and lists its benefits - so `TRANSFORMED` is the simulator's own label "
+        "for it. See `content/conditions.py`",
+    ],
+)
+def force_of_nature(holder: Holder, fight: Fight) -> bool:
+    """Force of Nature (Sage, level 10). Become the thing the fight is happening to.
+
+    SRD: "Mark a Stress to transform into a hulking nature spirit, gaining the
+    following benefits: when you succeed on an attack or Spellcast Roll, gain a +10
+    bonus to the damage roll; when you deal enough damage to defeat a creature
+    within Close range, you absorb them and clear an Armor Slot; you can't be
+    *Restrained*. Before you make an action roll, you must spend a Hope. If you
+    can't, you revert to your normal form."
+
+    **Frenzy's shape with an upkeep instead of a sacrifice.** Blade's transformation
+    pays with its armor once and runs to the end of the fight; this one pays a Hope
+    before every action roll and ends itself the moment the pool is empty - so what
+    limits it is not a per-rest use but how long the party's Hope lasts.
+
+    **No roll**, so it is a free ability: the form is taken *and* an action roll
+    made in the same spotlight - and that roll is charged for, since the upkeep is
+    announced before every one.
+
+    SIMULATION RULE - policy, ruled. Taken at the first spotlight the Stress allows
+    **above `FORCE_OF_NATURE_HOPE_FLOOR`**, which is Wild Surge's and Full Surge's
+    rule with a floor bolted on for the upkeep. Entering on an empty pool was
+    offered and declined: the form would revert on the next roll and the Stress
+    would buy nothing.
+    """
+    if fight is None or fight.has_condition(holder, TRANSFORMED):
+        return False
+    if holder.hope_marked < FORCE_OF_NATURE_HOPE_FLOOR:
+        return False
+    if not holder.will_spend_stress(1):
+        return False
+
+    holder.spend_stress(1)
+    fight.apply_condition(
+        holder,
+        Condition(name=TRANSFORMED, effect=_the_form_holds, source=holder),
+    )
+    fight.note(f"{holder.name} swells into a hulking nature spirit")
+    return True
+
+
+@damage_bonus(
+    FORCE_OF_NATURE,
+    unmodelled=[
+        "'when you succeed on an attack **or Spellcast Roll**' - `damage_bonus` is "
+        "asked where a PC swings and by the cards that swing through it, and "
+        "content rolling Proficiency dice of its own never consults it. So a Sage "
+        "casting in this form carries no +10, which is the same gap Rage Up, "
+        "Frenzy and Voice of Reason declare - and it costs more here, since Sage "
+        "is a casting domain",
+    ],
+)
+def force_of_nature_strikes(holder: Holder, target, fight: Fight = None) -> int:
+    """The +10 a transformed Sage adds to their damage roll.
+
+    Registered on the same name as the transformation above, the arrangement one
+    card uses to reach several hooks. A flat add rather than dice, so it lands
+    before the target's thresholds - the point Rage Up and Frenzy both make about
+    their own bonuses.
+    """
+    if fight is None or not fight.has_condition(holder, TRANSFORMED):
+        return 0
+    return FORCE_OF_NATURE_DAMAGE
+
+
+@on_hit(
+    FORCE_OF_NATURE,
+    unmodelled=[
+        "'within Close range' - no positions are tracked, so anything the holder "
+        "finishes is absorbed",
+    ],
+)
+def force_of_nature_absorbs(attacker: Holder, target, result, fight: Fight) -> None:
+    """The Armor Slot a defeated creature gives back.
+
+    "You absorb them and clear an Armor Slot", which is a **refund** rather than a
+    heal - Valor-Touched's shape. Skipped when there is no marked slot to clear,
+    which is the difference between clearing something and clearing nothing rather
+    than a threshold.
+    """
+    if fight is None or not fight.has_condition(attacker, TRANSFORMED):
+        return
+    if not target.is_defeated or attacker.armor_marked <= 0:
+        return
+
+    attacker.clear_armor_slot(1)
+    fight.note(f"{attacker.name} absorbs {target.name} and mends their armor")
+
+
+@condition_refusal(FORCE_OF_NATURE)
+def force_of_nature_cannot_be_held(
+    holder: Holder, condition, fight: Fight = None
+) -> bool:
+    """"You can't be *Restrained*" - refused at the moment it would land.
+
+    On `condition_refusal` rather than `immunity`, deliberately. That hook is a
+    *standing* answer read wherever a condition's effect is consulted, and nothing
+    consults Restrained's - it is recorded and inert here - so an immunity would be
+    dead code. This one is asked at `apply_condition`, which does fire, so the hold
+    never lands at all.
+
+    Unlike Bold Presence, which is the hook's other registrant, this costs nothing
+    and has no limit: it is a fact about the form rather than a use of anything.
+    """
+    if fight is None or not fight.has_condition(holder, TRANSFORMED):
+        return False
+    return condition.name == RESTRAINED
+
+
+# --- Tempest ---------------------------------------------------------------------
+
+TEMPEST = "Tempest"
+
+BLIZZARD = "Blizzard"
+HURRICANE = "Hurricane"
+SANDSTORM = "Sandstorm"
+
+# What each tempest rolls, in the order the card prints them.
+TEMPESTS = {
+    BLIZZARD: (2, 20, 8),
+    HURRICANE: (3, 10, 10),
+    SANDSTORM: (5, 6, 9),
+}
+
+# The sandstorm itself, carried as a condition on the caster so that "until the GM
+# spends a Fear on their turn to end this spell" is answered by the shared ender
+# rather than by a token nothing can clear.
+SANDSTORM_SHROUD = "Sandstorm"
+
+
+@action(
+    TEMPEST,
+    unmodelled=[
+        "'against all targets within Far range' - no positions are tracked, so the "
+        "area rule decides how many the tempest catches",
+        "**Hurricane's** own clause - 'choose a direction the wind is blowing; "
+        "targets can't move against the wind' - is movement, and none is tracked. "
+        "It is still offered, because unlike Death Grip's pull it deals 3d10+10 "
+        "and so reaches somebody either way; what is lost is only the rider",
+    ],
+)
+def tempest(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Tempest (Sage, level 10). Three weathers, one roll, and the GM pays to stop it.
+
+    SRD: "Choose one of the following tempests and make a Spellcast Roll against
+    all targets within Far range. Targets you succeed against experience its
+    effects until the GM spends a Fear on their turn to end this spell. Blizzard:
+    deal 2d20+8 magic damage and targets are temporarily *Vulnerable*. Hurricane:
+    deal 3d10+10 magic damage and choose a direction the wind is blowing; targets
+    can't move against the wind. Sandstorm: deal 5d6+9 magic damage; attacks made
+    from beyond Melee range have disadvantage."
+
+    One roll against the whole area, each adversary checked against its own
+    Difficulty - the Wild Flame shape - and the damage rolled once and reused,
+    which is the standing reading of one roll landing on several targets.
+
+    SIMULATION RULE - policy, ruled. **The shuffle picks among all three.** Death
+    Grip's precedent excluded an option that reached nobody at all; every tempest
+    here deals damage, so Hurricane is a live choice whose *rider* happens to be
+    unrepresented, and dropping it would quietly remove the card's biggest damage
+    line. Always-Blizzard and always-Sandstorm were both offered and declined -
+    choosing between them on their damage would be exactly the expected-damage
+    comparison the project rules out.
+
+    Never declines. The spell costs nothing but the roll the caster was making
+    anyway, which is the Preservation Blast side of the split.
+    """
+    if fight is None:
+        return None
+
+    area = targets_in_area(Range.FAR, fight.living_adversaries)
+    if not area:
+        return None
+
+    weather = random.choice(list(TEMPESTS))
+    count, sides, modifier = TEMPESTS[weather]
+
+    attack_roll = spellcast(caster, target, fight, difficulty=area_difficulty(area))
+    if attack_roll is None:
+        return None
+
+    beaten = targets_beaten(attack_roll, area)
+    if not beaten:
+        fight.note(f"{caster.name}'s {weather.lower()} breaks over nobody ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    damage_roll = roll_damage(
+        dice_groups=[DiceGroup(count=count, sides=sides)]
+        + total_extra_damage(caster, target, attack_roll, fight),
+        modifier=modifier,
+        is_critical=attack_roll.is_critical,
+    )
+
+    marked = 0
+    for adversary in beaten:
+        marked += adversary.take_damage(
+            damage_roll.total, fight, damage_type=DamageType.MAGIC
+        )
+        if weather == BLIZZARD and not adversary.is_defeated:
+            fight.apply_condition(
+                adversary,
+                Condition(name=VULNERABLE, end=when_the_gm_pays, source=caster),
+            )
+
+    if weather == SANDSTORM:
+        fight.apply_condition(
+            caster,
+            Condition(name=SANDSTORM_SHROUD, end=when_the_gm_pays, source=caster),
+        )
+
+    fight.note(
+        f"{caster.name} calls up a {weather.lower()}, catching {len(beaten)} "
+        f"for {damage_roll.total}"
+    )
+    return AttackResult(
+        attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
+    )
+
+
+@adversary_attack_disadvantage(TEMPEST)
+def sandstorm_blinds(
+    holder: Holder, adversary, target, fight: Fight = None
+) -> bool:
+    """The Disadvantage a standing sandstorm puts on anything shooting through it.
+
+    "Attacks made from beyond Melee range have disadvantage" is read off
+    `Adversary.attack_band` - the band printed on the stat block - exactly as
+    Redirect and Rapid Riposte read the same clause. So a Melee adversary is
+    correctly unaffected, and nothing here needs a position.
+
+    Registered on the same name as the cast above. The shroud is carried as a
+    condition on the caster rather than as a token, so the card's own ender - the
+    GM spending a Fear - is the shared one every other party-applied condition
+    uses.
+    """
+    if fight is None or not fight.has_condition(holder, SANDSTORM_SHROUD):
+        return False
+    return adversary.attack_band is not Range.MELEE
+
 
 # --- Fane of the Wilds -----------------------------------------------------------
 

@@ -223,6 +223,33 @@ class FightState:
         self.spent_per_rest.add((id(holder), ability))
         return True
 
+    def spent_once_per_rest(self, holder=None) -> list[tuple[int, str]]:
+        """Which per-rest uses have been spent, optionally narrowed to one holder.
+
+        Content generally asks whether *its own* use is still there, which
+        `can_use_once_per_rest` answers. This is for content that asks the
+        opposite question about somebody else: Splendor's *Invigoration* gives a
+        spent use back and has to find one first, without knowing what any of them
+        are.
+        """
+        if holder is None:
+            return list(self.spent_per_rest)
+        return [entry for entry in self.spent_per_rest if entry[0] == id(holder)]
+
+    def refresh_once_per_rest(self, holder, ability: str) -> bool:
+        """Give `holder` their per-rest use of `ability` back; return whether it was spent.
+
+        The exact inverse of `use_once_per_rest`, and the only way a spent use ever
+        comes back inside a fight. Splendor's *Invigoration* is the one thing that
+        does it - "the feature can be used again" - and nothing else should, since
+        a per-rest limit is most of what prices the cards that carry one.
+        """
+        entry = (id(holder), ability)
+        if entry not in self.spent_per_rest:
+            return False
+        self.spent_per_rest.discard(entry)
+        return True
+
     def grant_activation(self, holder, free: bool = False) -> None:
         """Let `holder` be spotlighted once more this GM turn.
 

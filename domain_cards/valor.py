@@ -53,6 +53,12 @@ first card whose trigger is an adversary *moving*, ruled to the area rule rather
 than dismissed, and the first party-applied condition anywhere that costs the GM
 **2** Fear to shake off. **Lead by Example** is Breaking Blow's shape with the
 payout pointed at the party instead of at a damage roll.
+
+Level 10 is the domain refusing to fall over, twice. **Unbreakable** is the third
+card on `death_move_ward` and much the largest - Life Ward and Battle-Hardened
+each clear one Hit Point, and this rolls a d6 - and **Unyielding Armor** gives the
+Armor Slot back on any 6 across Proficiency dice, which is Valor-Touched's refund
+written as the card's own clause.
 """
 
 import random
@@ -87,6 +93,7 @@ from content.registry import (
     ally_on_roll,
     condition_refusal,
     damage_bonus,
+    death_move_ward,
     extra_damage,
     free,
     guard,
@@ -1126,6 +1133,125 @@ def ground_pound(holder: Holder, target, fight: Fight) -> AttackResult | None:
     return AttackResult(
         attack_roll=attack_roll, damage_roll=damage_roll, hp_marked=marked
     )
+
+
+# --- Unbreakable -------------------------------------------------------------------
+
+UNBREAKABLE = "Unbreakable"
+
+UNBREAKABLE_DIE = 6
+
+# Set once the card has been spent. "Then place this card in your vault" - and
+# unlike Counterspell there is no printed way back out.
+UNBREAKABLE_VAULTED = "Unbreakable vaulted"
+
+
+@death_move_ward(
+    UNBREAKABLE,
+    unmodelled=[
+        "HP marked by anything other than **damage** doesn't reach this. "
+        "`mark_hp_and_check_death` is handed a fight by `take_damage` and by "
+        "nothing else, so a Valor PC whose last HP is marked by Stress that "
+        "wouldn't fit makes their death move with the card unspent. Life Ward and "
+        "Battle-Hardened have the same gap for the same reason",
+    ],
+)
+def unbreakable(holder: Holder, target, fight: Fight) -> bool:
+    """Unbreakable (Valor, level 10). The death move that turns into a recovery.
+
+    SRD: "When you mark your last Hit Point, instead of making a death move, you
+    can roll a d6 and clear a number of Hit Points equal to the result. Then place
+    this card in your vault."
+
+    **The third card on this hook and much the largest.** Life Ward and
+    Battle-Hardened each clear exactly one Hit Point, so a PC saved by them is
+    standing on their last; this rolls a d6 and gives back up to six, which can put
+    a Valor character most of the way back to full in the same breath.
+
+    Nothing else of the death move happens - no unconsciousness, no scar roll and
+    no entry in the `death_moves` tally - because this is asked *before* the move
+    rather than as part of it.
+
+    SIMULATION RULE - policy. Nothing to rule. **Being asked is the commitment**:
+    the hook is consulted only when a death move is genuinely happening, so there
+    is no later moment to hold it for, and the card is spent for good either way.
+    """
+    if fight is None or holder is not target:
+        return False
+    if fight.token_count(holder, UNBREAKABLE_VAULTED):
+        return False
+
+    cleared = random.randint(1, UNBREAKABLE_DIE)
+    fight.set_token(holder, UNBREAKABLE_VAULTED, 1)
+    target.clear_hp(cleared)
+    fight.note(
+        f"{target.name} simply will not go down, clearing {cleared} Hit "
+        f"Point{'s' if cleared != 1 else ''}"
+    )
+    return True
+
+
+# --- Unyielding Armor --------------------------------------------------------------
+
+UNYIELDING_ARMOR = "Unyielding Armor"
+
+UNYIELDING_ARMOR_DIE = 6
+UNYIELDING_ARMOR_FACE = 6
+
+
+@on_damaged(
+    UNYIELDING_ARMOR,
+    unmodelled=[
+        "HP marked by anything other than **damage** never reaches this, since "
+        "`on_damaged` is fired from `take_damage` alone - the gap Valor-Touched "
+        "declares beside it",
+    ],
+)
+def unyielding_armor(
+    holder: Holder,
+    amount: int,
+    hp_marked: int,
+    fight: Fight = None,
+    marked_armor: bool = False,
+    damage_type=None,
+) -> None:
+    """Unyielding Armor (Valor, level 10). The slot that goes back where it was.
+
+    SRD: "When you would mark an Armor Slot, roll a number of d6s equal to your
+    Proficiency. If any roll a 6, reduce the severity by one threshold without
+    marking an Armor Slot."
+
+    SIMULATION RULE - rules interpretation. **Expressed as a refund**, and it is
+    worth being plain about why that is the same card. The standing simplification
+    is that a free Armor Slot is *always* marked, and marking it is what reduces
+    the severity by one threshold - so the baseline already does the first half of
+    this clause and charges a slot for it. "Reduce the severity without marking a
+    slot" is therefore the baseline plus giving the slot back, which is exactly
+    what this does. Valor-Touched's shape, and it depends on that simplification:
+    if marking the free slot ever became a choice, this would have to be rewritten
+    as the choice it really is.
+
+    `marked_armor` is the card's trigger read literally - "when you **would mark**
+    an Armor Slot" - so it never fires against direct damage, or on a PC with no
+    slots free, or on one a condition has denied their armor.
+
+    No policy: it costs nothing, has no limit and states its own trigger. A
+    Proficiency of zero or less rolls nothing and the card is inert, the standing
+    reading of a card whose size is drawn from a printed number.
+    """
+    if fight is None or not marked_armor:
+        return
+    if holder.proficiency <= 0 or holder.armor_marked <= 0:
+        return
+
+    rolled = [
+        random.randint(1, UNYIELDING_ARMOR_DIE) for _ in range(holder.proficiency)
+    ]
+    if UNYIELDING_ARMOR_FACE not in rolled:
+        return
+
+    holder.clear_armor_slot(1)
+    fight.note(f"{holder.name}'s armor holds, and the slot goes back ({rolled})")
 
 
 # --- Hold the Line ---------------------------------------------------------------

@@ -37,6 +37,13 @@ at*. **Overwhelming Aura** costs an adversary a Stress for choosing its holder,
 hit or miss, which is what `on_targeted` exists for - the last empty corner of the
 incoming-attack table. **Salvation Beam** is the second card in the project to
 turn one resource straight into another, and the first to do it across the party.
+
+Level 10 gives the domain the two largest restorations in the book.
+**Invigoration** hands a spent per-rest use *back*, which nothing else can do, and
+**Resurrection** puts an unconscious PC on their feet - the one exception to a
+policy that had held since the project began. Both are worth reading with their
+prices in view: the first draws the Hope pool down, and the second vaults itself on
+anything but a 6.
 """
 
 import random
@@ -78,6 +85,172 @@ from content.spellcast import spellcast
 from dice.d20 import roll_d20
 from dice.damage import DiceGroup, roll_damage
 from dice.duality import DualityOutcome, roll_duality
+
+# --- Invigoration ----------------------------------------------------------------
+
+INVIGORATION = "Invigoration"
+
+INVIGORATION_DIE = 6
+INVIGORATION_FACE = 6
+
+# Hope spent here is Hope not spent on Experiences, Smite or Life Ward, so the
+# pool is drawn down to a floor rather than emptied - Arcane Barrage's and Forest
+# Sprites' number, read here rather than a fourth that could drift.
+INVIGORATION_HOPE_FLOOR = 2
+
+
+@free(
+    INVIGORATION,
+    unmodelled=[
+        "'**When** you or an ally has used a feature that has an exhaustion "
+        "limit' - nothing announces the moment a per-rest use is spent, so the "
+        "card is offered like any other free ability and looks for a spent use "
+        "instead of waiting to be told about one. The reach is the same; what is "
+        "lost is the immediacy",
+        "'within Close range' - no positions are tracked, so every conscious PC's "
+        "spent uses are reachable",
+        "'once per session' limits are not modelled at all, so only per-rest uses "
+        "can be given back. Nothing in the project carries a per-session limit",
+    ],
+)
+def invigoration(caster: Holder, fight: Fight) -> bool:
+    """Invigoration (Splendor, level 10). Give somebody their card back.
+
+    SRD: "When you or an ally within Close range has used a feature that has an
+    exhaustion limit (such as once per rest or once per session), you can spend any
+    number of Hope and roll that many d6s. If any roll a 6, the feature can be used
+    again."
+
+    **The only thing in the project that gives a per-rest use back**, which is why
+    `FightState.refresh_once_per_rest` exists and why nothing else should call it:
+    a per-rest limit is most of what prices the cards that carry one.
+
+    **No roll**, so it is a free ability - the refresh happens *and* the caster
+    takes their own action roll in the same spotlight.
+
+    SIMULATION RULE - policy. Two decisions, both following standing rules rather
+    than being new. "Spend **any number** of Hope" is answered by a floor rather
+    than by emptying the pool, since the Hope is what the party's other cards run
+    on - Arcane Barrage's and Forest Sprites' number. And **which** use comes back
+    is random among the spent ones, per the standing random-among-viable rule;
+    picking the biggest card would be scoring the party's loadout, which is ruled
+    out.
+
+    Declines when nobody has spent anything, per the standing zero-benefit rule.
+    """
+    if fight is None:
+        return False
+
+    spent = [
+        (pc, ability)
+        for pc in fight.conscious_party
+        for _, ability in fight.spent_once_per_rest(pc)
+    ]
+    if not spent:
+        return False
+
+    hope = caster.hope_marked - INVIGORATION_HOPE_FLOOR
+    if hope <= 0:
+        return False
+
+    caster.spend_hope(hope)
+    rolled = [random.randint(1, INVIGORATION_DIE) for _ in range(hope)]
+    if INVIGORATION_FACE not in rolled:
+        fight.note(
+            f"{caster.name} spends {hope} Hope and nothing comes back ({rolled})"
+        )
+        return True
+
+    holder, ability = random.choice(spent)
+    fight.refresh_once_per_rest(holder, ability)
+    fight.note(f"{caster.name} invigorates {holder.name}; {ability} is theirs again")
+    return True
+
+
+# --- Resurrection ----------------------------------------------------------------
+
+RESURRECTION = "Resurrection"
+
+RESURRECTION_DIFFICULTY = 20
+
+RESURRECTION_DIE = 6
+
+# "Then roll a d6. On a result of 5 or lower, place this card in your vault
+# permanently." So the card survives a cast only on a 6.
+RESURRECTION_SURVIVES_ABOVE = 5
+
+RESURRECTION_VAULTED = "Resurrection vaulted"
+
+
+@action(
+    RESURRECTION,
+    unmodelled=[
+        "'dead no longer than 100 years' - nothing here has been dead for any "
+        "length of time, so the limit never bites",
+        "'On a failure, you can't cast Resurrection again for a week' is read as "
+        "the card being gone for this fight, which is the same thing a week is "
+        "when nothing carries between encounters. So a failed cast vaults it "
+        "exactly as a bad d6 does",
+    ],
+)
+def resurrection(caster: Holder, target, fight: Fight) -> AttackResult | None:
+    """Resurrection (Splendor, level 10). Put somebody back on their feet.
+
+    SRD: "Make a Spellcast Roll (20). On a success, restore one creature who has
+    been dead no longer than 100 years to full strength. Then roll a d6. On a
+    result of 5 or lower, place this card in your vault permanently. On a failure,
+    you can't cast Resurrection again for a week."
+
+    SIMULATION RULE - rules interpretation, ruled. **A creature to restore is an
+    unconscious PC**, and this card is the one exception to a standing policy that
+    has held since the beginning: *an unconscious PC is never revived and takes no
+    further part*. Nothing here is ever **dead** - a defeated adversary is simply
+    off the field and a PC who takes a death move is down - so reading the spell
+    literally would leave it with nothing to touch. The user ruled the other way,
+    and it is worth being plain about the size of that: a party that loses somebody
+    can now get them back mid-fight, which is a shape no other card has.
+
+    "To full strength" is read as everything cleared - Hit Points and Stress both,
+    and the PC back on their feet. What it does **not** undo is a scar, which the
+    death move already took.
+
+    A flat Difficulty of 20, printed on the card and the highest anything asks for.
+
+    SIMULATION RULE - policy. Cast only while somebody is down, which is the
+    standing zero-benefit rule rather than a threshold - there is nobody to restore
+    otherwise. The card vaults itself on anything but a 6, and on a failed cast
+    too, so in practice a party sees it once.
+    """
+    if fight is None or fight.token_count(caster, RESURRECTION_VAULTED):
+        return None
+
+    fallen = [pc for pc in fight.party if not pc.is_conscious]
+    if not fallen:
+        return None
+
+    attack_roll = spellcast(
+        caster, target, fight, difficulty=RESURRECTION_DIFFICULTY
+    )
+    if attack_roll is None:
+        return None
+
+    if not attack_roll.is_success:
+        fight.set_token(caster, RESURRECTION_VAULTED, 1)
+        fight.note(f"{caster.name} reaches past death and finds nothing ({attack_roll})")
+        return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
+    restored = random.choice(fallen)
+    restored.unconscious = False
+    restored.clear_hp(restored.hp_marked)
+    restored.clear_stress(restored.stress_marked)
+    fight.note(f"{caster.name} brings {restored.name} back to full strength")
+
+    if random.randint(1, RESURRECTION_DIE) <= RESURRECTION_SURVIVES_ABOVE:
+        fight.set_token(caster, RESURRECTION_VAULTED, 1)
+        fight.note(f"{caster.name}'s Resurrection is spent for good")
+
+    return AttackResult(attack_roll=attack_roll, damage_roll=None)
+
 
 # --- Overwhelming Aura -----------------------------------------------------------
 

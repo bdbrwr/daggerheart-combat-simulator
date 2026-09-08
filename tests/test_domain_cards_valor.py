@@ -21,6 +21,13 @@ the attack is rolled, that a critical is not a success with Hope, that Rise Up
 fires on **any** damage that marks HP, that Shrug It Off fires on Severe damage
 alone and vaults itself on a low d6, and that Ground Pound declines below two
 targets. If any of those change, these are the tests that should fail.
+
+The level 10 pair are both tested through the **real pipeline** rather than by
+calling the card: Unbreakable through `mark_hp_and_check_death`, which is the only
+route that offers a ward at all - and which is also how the declared gap is pinned,
+since a Stress overflow carries no fight and so reaches nothing - and Unyielding
+Armor through `apply_on_damaged`, which is what carries the fact that a slot was
+marked.
 """
 
 import random
@@ -68,6 +75,9 @@ from domain_cards.valor import (
     RISE_UP,
     SHRUG_IT_OFF,
     SHRUG_IT_OFF_VAULTED,
+    UNBREAKABLE,
+    UNBREAKABLE_VAULTED,
+    UNYIELDING_ARMOR,
     VALOR_TOUCHED,
     bold_presence,
     forceful_push,
@@ -1072,6 +1082,121 @@ def test_it_declines_against_a_target_the_hit_just_defeated():
     assert holder.stress_marked == 0
 
 
+# --- Unbreakable -------------------------------------------------------------
+
+
+def _unbreaking(**overrides):
+    holder = _make_level_8_pc(
+        level=10, domain_cards_loadout=[UNBREAKABLE], **overrides
+    )
+    return holder, _rested_state([holder], [])
+
+
+def test_the_last_hit_is_answered_with_a_d6_instead_of_a_death_move():
+    holder, fight = _unbreaking()
+    holder.hp_marked = holder.hp_max - 1
+
+    with patch("domain_cards.valor.random.randint", return_value=4):
+        holder.mark_hp_and_check_death(1, fight)
+
+    assert holder.is_conscious is True
+    assert holder.death_moves == 0
+    assert holder.hp_marked == holder.hp_max - 4
+
+
+def test_the_card_is_spent_for_good_either_way():
+    holder, fight = _unbreaking()
+    holder.hp_marked = holder.hp_max - 1
+
+    with patch("domain_cards.valor.random.randint", return_value=6):
+        holder.mark_hp_and_check_death(1, fight)
+    assert fight.token_count(holder, UNBREAKABLE_VAULTED) == 1
+
+    holder.hp_marked = holder.hp_max - 1
+    holder.mark_hp_and_check_death(1, fight)
+
+    assert holder.is_conscious is False
+    assert holder.death_moves == 1
+
+
+def test_it_wards_nobody_but_its_own_holder():
+    """Life Ward is the party-wide one; this card says 'you'."""
+    holder = _make_level_8_pc(
+        level=10, name="Holder", domain_cards_loadout=[UNBREAKABLE]
+    )
+    ally = _make_level_8_pc(level=10, name="Ally")
+    fight = _rested_state([holder, ally], [])
+    ally.hp_marked = ally.hp_max - 1
+
+    ally.mark_hp_and_check_death(1, fight)
+
+    assert ally.is_conscious is False
+    assert fight.token_count(holder, UNBREAKABLE_VAULTED) == 0
+
+
+def test_a_stress_overflow_never_reaches_the_ward():
+    """`mark_stress` carries no fight, which is the gap the card declares."""
+    holder, fight = _unbreaking()
+    holder.hp_marked = holder.hp_max - 1
+    holder.stress_marked = holder.stress_max
+
+    holder.mark_stress(1)
+
+    assert holder.is_conscious is False
+
+
+# --- Unyielding Armor --------------------------------------------------------
+
+
+def _unyielding(**overrides):
+    holder = _make_level_8_pc(
+        level=10, domain_cards_loadout=[UNYIELDING_ARMOR], armor_max=2, **overrides
+    )
+    return holder, _rested_state([holder], [])
+
+
+def test_a_six_puts_the_armor_slot_back():
+    holder, fight = _unyielding()
+    holder.armor_marked = 1
+
+    with patch("domain_cards.valor.random.randint", side_effect=[1, 1, 6]):
+        apply_on_damaged(holder, 12, 1, fight, True)
+
+    assert holder.armor_marked == 0
+
+
+def test_no_six_leaves_the_slot_spent():
+    holder, fight = _unyielding()
+    holder.armor_marked = 1
+
+    with patch("domain_cards.valor.random.randint", return_value=1):
+        apply_on_damaged(holder, 12, 1, fight, True)
+
+    assert holder.armor_marked == 1
+
+
+def test_one_die_is_rolled_per_point_of_proficiency():
+    holder, fight = _unyielding()
+    holder.armor_marked = 1
+
+    with patch("domain_cards.valor.random.randint", return_value=1) as rolled:
+        apply_on_damaged(holder, 12, 1, fight, True)
+
+    assert rolled.call_count == holder.proficiency
+
+
+def test_a_hit_that_marked_no_armor_slot_rolls_nothing():
+    """The trigger read literally - 'when you **would mark** an Armor Slot'."""
+    holder, fight = _unyielding()
+    holder.armor_marked = 1
+
+    with patch("domain_cards.valor.random.randint", return_value=6) as rolled:
+        apply_on_damaged(holder, 12, 2, fight, False)
+
+    assert holder.armor_marked == 1
+    rolled.assert_not_called()
+
+
 # --- Assessed, but used between fights ---------------------------------------
 
 
@@ -1099,5 +1224,7 @@ def test_the_later_cards_are_modelled():
         GROUND_POUND,
         HOLD_THE_LINE,
         LEAD_BY_EXAMPLE,
+        UNBREAKABLE,
+        UNYIELDING_ARMOR,
     ):
         assert assess(card).status is Status.MODELLED

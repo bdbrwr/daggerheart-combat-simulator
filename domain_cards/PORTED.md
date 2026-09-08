@@ -13,14 +13,15 @@ visible.
 
 ## Scope
 
-**Levels 1 to 8, all nine domains** - 153 cards, complete. That is every card a
-level 8 party of any class combination could hold, so a new party composition can
-be simulated without writing code first. **Level 9 is under way**: Arcana, Blade
-and Bone are in, and the remaining six domains are what is left of it. Level 10 is
-untouched.
+**All ten levels, all nine domains** - the SRD's 189 cards, complete. Every card a
+party of any level and any class combination could hold is either running or
+assessed, so a new party composition can be simulated without writing code first,
+and nothing anywhere is in the *unimplemented* state. What arrives from here is
+homebrew.
 
 The scope grew from levels 1-2, then to 3, then to 4, then to 5, then to 6, then
-to 7, then to 8, each time the previous one was finished. Cards are ported
+to 7, then to 8, then to 9, then to 10, each time the previous one was finished.
+Cards are ported
 **by level** rather than by domain: a level is the slice a party actually
 occupies, and finishing one means no loadout at that level can name a card nobody
 has written.
@@ -481,7 +482,7 @@ Strike both roll through `content/spellcast.py` on the weapon's trait, which mea
 `spellcast_bonus` content is asked about a weapon attack. Both are declared as
 gaps on the cards.
 
-## Level 10 — in progress
+## Level 10
 
 | Domain | Level 10 |
 |---|---|
@@ -491,16 +492,23 @@ gaps on the cards.
 | **Codex** | ✅ Book of Yarrow · ✅ Transcendent Union |
 | **Grace** | ✅ Encore · 🚫 Notorious |
 | **Midnight** | ✅ Eclipse · ✅ Specter of the Dark |
-| **Sage** | ⬜ · ⬜ |
-| **Splendor** | ⬜ · ⬜ |
-| **Valor** | ⬜ · ⬜ |
+| **Sage** | ✅ Force of Nature · ✅ Tempest |
+| **Splendor** | ✅ Invigoration · ✅ Resurrection |
+| **Valor** | ✅ Unbreakable · ✅ Unyielding Armor |
 
-**11 modelled, 1 dismissed, 6 outstanding.** The last level of the SRD. Batches 30
-(Arcana, Blade, Bone) and 31 (Codex, Grace, Midnight) cover twelve of the
-eighteen; Sage, Splendor and Valor finish the book.
+**17 modelled, 1 dismissed, 0 outstanding.**
 
-**Level 10 dismisses almost nothing** - one card and one spell across twelve, where
-level 5 dismissed seven of eighteen. The capstones are mechanical.
+## The SRD is complete
+
+**All 189 domain cards, ten levels, nine domains.** Batches 30 (Arcana, Blade,
+Bone), 31 (Codex, Grace, Midnight) and 32 (Sage, Splendor, Valor) closed level 10,
+and with it the book. Every card a party of any level and any class combination
+could hold is either running or assessed, and nothing anywhere is in the
+*unimplemented* state.
+
+**Level 10 dismissed one card of eighteen** - Grace's *Notorious* - plus one spell
+inside a Grimoire. That is the lowest of any level: the capstones are mechanical,
+where level 5 dismissed seven of eighteen on repositioning and information.
 
 ### Batch 31 — Codex, Grace and Midnight at level 10 (6 cards, 2 spells)
 
@@ -538,6 +546,43 @@ for Shared Clarity's own reason.
 **Two cards here buy immunity rather than resistance**, which nothing had done:
 `damage_resistance` halves, so both go through the hook that can return the whole
 amount.
+
+### Batch 32 — Sage, Splendor and Valor at level 10 (6 cards)
+
+**Verified against the printed page** (SRD pp. 131, 132-133 and 135). This closes
+the book.
+
+| Card | Disposition |
+|---|---|
+| **Force of Nature** (Sg 10) | Modelled, partial. A transformation with a **Hope owed before every action roll**, which drops it when the pool runs dry |
+| **Tempest** (Sg 10) | Modelled, partial. Three weathers shuffled between; Blizzard's Vulnerable and Sandstorm's Disadvantage both end on the GM's Fear |
+| **Invigoration** (Sp 10) | Modelled, partial. Gives a spent per-rest use **back**, which nothing else can do |
+| **Resurrection** (Sp 10) | Modelled. Puts an unconscious PC back on their feet - the one exception to a policy that had held since the beginning |
+| **Unbreakable** (Vl 10) | Modelled. A d6 of Hit Points instead of a death move, then the card is gone |
+| **Unyielding Armor** (Vl 10) | Modelled. The Armor Slot goes back on any 6 across Proficiency dice |
+
+Machinery, and none of it a new hook:
+
+- **`FightState.refresh_once_per_rest`** and `spent_once_per_rest` - the exact
+  inverse of `use_once_per_rest`, and the only way a spent use ever comes back
+  inside a fight. Invigoration is the one caller and should stay so: a per-rest
+  limit is most of what prices the cards that carry one.
+- **`TRANSFORMED`**, the simulator's own label for a state the SRD names no
+  keyword for. It exists so Force of Nature's upkeep has somewhere to live -
+  `Condition.effect` at `BEFORE_AN_ACTION_ROLL` is the only moment announced *per
+  action roll*, which is what the card charges against.
+
+**The ruling that changes something already decided** is Resurrection's. *An
+unconscious PC is never revived* has been a standing policy since the beginning,
+and this card is now its one exception - see SIMULATION-RULES.md, where the
+original row is amended rather than a new one added. Nothing here is ever *dead*,
+so read literally the spell would have had nothing to touch.
+
+**Unyielding Armor is worth reading as an interpretation rather than a
+transcription.** "Reduce the severity without marking an Armor Slot" comes out as
+the baseline *plus a refund*, because the standing simplification already marks
+the free slot for that same one-band reduction. It is exact today and would need
+rewriting the moment marking that slot became a choice.
 
 ### Batch 30 — Arcana, Blade and Bone at level 10 (6 cards)
 
