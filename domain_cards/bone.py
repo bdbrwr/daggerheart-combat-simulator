@@ -6,8 +6,10 @@ live here - nothing outside this package should ever need editing to add one.
 
 Card text is paraphrased in each docstring rather than quoted in full, so a
 mismatch between the code and the rule is easy to spot while debugging. The
-verbatim text is in .reference/abilities.json, checked against the printed page
-(SRD pp. 122-123).
+verbatim text is in .reference/abilities.json, checked against the printed page.
+That check was made against **SRD 1.0** (pp. 122-123). SRD 2.0 repaginated the book
+and moved every domain's cards into its *Domain Card Reference* appendix, which
+begins at p. 206. Re-check there, never at the old number.
 
 Bone is the Evasion domain, and three of its five level 1-2 cards are about not
 being hit. That turned out to be the interesting thing: Evasion is a number a

@@ -159,7 +159,9 @@ def adept(wizard: Holder, target, fight: Fight, trait: str = "") -> int:
 # --- Beastbound (Ranger) -----------------------------------------------------
 #
 # The companion is a second creature, but it never needs a spotlight of its own:
-# per the Ranger Companion sheet (SRD p.18) you command it with a Spellcast Roll,
+# per the Ranger Companion sheet (SRD 1.0 p. 18; 2.0 repaginated the book, so
+# re-read it from the Classes section rather than at that number) you command it
+# with a Spellcast Roll,
 # and that roll *is* the attack. So this is an action the Ranger takes, which is
 # why nothing in combat/fight.py changes to support it.
 

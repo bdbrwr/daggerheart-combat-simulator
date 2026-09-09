@@ -1,9 +1,15 @@
 # SRD adversaries: what's ported
 
-The SRD lists **129 adversaries**. This file tracks which of them are in
-`srd.json` and which are still outstanding, because an SRD update is expected
-(25 Aug) that will add more, and without a list there is no way to tell a new
-adversary from one we simply hadn't got to.
+**The expected SRD update landed.** Everything below was ported against SRD 1.0,
+which listed **129 adversaries**; the source of truth is now
+`.reference/DH_SRD_2_2026_08_25.pdf` — **System Reference Document 2.0** — whose
+"Adversaries by Tier" index (printed p. 95-96) lists **264**. This file tracks
+which of them are in `srd.json` and which are still outstanding, which is exactly
+the job it was created for: without a list there is no way to tell a new adversary
+from one we simply hadn't got to.
+
+**Tier 1 is no longer complete.** It was, against 1.0; SRD 2.0 adds thirty-five
+tier 1 stat blocks to it. See *Outstanding* below.
 
 ## How porting works
 
@@ -14,7 +20,14 @@ adversary from one we simply hadn't got to.
 - **Social adversaries are skipped.** They aren't used in combat encounters, and
   a simulator that only models combat has nothing to say about them.
 - Numbers are taken from the reference JSON in `.reference/` and **checked
-  against the printed page** in the SRD PDF before the batch lands.
+  against the printed page** in `.reference/DH_SRD_2_2026_08_25.pdf` before the
+  batch lands — the same two-step this file has always described. What changed is
+  which copies of both are current; see *The reference files were refreshed for
+  SRD 2.0* below.
+- **Printed page *p* is PDF page *p*.** SRD 2.0 renders one printed page per PDF
+  page, so `Read`'s `pages=` argument takes the printed number directly. (SRD 1.0
+  rendered two printed pages per sheet and needed `(p + 2) / 2`; that formula is
+  dead and must not be carried forward.)
 
 ### Mechanics are implemented; usage policies are ruled on
 
@@ -45,6 +58,35 @@ chosen. The process that replaces it:
    the thing that justifies it at a table is unmodelled, that is a gap of ours,
    and the gap is declared where the feature is registered rather than smuggled
    into a policy.
+
+## The reference files were refreshed for SRD 2.0
+
+`.reference/` holds a third party's parsed-JSON version of the SRD alongside the
+PDF. **Both have been replaced with SRD 2.0 versions**, and anything ported
+before that date was read from the 1.0 copies:
+
+- **The PDF is `.reference/DH_SRD_2_2026_08_25.pdf`**, and it is the only one
+  there. The 1.0 file (`Daggerheart-SRD-9-09-25.pdf`) is gone, and every page
+  number taken from it is stale — the whole book was repaginated, and the
+  page-mapping formula changed too.
+- **The parsed JSON is current and is the right thing to read first**, exactly as
+  before. Anything read out of a 1.0-era JSON, though, is as stale as a 1.0 page
+  number.
+
+The refreshed set is bigger than the 1.0 one. As of this writing `.reference/`
+holds `abilities.json`, `adversaries.json`, `ancestries.json`, `armor.json`,
+`beastforms.json`, `classes.json`, `communities.json`, `consumables.json`,
+`domains.json`, `environments.json`, `items.json`, `subclasses.json`,
+`transformations.json` and `weapons.json`. Three of those have no counterpart in
+anything ported so far and are worth knowing about: **`domains.json`** now carries
+Dread, **`transformations.json`** is a 2.0 section with nothing behind it here, and
+**`environments.json`** is a whole side of the book this simulator does not model
+at all.
+
+The PDF is a complete substitute where the JSON is missing something: SRD 2.0
+prints every domain card in full in its *Domain Card Reference* appendix
+(p. 206 onward), and every stat block in *Adversaries and Environments*
+(p. 93 onward).
 
 ## What a "ported" adversary is and isn't
 
@@ -133,9 +175,22 @@ small to change an outcome), **not implemented** (work still to do).
 | Shambling Zombie | Standard | 10 | Too Many to Handle, Horrifying *implemented* |
 | Zombie Pack | Horde (2/HP) | 10 | Horde (1d4+2), Overwhelm *implemented* |
 
-**Tier 1 is complete.** Forty-nine of the SRD's 129 adversaries are in — every
-tier 1 stat block except the two Socials, which are skipped by rule — and the
-table above has no *not implemented* rows.
+**Tier 1 was complete against SRD 1.0.** Forty-nine of that book's 129 adversaries
+are in — every tier 1 stat block it printed except the two Socials, which are
+skipped by rule — and the table above has no *not implemented* rows.
+
+**Against SRD 2.0 it is not.** The forty-nine above are still tier 1 and still
+run; 2.0 simply prints thirty-five more beside them, listed under *Outstanding*.
+
+Four of the forty-nine were spot-checked against SRD 2.0 while this file was being
+updated — Acid Burrower, Bear, Cave Ogre and Construct (2.0 pp. 97-98) — and every
+number matches `srd.json` exactly: Difficulty, both thresholds, HP, Stress, attack
+modifier, damage dice and range. So 2.0 does **not** look like a re-tuning of what
+we already have. That is four of forty-nine, not a survey; whether the rest are
+re-verified is the user's call, and the feature *text* is a separate question from
+the numbers — the Cave Ogre's `Ramp Up` reads "You must **spend a Fear** to
+spotlight the Ogre" in 2.0, and nobody has checked that against how we implemented
+it.
 
 ### Batch 9 — Weaponmaster, Young Dryad, and the first three Zombies
 
@@ -187,39 +242,75 @@ meeting a proportional band.
 
 ## Outstanding
 
-### Tier 1
+All counts below are read off SRD 2.0's **"Adversaries by Tier" index, printed
+pp. 95-96**, which lists every stat block in the book by name under its tier. It
+is the one place the whole roster is enumerated, so it is what this section is
+kept against.
 
-**Nothing left.** Every tier 1 stat block the SRD prints is either in the table
-above or skipped by rule:
+### Tier 1 — thirty-five new
 
-- **Courtier** — Social, skipped
-- **Petty Noble** — Social, skipped
+2.0's tier 1 runs to **86 stat blocks**. Forty-nine are ported and two (Courtier,
+Petty Noble) are Socials skipped by rule, which leaves these thirty-five, in the
+index's own order:
 
-Both were confirmed against the printed page (SRD pp. 78–84) when batch 9 was
-read, along with every type in the table.
+| | | |
+|---|---|---|
+| Ahuizotl | Masque Muerte | Redcap Candlemaker |
+| Atotoll | Mechanorb | Redcap Skinner |
+| Bugboar | Merchant | Rugaru |
+| Common Ruffian | Mountain Troll | Sawtoothed Gillbeast |
+| Darkweave Crawler | Octopus | Soul-Shattered Mage |
+| Darkweave Queen | Panther | Spellbound Armor |
+| Darkweave Spinner | Phantom | Viper |
+| Darkweave Swarmlings | Poltergeist | Waxwork Creation |
+| Elk | Rabble Mawb | Will-o'-the-Wisps |
+| Falcon | Redcap Biters | Yufo |
+| Grimmling Warband | Redcap Breaker | |
+| Harpy | Redcap Butcher | |
+| Kelpie | | |
+
+**Types are not in the index**, so which of these are Socials — and therefore
+skipped — is not yet known. `Merchant` is the obvious candidate to check first,
+sitting where `Courtier` and `Petty Noble` already do. Read each one's type off
+its stat block when its batch comes up, exactly as the ported table's types were.
+
+Names are transcribed from the index. Three were confirmed against their own stat
+blocks while this was written — **Ahuizotl** and **Atotoll** (p. 97) and
+**Bugboar** (p. 98, which the index sets in a face that reads easily as
+"Bugbear"). The rest are as the index prints them; `Rabble Mawb`, `Masque Muerte`
+and `Yufo` are unusual enough to be worth a second look against their stat blocks
+before they are written into `srd.json`.
 
 > **The `X/HP` in a Horde's type is flavour**, ruled by the user: it is
-> information for the table and has no bearing on the simulation. So the fact
-> that `.reference/adversaries.json` writes the Swarm of Rats as `"Horde (/HP)"`
-> where the page prints `Horde (10/HP)` is not worth chasing. The number that
+> information for the table and has no bearing on the simulation. The number that
 > *does* matter is the one in the `Horde (X)` **feature**, which is a separate
-> thing and is checked against the page like every other stat.
+> thing and is checked against the page like every other stat. The case that
+> prompted it was `.reference/adversaries.json` writing the Swarm of Rats as
+> `"Horde (/HP)"` where the page printed `Horde (10/HP)` — worth re-reading in the
+> refreshed JSON, but the ruling stands however that particular entry now reads.
 
 ### Tiers 2-4
 
-Not started, and **batch 11 begins here.** The SRD lists them under TIER 2
-(LEVELS 2-4), TIER 3 (LEVELS 5-7) and TIER 4 (LEVELS 8-10). Tier 2 starts at the
-Archer Squadron (SRD p. 84) and the first five in print order are:
+Not started. Counted from the same index:
 
-1. Archer Squadron — Horde (2/HP)
-2. Apprentice Assassin — Minion
-3. Assassin Poisoner — Skulk
-4. Master Assassin — Leader
-5. Battle Box — Solo
+| Tier | Levels | Stat blocks | Index runs |
+|---|---|---|---|
+| 2 | 2-4 | 78 | p. 95 col. 3 → p. 96 col. 1 |
+| 3 | 5-7 | 55 | p. 96 col. 1 → col. 2 |
+| 4 | 8-10 | 45 | p. 96 col. 3 |
 
-Types are read off the printed page as each batch is taken, so the rest are
-enumerated here when their batch comes up rather than listing eighty rows nobody
-is working from yet.
+Tier 2 still starts at the Archer Squadron, and its first five in print order are
+unchanged from what SRD 1.0 printed:
+
+1. Archer Squadron
+2. Apprentice Assassin
+3. Assassin Poisoner
+4. Master Assassin
+5. Battle Box
+
+Types and stats are read off the printed page as each batch is taken, so the rest
+are enumerated here when their batch comes up rather than listing a hundred and
+seventy-eight rows nobody is working from yet.
 
 ---
 

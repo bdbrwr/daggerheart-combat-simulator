@@ -334,6 +334,7 @@ _standard_damage_types: dict[str, Callable] = {}
 _on_attacked: dict[str, Callable] = {}
 _before_attacked: dict[str, Callable] = {}
 _on_spotlight: dict[str, Callable] = {}
+_ally_on_spotlights: dict[str, Callable] = {}
 _skip_spotlight: dict[str, Callable] = {}
 _spotlight_while_defeated: dict[str, Callable] = {}
 _on_party_attack_rolls: dict[str, Callable] = {}
@@ -411,6 +412,38 @@ def severity_response(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_severity_responses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def ally_on_spotlight(name: str, unmodelled: Iterable[str] = ()):
+    """Register party content that answers an adversary being spotlighted.
+
+    Signature: `(holder, adversary, fight, paid) -> None`, where `paid` says
+    whether the GM actually **spent Fear** to buy this spotlight.
+
+    The party-wide counterpart of `on_spotlight`, which is holder-scoped on the
+    adversary and so can only ever reach the stat block's own features. Dread's
+    *Avatar of Terror* is the first thing on the other side of the table to care:
+    "you gain a Hope when the GM spends a Fear to spotlight an adversary within
+    Very Close range" is a fact about the GM's *economy* rather than about
+    anything the adversary then does, and nothing announced it.
+
+    **`paid` is the whole point of the parameter.** A GM turn's first activation
+    costs no Fear, and a spotlight granted by content (the Young Dryad's Voice of
+    the Forest) was bought by that feature rather than by the turn's budget - so
+    neither of those is the GM spending a Fear, and content keyed on the spend
+    must be able to tell. `combat/fight.py` knows because it is the thing paying.
+
+    One call site, in `combat/fight.py`'s GM turn, immediately before the
+    activation resolves - so a card can answer the spotlight before whatever the
+    adversary does with it.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_on_spotlights, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -3778,6 +3811,20 @@ def apply_ally_on_hit(attacker, target, result, fight: Fight = None) -> None:
     _discover()
     for holder, respond in _party_offers(fight, _ally_on_hits):
         respond(holder, attacker, target, result, fight)
+
+
+def apply_ally_on_spotlight(adversary, fight: Fight = None, paid: bool = False) -> None:
+    """Let party content answer an adversary being spotlighted. Everyone gets a say.
+
+    The party-wide counterpart of `apply_on_spotlight`, called from the same moment
+    in `combat/fight.py`. `paid` says whether the GM spent Fear to buy this
+    spotlight - see `ally_on_spotlight` for why that has to travel.
+
+    Nothing without a fight, since there is no party to scan.
+    """
+    _discover()
+    for holder, respond in _party_offers(fight, _ally_on_spotlights):
+        respond(holder, adversary, fight, paid)
 
 
 def apply_ally_on_damaged(target, amount: int, hp_marked: int, fight: Fight = None) -> None:

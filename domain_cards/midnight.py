@@ -6,8 +6,10 @@ live here - nothing outside this package should ever need editing to add one.
 
 Card text is paraphrased in each docstring rather than quoted in full, so a
 mismatch between the code and the rule is easy to spot while debugging. The
-verbatim text is in .reference/abilities.json, checked against the printed page
-(SRD p. 128).
+verbatim text is in .reference/abilities.json, checked against the printed page.
+That check was made against **SRD 1.0** (p. 128). SRD 2.0 repaginated the book and
+moved every domain's cards into its *Domain Card Reference* appendix, which begins
+at p. 206. Re-check there, never at the old number.
 
 The last domain ported at levels 1-2, and the one that leans hardest on rules
 settled earlier: Rain of Blades takes the area shape Fire Flies established,

@@ -43,7 +43,15 @@ from content.conditions import VULNERABLE
 from dice.common import AdvantageState
 from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityRollResult
-from domain_cards.codex import PARALLELA, parallela, parallela_doubles, wild_flame
+from domain_cards.codex import (
+    PARALLELA,
+    WALL_OF_FLAME_DIFFICULTY,
+    WALL_OF_FLAME_WORTH_IT,
+    parallela,
+    parallela_doubles,
+    wall_of_flame,
+    wild_flame,
+)
 from domain_cards.sage import FAMILIAR, familiar_flanks
 from domain_cards.splendor import bolt_beacon
 
@@ -763,6 +771,83 @@ def test_no_familiar_means_no_die():
 
     with patch("domain_cards.sage.random.random", return_value=0.0):
         assert familiar_flanks(caster, target, None, state) == []
+
+
+# --- Wall of Flame -----------------------------------------------------------
+#
+# The Book of Grynn's area spell, and until now the one ported card in the project
+# with **no test at all**. That went unnoticed because nothing else reaches it: it
+# is a Grimoire spell, so `test_domain_cards_codex.py` correctly does not cover it,
+# and this file simply never gained a section for it. It surfaced when its band was
+# re-ruled from Far to Close and the suite stayed green.
+
+
+def _walling(adversaries: int, **overrides):
+    caster = _make_caster(domain_cards_loadout=["Book of Grynn"], **overrides)
+    field = [_make_adversary(name=f"Dummy {index}") for index in range(adversaries)]
+    return caster, field, _state([caster], field)
+
+
+def _wall_cast(hope: int, fear: int):
+    """The printed Difficulty of 15, beaten or missed as the case needs."""
+    return patch(
+        "content.spellcast.roll_duality",
+        return_value=DualityRollResult(
+            hope_die_result=hope,
+            fear_die_result=fear,
+            modifier=0,
+            advantage_state=AdvantageState.NONE,
+            advantage_die_result=None,
+            help_dice_results=None,
+            difficulty=WALL_OF_FLAME_DIFFICULTY,
+        ),
+    )
+
+
+def test_the_wall_of_flame_catches_the_close_band_and_not_the_far_one():
+    """The case that pins the band, and the one whose absence let a re-ruling pass.
+
+    Over a field of four, Close reaches exactly three every time; Far reaches all
+    four three times in four. So the count is what tells the two rulings apart, and
+    no spread roll has to be patched to make it deterministic.
+    """
+    caster, field, fight = _walling(4)
+
+    with _wall_cast(hope=12, fear=11):
+        assert wall_of_flame(caster, field[0], fight) is not None
+
+    assert len([a for a in field if a.hp_marked]) == 3
+
+
+def test_the_wall_of_flame_declines_below_two_in_the_band():
+    """Close reaches one of a field of two, which is under the floor."""
+    caster, field, fight = _walling(2)
+
+    assert len(field) >= WALL_OF_FLAME_WORTH_IT
+    assert wall_of_flame(caster, field[0], fight) is None
+    assert all(a.hp_marked == 0 for a in field)
+
+
+def test_a_failed_wall_of_flame_burns_nobody():
+    caster, field, fight = _walling(4)
+
+    with _wall_cast(hope=2, fear=3):
+        result = wall_of_flame(caster, field[0], fight)
+
+    assert result is not None and not result.attack_roll.is_success
+    assert all(a.hp_marked == 0 for a in field)
+
+
+def test_the_wall_of_flame_deals_one_roll_to_everything_it_caught():
+    """One roll rolled once and reused, the standing reading for an area effect."""
+    caster, field, fight = _walling(4)
+
+    with _wall_cast(hope=12, fear=11):
+        result = wall_of_flame(caster, field[0], fight)
+
+    burnt = [a for a in field if a.hp_marked]
+    assert result.damage_roll is not None
+    assert burnt and all(a.hp_marked == burnt[0].hp_marked for a in burnt)
 
 
 # --- Assessed rather than built ----------------------------------------------

@@ -29,6 +29,7 @@ from combat.state import FightState
 from content import (
     activations_allowed,
     apply_ally_on_roll,
+    apply_ally_on_spotlight,
     apply_on_party_attack_roll,
     apply_on_roll,
     converted_party_roll,
@@ -324,6 +325,10 @@ def _take_gm_turn(state: FightState) -> None:
             break
 
         free = state.take_free_activation(adversary)
+        # Whether Fear actually changed hands for this spotlight. Not the same as
+        # "not free": the turn's first paid activation costs nothing, and content
+        # keyed on the GM *spending* Fear has to be able to tell the two apart.
+        bought = False
         if not free:
             # One paid activation a turn is free of Fear; every one after costs
             # a Fear. Some adversaries cost extra on top, even for the first -
@@ -335,6 +340,7 @@ def _take_gm_turn(state: FightState) -> None:
                 # a free spotlight elsewhere on the field is still owed.
                 out_of_fear = True
                 continue
+            bought = bool(owed)
             paid += 1
 
         taken[id(adversary)] = taken.get(id(adversary), 0) + 1
@@ -352,6 +358,12 @@ def _take_gm_turn(state: FightState) -> None:
         # acting.
         state.spotlighted = adversary
         try:
+            # Party content that answers the GM *buying* a spotlight - Dread's
+            # Avatar of Terror feeds on it. Asked before the activation resolves,
+            # and told whether Fear was actually spent, so the turn's free
+            # activation and a rallied ally's spotlight correctly pay nothing.
+            # Nothing here knows what any of that content is.
+            apply_ally_on_spotlight(adversary, state, bought)
             take_adversary_turn(adversary, state)
         finally:
             state.acting_free = None

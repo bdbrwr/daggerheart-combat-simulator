@@ -1,9 +1,11 @@
 # SRD domain cards: what's ported
 
-The SRD prints **189 domain cards** - nine domains of 21 each, three at level 1
-and two at every level from 2 to 10. This file tracks which of them the simulator
-runs, for the reason `adversaries/PORTED.md` exists: without a list there is no
-way to tell a card nobody has got to from a card that isn't in the book.
+**SRD 2.0 prints 210 domain cards** - **ten** domains of 21 each, three at level 1
+and two at every level from 2 to 10. SRD 1.0 printed 189 across nine domains;
+2.0 adds **Dread**, whose 21 cards are the whole of what is outstanding here. This
+file tracks which of them the simulator runs, for the reason
+`adversaries/PORTED.md` exists: without a list there is no way to tell a card
+nobody has got to from a card that isn't in the book.
 
 **It matters more here than it does for adversaries.** A card only reaches the
 coverage block if some character sheet names it, because coverage answers "how
@@ -13,18 +15,24 @@ visible.
 
 ## Scope
 
-**All ten levels, all nine domains** - the SRD's 189 cards, complete. Every card a
-party of any level and any class combination could hold is either running or
-assessed, so a new party composition can be simulated without writing code first,
-and nothing anywhere is in the *unimplemented* state. What arrives from here is
-homebrew.
+**All ten levels of the nine SRD 1.0 domains** - 189 cards, complete. Every card a
+party of any level and any class combination could hold *out of those nine* is
+either running or assessed, and none of them is in the *unimplemented* state.
+
+**What is outstanding is the whole Dread domain**, 21 cards across all ten levels,
+new in SRD 2.0 and not started. Until it lands, a loadout naming a Dread card
+names something nobody has written - and Dread is reachable by the **Warlock** and
+**Witch** classes, both also new in 2.0, so it is a real gap for any party built
+from the current book rather than a theoretical one.
 
 The scope grew from levels 1-2, then to 3, then to 4, then to 5, then to 6, then
 to 7, then to 8, then to 9, then to 10, each time the previous one was finished.
 Cards are ported
 **by level** rather than by domain: a level is the slice a party actually
 occupies, and finishing one means no loadout at that level can name a card nobody
-has written.
+has written. **Dread breaks that shape** - it is one domain across every level at
+once, so it is the first thing here that is a *domain* batch rather than a level
+one, the way the very first batches were.
 
 ## How porting works
 
@@ -34,15 +42,32 @@ The same process the adversary port settled on, and for the same reasons:
   so a batch was a domain. A *level* is only two cards per domain, so a level 3
   batch is two or three domains instead. The size is what matters - five or six
   cards is one hand-over of rulings and one round of review.
-- **Card text is taken from `.reference/abilities.json` and checked against the
-  printed page** in the SRD PDF before the batch lands. The domain sections start
-  at printed page **118**. The PDF renders two printed pages per sheet, so PDF
-  page `n` shows printed `2n-2` and `2n-1` - to reach printed page `p`, read PDF
-  page `(p + 2) / 2`. **Confirmed**: Arcana 119, Blade 121, Bone 122-123,
-  Codex 124, Grace 126, Midnight 128, Sage 130, Splendor 132, Valor 134 - every
-  domain now read at least once. Adversaries are printed 80-100, equipment 50-53.
-  A domain's whole 1-10 range fits on one or two printed pages, so checking a
-  domain once covers every level of it.
+- **Card text is taken from the reference JSON in `.reference/` and checked
+  against the printed page** in `.reference/DH_SRD_2_2026_08_25.pdf` before the
+  batch lands. Both were refreshed for SRD 2.0 - see
+  `adversaries/PORTED.md` → *The reference files were refreshed for SRD 2.0*.
+- **Every page number in a batch section below is an SRD 1.0 number.** Batches 1
+  through 32 were all read against 1.0, and each one records the page it checked
+  ("Verified against the printed page (SRD p. 119)"). Those lines are kept as the
+  record of what was verified when, and they are **not** usable as directions to a
+  page today: 2.0 repaginated the whole book. The only current page numbers in this
+  file are the ones in the two bullets immediately below.
+- **Printed page *p* is PDF page *p*.** SRD 2.0 renders one printed page per PDF
+  page, so `Read`'s `pages=` argument takes the printed number directly. SRD 1.0
+  rendered two printed pages per sheet and needed `(p + 2) / 2`; **that formula is
+  dead** and a page reached with it will be roughly half a book early.
+- **The cards live in an appendix now**, not in the domain chapters. SRD 2.0's
+  *Domain Card Reference* starts at printed page **206** and prints all ten
+  domains in alphabetical order, each card in full with its level and Recall Cost.
+  A domain takes about two pages, so its whole 1-10 range is one read.
+  **Confirmed**: Arcana 206-207, Dread 213-214, Grace 215-216. The other seven sit
+  between them in alphabetical order and are read as their batch comes up rather
+  than guessed at from that spacing.
+- Elsewhere in 2.0, for when a card needs a rule looked up: the domains are
+  described at printed p. **7**, classes p. **8**, ancestries p. **32**,
+  communities p. **38**, transformations p. **42**, core mechanics p. **46**,
+  weapons p. **55**, armor p. **72**, loot and items p. **75**, consumables
+  p. **80**, adversaries and environments p. **93**.
 - **Mechanics are implemented; usage policies are ruled on.** What the card does
   is read off the page and written. *When a player would actually use it* is a
   judgement about the game and belongs to the user - handed over as a table
@@ -498,13 +523,187 @@ gaps on the cards.
 
 **17 modelled, 1 dismissed, 0 outstanding.**
 
-## The SRD is complete
+## Dread — complete
 
-**All 189 domain cards, ten levels, nine domains.** Batches 30 (Arcana, Blade,
+New in SRD 2.0. Printed pp. **213-214**, read in full when the domain was logged:
+
+| Level | Cards |
+|---|---|
+| 1 | ✅ Blighting Strike · ✅ Umbral Veil · ✅ Voice of Dread |
+| 2 | ✅ Hideous Retribution · ✅ Siphon Essence |
+| 3 | ✅ Shared Trauma · ✅ Terrify |
+| 4 | ✅ Chains of Affliction · ✅ Summon Horror |
+| 5 | ✅ Dire Strike · ✅ Spectral Mist |
+| 6 | ✅ Darkfire · ✅ Jump Scare |
+| 7 | ✅ Dread-Touched · ✅ Wall of Hunger |
+| 8 | ✅ Dark Army · ✅ Eldritch Flesh |
+| 9 | ✅ Damnation · ✅ Savor the Anguish |
+| 10 | ✅ Avatar of Terror · ✅ Invoke Torment |
+
+**21 modelled, 0 dismissed, 0 outstanding.** The domain is complete, and with it
+every card SRD 2.0 prints.
+
+> **One rule for both walls, and it reached back into Codex.** Wall of Hunger
+> catches through the area rule at the **Close** band with a floor of two, and the
+> user ruled that Codex's *Wall of Flame* should match — so that card moved from
+> Far with no floor to Close with a floor of two, and now declines below two in the
+> band where it used to never decline. The superseded ruling is recorded in its
+> docstring rather than deleted. Neither band comes from either page: both print
+> the wall as spanning "two points within Far range", which is where its endpoints
+> are rather than how much of the field it crosses. (Codex's *Manifest Wall* is a
+> separate case and is correctly dismissed as terrain; Sage's *Plant Dominion*
+> follows it.)
+
+### Batch 35 — Dread at levels 7-10 (8 cards)
+
+**Verified against the printed page** (SRD 2.0 p. 214).
+
+| Card | Disposition |
+|---|---|
+| **Dread-Touched** (Dr 7) | Modelled, partial. 2 Stress denies the GM a Fear, below a ceiling; once per rest, a roll bonus equal to the whole pool |
+| **Wall of Hunger** (Dr 7) | Modelled, partial. A Hope forces 2 Stress on everything the Close band catches as the wall appears |
+| **Dark Army** (Dr 8) | Modelled. Eight fiends, each spent either as +1d8 dealt or −1d8 taken, whichever comes first |
+| **Eldritch Flesh** (Dr 8) | Modelled. Damage thresholds rise by the caster's marked Stress; 2 Hope on a roll with Fear buys an Armor Slot back |
+| **Damnation** (Dr 9) | Modelled, partial. A whole d20 per Stress into one creature, and its death costs the rest of the field a Stress each |
+| **Savor the Anguish** (Dr 9) | Modelled, partial. The only wholly free card in the domain: an adversary taking Severe damage clears the holder a Stress |
+| **Avatar of Terror** (Dr 10) | Modelled, partial. Force of Nature's form with 1d6 per Fear in the GM's pool on every damage roll |
+| **Invoke Torment** (Dr 10) | Modelled, partial. Double damage to anything stressed out, and a Hope for finishing one |
+
+**One new hook, and only one across the whole domain** — twenty of the twenty-one
+cards were built on machinery that already existed. The rest of the new shared
+surface is three condition names (`CHAINED`, `INCORPOREAL`, `FEAR_FUELED`) and one
+helper.
+
+- **`ally_on_spotlight`** — party content answering an adversary being spotlighted,
+  and told whether the GM actually **spent Fear** to buy it. The party-wide twin of
+  `on_spotlight`, which is holder-scoped on the adversary and so can only ever
+  reach the stat block's own features. Avatar of Terror is the only registrant and
+  could not be finished without it: "when the GM spends a Fear to spotlight an
+  adversary" is a fact about the GM's economy rather than about anything the
+  adversary then does. The `paid` flag is what makes it exact — a GM turn's first
+  activation costs nothing, and a spotlight granted by content was bought by that
+  feature rather than by the turn's budget, so neither pays out. One call site, in
+  `combat/fight.py`'s GM turn.
+
+Four firsts at these levels:
+
+- **The first threshold bonus that moves during a fight.** Eldritch Flesh rises
+  with the caster's marked Stress, where every other threshold number is carried
+  resolved on the sheet and Frenzy's +8 is a constant.
+- **The first pool spent on two different things.** Dark Army's eight tokens are
+  both a damage bonus and a ward.
+- **The largest roll bonus in the project.** Dread-Touched's per-rest clause is the
+  GM's whole Fear pool — up to +12 on one action roll, against +3 for the next
+  largest anybody carries.
+- **The first damage that moves because of what the other side did.** Avatar of
+  Terror rolls 1d6 per Fear the GM is holding, re-read on every damage roll.
+
+**Avatar of Terror runs in full**, including the half that pays for its own
+upkeep. That clause was first declared as a gap on the reading that nothing
+announces the GM buying a spotlight; the user corrected it — the GM does spend
+Fear to activate another adversary, and the loop is the thing paying — so
+`ally_on_spotlight` was built and the clause wired to it. The form now takes a
+Hope in and owes one before each action roll, which makes it the only place in the
+project where the two sides' economies are wired directly together.
+
+### Batch 34 — Dread at levels 4-6 (6 cards)
+
+**Verified against the printed page** (SRD 2.0 pp. 213-214).
+
+| Card | Disposition |
+|---|---|
+| **Chains of Affliction** (Dr 4) | Modelled, partial. 2 Stress *Chains* one adversary; while chained, its attacks mark one fewer Hit Point |
+| **Summon Horror** (Dr 4) | Modelled, partial. **No attack roll** - a Stress, damage lands, and a failed Reaction Roll (12) forces Stress equal to the HP marked |
+| **Dire Strike** (Dr 5) | Modelled. A Hope off the party takes a Fear off the GM, on any hit that marked a Hit Point |
+| **Spectral Mist** (Dr 5) | Modelled, partial. 2 Hope makes the caster's allies immune to physical damage until each one's next action roll |
+| **Darkfire** (Dr 6) | Modelled, partial. **No attack roll** - the whole Hope pool, one adversary per Hope, each saving against 15 for half |
+| **Jump Scare** (Dr 6) | Modelled, partial. A Stress makes a target *Vulnerable* until they mark a Hit Point |
+
+**Still no new hooks** - the second batch running, and the whole domain so far has
+needed nothing added to `content/registry.py`. Two new condition names
+(`CHAINED`, `INCORPOREAL`) and one shared helper (`_spellcast_dice`) are the whole
+of the new shared surface.
+
+Three firsts worth knowing before these are run:
+
+- **Two cards deal damage with no roll at all.** Summon Horror and Darkfire are
+  free abilities, so a Stress or a Hope pool now buys damage *and* leaves the
+  caster's action roll intact. Nothing before this bought both in one spotlight.
+- **Chains of Affliction is the first thing that makes an adversary's attacks
+  worth less.** Every earlier condition changes how rolls against its holder go,
+  stops them acting, or is recorded and inert.
+- **Jump Scare's Vulnerable costs the GM no Fear to clear.** It ends when the
+  target marks a Hit Point - so it is the only party-applied condition that ends
+  itself on the party doing what the condition was helping them do.
+
+**One gap that shared machinery could close**, recorded rather than acted on:
+Jump Scare's trigger is "when you deal **magic** damage", and `on_hit` is handed
+the landed attack and its damage roll but **not** the type. So it currently fires
+on any landed attack that dealt damage, which errs generous. `on_damaged` already
+carries a `damage_type` (added for Spellcharge); `on_hit` does not. Adding one
+would be a change to shared machinery affecting every registrant, so it is a
+question rather than a change.
+
+### Batch 33 — Dread at levels 1-3 (7 cards)
+
+**Verified against the printed page** (SRD 2.0 pp. 213-214). The first batch read
+against 2.0, and the first ported **by domain** rather than by level since the
+very first batches — the whole domain arrived at once, so a level slice of it
+would have been an arbitrary cut.
+
+| Card | Disposition |
+|---|---|
+| **Blighting Strike** (Dr 1) | Modelled, partial. A bigger die on a roll with **Fear** — d10+1 against d6+1 — and the target's next successful attack deals half damage |
+| **Umbral Veil** (Dr 1) | Modelled, partial. A Stress buys tokens equal to the Fear in the GM's pool, each worth −1 on one attack roll made against the holder |
+| **Voice of Dread** (Dr 1) | Modelled, partial. Recall Cost 0 and no cost to cast: a forced Stress and a *Restrained* the GM pays to clear |
+| **Hideous Retribution** (Dr 2) | Modelled, partial. A Reaction to an ally being hurt — a reaction roll on the Spellcast trait, then a Stress for d6 magic damage |
+| **Siphon Essence** (Dr 2) | Modelled, partial. Once per long rest: damage, and the caster clears Hit Points one-for-one with what the target marked |
+| **Shared Trauma** (Dr 3) | Modelled, partial. Moves Hit Points between two PCs — net zero across the party |
+| **Terrify** (Dr 3) | Modelled, partial. Forces **1d4** Stress, the largest forced Stress in the project, plus *Vulnerable* on a success with Fear |
+
+**No new hooks.** That is the notable thing about the batch: a whole new domain's
+first three levels needed nothing added to `content/registry.py`, which is the
+first time that has been true of a level's worth of cards since level 3. Two
+existing hooks were used in ways they had not been:
+
+- **`ally_damage_reduction` carrying a third party's effect.** Blighting Strike
+  halves an adversary's next successful attack, and the halving belongs to neither
+  combatant in that attack — the caster laid it a spotlight earlier. It reaches the
+  hit through the one hook asked about damage to *anybody* with the whole party's
+  content in scope, and finds the attacker through `fight.spotlighted`.
+- **`force_reroll` used to rewrite rather than re-roll.** Umbral Veil's tokens are
+  spent *after* an attack roll is made, so the hook returns a copy of the resolved
+  roll with a reduced modifier and leaves `remake` untouched. Fane of the Wilds does
+  exactly this on the party's own rolls; this is the same trick pointed at the GM's.
+
+**Three of the seven pay out on a roll with Fear** — Blighting Strike's larger
+die, Siphon Essence's +1 Proficiency, Terrify's *Vulnerable*. Nothing else in the
+project is shaped that way round, and it is worth watching when these are run:
+the outcome that hands the GM a Fear is also the one this domain rewards.
+
+Two more things visible from the page, both still ahead at levels 4-10, and both
+shapes this project has not built:
+
+- **A new condition, *Chained***, from *Chains of Affliction*: a chained creature's
+  attacks mark one fewer Hit Point than they would. Nothing here changes how much
+  HP somebody *else's* attack marks, so this needs machinery, and only one creature
+  can be Chained at a time.
+- **Several cards read the GM's Fear pool as their own size** - *Umbral Veil*
+  places tokens equal to the Fear in the pool, *Dread-Touched* takes a bonus equal
+  to it, *Avatar of Terror* scales a damage bonus off it. Midnight's *Night Terror*
+  is the only existing card of that shape, and it is one card rather than a
+  domain's recurring theme.
+
+Both are readings off the printed text, not proposals - what any of it comes to
+here is the user's call, batch by batch, as every domain's has been.
+
+## The nine SRD 1.0 domains are complete
+
+**All 189 of them, ten levels, nine domains.** Batches 30 (Arcana, Blade,
 Bone), 31 (Codex, Grace, Midnight) and 32 (Sage, Splendor, Valor) closed level 10,
-and with it the book. Every card a party of any level and any class combination
-could hold is either running or assessed, and nothing anywhere is in the
-*unimplemented* state.
+and with it SRD 1.0. Every card a party of any level and any class combination
+could hold **out of those nine** is either running or assessed, and none of them is
+in the *unimplemented* state.
 
 **Level 10 dismissed one card of eighteen** - Grace's *Notorious* - plus one spell
 inside a Grimoire. That is the lowest of any level: the capstones are mechanical,

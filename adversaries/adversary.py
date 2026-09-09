@@ -464,7 +464,29 @@ class Adversary:
         self.hp_marked = max(self.hp_marked - amount, 0)
 
     def mark_stress(self, amount: int) -> None:
+        """Mark Stress this adversary is being *forced* to take.
+
+        Per the SRD: "When a character must mark 1 or more Stress but can't, they
+        mark 1 HP instead." **That rule applies on both sides of the table**, which
+        is the user's ruling - it is not a PC rule, and this method used to clamp at
+        `stress_max` and silently lose the overflow. One HP for the whole
+        unmarkable requirement rather than one per Stress that wouldn't fit,
+        matching `PlayerCharacter.mark_stress` exactly, so the two sides answer the
+        question the same way.
+
+        No death check, because adversaries have none: `is_defeated` is simply every
+        HP marked, and an adversary stressed out of the fight leaves it the same way
+        a damaged one does.
+
+        For a *voluntary* cost - a feature that says "mark a Stress" - use
+        `spend_stress` instead. The SRD keeps the two apart: a move requiring Stress
+        simply can't be used when the track is full, and must never fall through
+        to HP.
+        """
+        free = self.stress_max - self.stress_marked
         self.stress_marked = min(self.stress_marked + amount, self.stress_max)
+        if amount > free:
+            self.mark_hp(1)
 
     def clear_stress(self, amount: int) -> None:
         self.stress_marked = max(self.stress_marked - amount, 0)
@@ -477,9 +499,11 @@ class Adversary:
         whose feature is being activated." So this is per-adversary, not a pool.
 
         Same shape as a PC's voluntary Stress cost, and the same rule - a feature
-        whose Stress can't be paid simply isn't available. Unlike a PC there is no
-        fallback to marking HP, because that rule is about being *forced* to mark
-        Stress, which nothing does to an adversary here.
+        whose Stress can't be paid simply isn't available, with no fallback to
+        marking HP. That fallback belongs to being *forced* to mark Stress, which
+        is `mark_stress` and which several party cards do to an adversary (Death
+        Grip, Voice of Dread, Terrify, Night Terror). The two are kept apart on
+        this side of the table exactly as they are on the PC's.
         """
         return self.stress_marked + amount <= self.stress_max
 

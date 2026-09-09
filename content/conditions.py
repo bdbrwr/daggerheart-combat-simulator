@@ -245,6 +245,48 @@ SPECTRAL = "Spectral"
 # place a cost owed *per action roll* can be taken.
 TRANSFORMED = "Transformed"
 
+# **Chained**, from Dread's *Chains of Affliction*: "temporarily *Chain* a target
+# within Close range. When a *Chained* creature deals damage, the target of their
+# attack marks one fewer Hit Point than they would."
+#
+# The first condition anywhere that changes what its holder's **attacks** are
+# worth. Every other one either changes how rolls against the holder go
+# (Vulnerable, Hidden), stops them acting (Stunned), or is recorded and inert
+# (Restrained). What it does is read by the card's own hook rather than by
+# anything here; the name is the record, and what a play-by-play line says.
+#
+# "You can't have more than one creature *Chained* at a time" is the card's own
+# limit and is enforced where it is applied, not here - a second registrant would
+# have its own chain to keep track of.
+CHAINED = "Chained"
+
+# **Incorporeal**, from Dread's *Spectral Mist*: "turns you and allies of your
+# choice within Close range momentarily incorporeal. While a creature is
+# incorporeal, they can move through solid objects and are immune to physical
+# damage."
+#
+# The same effect `SPECTRAL` already carries, kept as its own name for the reason
+# HIDDEN and INVISIBLE are kept apart: the two arrive from different cards and a
+# report saying "Spectral" when *Spectral Mist* fired would read as the wrong card
+# having gone off. Neither name carries machinery - each card's own damage hook
+# reads its own state - so two names cost nothing.
+#
+# Where it differs from Spectral is the ender, not the effect: Specter of the Dark
+# lasts until its holder makes an action roll **targeting another creature**, and
+# this lifts on their next action roll of any kind.
+INCORPOREAL = "Incorporeal"
+
+# **Fear-Fueled**, from Dread's *Avatar of Terror*: "mark a Stress to transform
+# into a creature fueled by fear", with a Hope owed before every action roll and
+# the form dropping when one cannot be paid.
+#
+# Mechanically Force of Nature's twin, and it would have been tempting to reuse
+# `TRANSFORMED` - but a PC who multiclassed into both would then have one state
+# doing two cards' work, and a play-by-play line could not say which had fired.
+# The SRD gives this one no keyword either, so like TRANSFORMED the name is the
+# simulator's own label.
+FEAR_FUELED = "Fear-Fueled"
+
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to
 # fire. The same vocabulary serves both, so a condition that costs something at a

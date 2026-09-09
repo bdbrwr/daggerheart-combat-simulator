@@ -284,3 +284,63 @@ def test_attack_uses_tuned_stats_from_spawn():
 
     assert mock_roll_d20.call_args.kwargs["modifier"] == 7
     assert mock_roll_damage.call_args.kwargs["modifier"] == 4
+
+
+# Forced Stress vs. a voluntary Stress cost. The SRD's "when a character must mark
+# 1 or more Stress but can't, they mark 1 HP instead" applies on **both** sides of
+# the table, which this side used to get wrong: `mark_stress` clamped at
+# `stress_max` and silently lost the overflow. Several party cards force Stress on
+# an adversary - Death Grip, Voice of Dread, Terrify, Night Terror - so the two
+# routes have to stay distinguishable here exactly as they do for a PC.
+
+
+def test_forced_stress_that_fits_marks_no_hp():
+    adversary = _make_adversary(stress_max=3)
+
+    adversary.mark_stress(2)
+
+    assert adversary.stress_marked == 2
+    assert adversary.hp_marked == 0
+
+
+def test_forced_stress_that_does_not_fit_marks_a_hit_point():
+    adversary = _make_adversary(stress_max=3)
+    adversary.mark_stress(3)
+
+    adversary.mark_stress(1)
+
+    assert adversary.stress_marked == 3
+    assert adversary.hp_marked == 1
+
+
+def test_the_overflow_is_one_hit_point_for_the_whole_requirement():
+    """Not one per Stress that wouldn't fit - the same arithmetic a PC uses."""
+    adversary = _make_adversary(stress_max=3)
+    adversary.mark_stress(1)
+
+    # Four forced against two free slots: three Stress marked, and a single HP.
+    adversary.mark_stress(4)
+
+    assert adversary.stress_marked == 3
+    assert adversary.hp_marked == 1
+
+
+def test_the_overflow_can_be_the_last_hit_point():
+    adversary = _make_adversary(hp_max=5, stress_max=3)
+    adversary.mark_hp(4)
+    adversary.mark_stress(3)
+
+    adversary.mark_stress(1)
+
+    assert adversary.hp_marked == 5
+    assert adversary.is_defeated is True
+
+
+def test_a_voluntary_stress_cost_never_falls_through_to_hp():
+    """A feature whose Stress can't be paid simply isn't available."""
+    adversary = _make_adversary(stress_max=3)
+    adversary.mark_stress(3)
+
+    assert adversary.spend_stress(1) is False
+    assert adversary.hp_marked == 0
+    assert adversary.stress_marked == 3

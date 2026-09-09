@@ -1,8 +1,10 @@
 """Splendor domain cards.
 
 Card text is paraphrased in each docstring rather than quoted in full. The
-verbatim text is in .reference/abilities.json, checked against the printed page
-(SRD p. 132).
+verbatim text is in .reference/abilities.json, checked against the printed page.
+That check was made against **SRD 1.0** (p. 132). SRD 2.0 repaginated the book and
+moved every domain's cards into its *Domain Card Reference* appendix, which begins
+at p. 206. Re-check there, never at the old number.
 
 Splendor is the restoring domain, and at level 3 both cards give something back:
 one off a landed attack, one off having nothing left to give. Voice of Reason is

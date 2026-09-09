@@ -8,7 +8,10 @@ on, so those cards are declared directly rather than inside a book.
 
 Card text is paraphrased in each docstring rather than quoted in full. The
 verbatim text is in .reference/abilities.json, and was checked against the
-printed page (SRD pp. 124-125) for all nine books.
+printed page for all nine books. That check was made against **SRD 1.0**
+(pp. 124-125). SRD 2.0 repaginated the book and moved every domain's cards into
+its *Domain Card Reference* appendix, which begins at p. 206 and runs Codex up to
+p. 213. Re-check there, never at the old number.
 
 Level 7 splits the way level 6 did, one card each way. **Codex-Touched** is the
 only *X*-Touched card in the project whose bonus has a price - a Stress buys the
@@ -841,6 +844,10 @@ WALL_OF_FLAME_DIE = 10
 WALL_OF_FLAME_MODIFIER = 3
 WALL_OF_FLAME_DIFFICULTY = 15
 
+# SIMULATION RULE - policy, ruled. The Fire Flies floor, brought here when Dread's
+# Wall of Hunger was ported and the user ruled the two walls to one rule.
+WALL_OF_FLAME_WORTH_IT = 2
+
 
 @ally_damage_reduction(
     "Book of Grynn",
@@ -917,7 +924,8 @@ def arcane_deflection(
         "half was, and for the same reason - a GM who can see a wall of fire "
         "keeps their adversaries off it",
         "'between two points within Far range' - the area rule in "
-        "SIMULATION-RULES.md decides how much of the field the wall crosses",
+        "SIMULATION-RULES.md decides how much of the field the wall crosses, and "
+        "the band it is answered at is a ruling rather than the printed number",
     ],
 )
 def wall_of_flame(caster: Holder, target, fight: Fight) -> AttackResult | None:
@@ -929,20 +937,35 @@ def wall_of_flame(caster: Holder, target, fight: Fight) -> AttackResult | None:
     wall takes 4d10+3 magic damage."
 
     SIMULATION RULE - rules interpretation, ruled. **The wall's reach is the area
-    rule's Far band**, which is the user's ruling on how a wall drawn across the
-    field is answered here. Far is everything on the field a quarter of the time
-    short by one, so a wall of flame is the widest thing the party can cast and
-    still not reliably everything.
+    rule's Close band**, with a floor of two. This **supersedes an earlier ruling**
+    made when the Book of Grynn was ported, which put it at Far with no floor: when
+    Dread's *Wall of Hunger* arrived the user ruled the two walls to one rule, and
+    this is the card that moved. Neither band comes from the page - both cards
+    print their wall as spanning "two points within Far range", which is where its
+    *endpoints* are rather than how much of the field it crosses.
 
     Rolled against the printed Difficulty of 15 rather than against any target's,
     which is what the card prints - so this is one of the few Spellcast Rolls in
     the simulator whose number to beat has nothing to do with what it is aimed at.
 
-    Never declines. It costs nothing but the roll the caster was making anyway.
+    SIMULATION RULE - policy, ruled. **Declines below two in the band**, the Fire
+    Flies floor. It used to never decline, on the reasoning that it costs nothing
+    but the roll the caster was making anyway - the Preservation Blast reading. The
+    floor arrived with the same ruling that moved the band.
+
+    The band is drawn **before** the roll and reused, so the floor and the sweep see
+    one field rather than two draws.
 
     Everything caught takes the same 4d10+3 and is measured against its own
     thresholds, which is how every area effect here resolves.
     """
+    if fight is None:
+        return None
+
+    caught = targets_in_area(Range.CLOSE, fight.living_adversaries)
+    if len(caught) < WALL_OF_FLAME_WORTH_IT:
+        return None
+
     attack_roll = spellcast(
         caster, target, fight, difficulty=WALL_OF_FLAME_DIFFICULTY
     )
@@ -950,10 +973,6 @@ def wall_of_flame(caster: Holder, target, fight: Fight) -> AttackResult | None:
         return None
 
     if not attack_roll.is_success:
-        return AttackResult(attack_roll=attack_roll, damage_roll=None)
-
-    caught = targets_in_area(Range.FAR, fight.living_adversaries)
-    if not caught:
         return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
     damage_roll = roll_damage(

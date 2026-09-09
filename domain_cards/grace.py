@@ -6,8 +6,10 @@ live here - nothing outside this package should ever need editing to add one.
 
 Card text is paraphrased in each docstring rather than quoted in full, so a
 mismatch between the code and the rule is easy to spot while debugging. The
-verbatim text is in .reference/abilities.json, checked against the printed page
-(SRD p. 126).
+verbatim text is in .reference/abilities.json, checked against the printed page.
+That check was made against **SRD 1.0** (p. 126). SRD 2.0 repaginated the book and
+moved every domain's cards into its *Domain Card Reference* appendix, which begins
+at p. 206 - Grace sits at pp. 215-216. Re-check there, never at the old number.
 
 Grace is the talking domain, and at levels 1-2 most of it is talking: three of
 the five cards resolve rolls the simulator never makes. What is left are the two

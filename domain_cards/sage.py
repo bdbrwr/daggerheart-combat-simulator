@@ -6,8 +6,10 @@ live here - nothing outside this package should ever need editing to add one.
 
 Card text is paraphrased in each docstring rather than quoted in full, so a
 mismatch between the code and the rule is easy to spot while debugging. The
-verbatim text is in .reference/abilities.json, checked against the printed page
-(SRD p. 130).
+verbatim text is in .reference/abilities.json, checked against the printed page.
+That check was made against **SRD 1.0** (p. 130). SRD 2.0 repaginated the book and
+moved every domain's cards into its *Domain Card Reference* appendix, which begins
+at p. 206. Re-check there, never at the old number.
 
 Corrosive Projectile at level 3 is the first card anywhere that changes an
 adversary's **Difficulty** mid-fight. It does it by writing the new number into
@@ -1170,8 +1172,9 @@ def death_grip(caster: Holder, target, fight: Fight) -> AttackResult | None:
             f"and {target.name} for {damage_roll.total}"
         )
     else:
-        # Forced rather than spent: an adversary with a full Stress track simply
-        # loses nothing, since the SRD's overflow-into-HP rule is a PC rule.
+        # Forced rather than spent, so an adversary with a full Stress track marks
+        # a Hit Point instead - the SRD's overflow rule applies on both sides of
+        # the table. See `Adversary.mark_stress`.
         target.mark_stress(DEATH_GRIP_STRESS)
         fight.note(
             f"{caster.name} constricts {target.name}, forcing "

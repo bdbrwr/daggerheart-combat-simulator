@@ -1,6 +1,6 @@
 {
   "publication": "Daggerheart SRD",
-  "notes": "Adversaries as printed in the SRD. Numbers here match the book exactly - per-encounter tuning belongs in encounters/, so these stay checkable against the printed page. Entries are in the book's own tier-then-print order, and PORTED.md tracks which of the SRD's 129 are in and which are still out. Every entry states the damage_type printed beside its standard attack; the field accepts the book's own 'phy' and 'mag' too, and an entry that omitted it would simply never have anyone's resistance applied to it.",
+  "notes": "Adversaries as printed in the SRD. Numbers here match the book exactly - per-encounter tuning belongs in encounters/, so these stay checkable against the printed page. Entries were read from SRD 1.0 and are in that book's tier-then-print order; the current book is SRD 2.0 (.reference/DH_SRD_2_2026_08_25.pdf), whose roster runs to 264. Four tier 1 entries were spot-checked against 2.0 and matched exactly. PORTED.md tracks which are in and which are still out. Every entry states the damage_type printed beside its standard attack; the field accepts the book's own 'phy' and 'mag' too, and an entry that omitted it would simply never have anyone's resistance applied to it.",
 
   "adversaries": [
     {
