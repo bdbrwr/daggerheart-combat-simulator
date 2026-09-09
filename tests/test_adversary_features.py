@@ -28,8 +28,13 @@ from content.aoe import Range
 from content.damage_types import DamageType
 from content.conditions import (
     BEFORE_AN_ACTION_ROLL,
+    COVERED_IN_SPIDERS,
+    EXHAUSTED,
+    HIDDEN,
     ON_A_GM_TURN,
     POISONED,
+    RESTRAINED,
+    SHAKY,
     VULNERABLE,
     WHEN_THEY_ACT,
     Condition,
@@ -37,38 +42,72 @@ from content.conditions import (
     when_they_act,
 )
 from items.registry import find_weapon
-from content.names import base_name, parameter
+from content.names import ADVERSARY, base_name, parameter, qualified
 from content.registry import (
     Status,
     activations_allowed,
+    apply_attack_missed,
     assess,
     deals_direct_damage,
     extra_spotlight_cost,
     feature_parameter,
     harden_damage,
     standard_attack_area,
+    total_ally_damage_bonus,
 )
 from dice.common import AdvantageState
 from dice.d20 import D20RollResult
 from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityOutcome, DualityRollResult
 from features.adversaries import (
+    GLORY_TOKENS,
+    HAND_OF_GLORY_TOKENS,
+    TORCHBEARER_BONUS,
     acid_bath,
+    aquatic_attacker,
+    aquatic_attacker_bites_deeper,
+    archers_bane,
+    backbreaker,
     bite,
     bone_breaker,
+    brutal,
+    chop_happy,
+    dance_in_the_flames,
+    darkfang_envenomation,
+    darkweave_venom,
     death_quake,
+    den_mother,
+    drag_and_bag,
+    drag_and_bag_holds_them,
     earth_eruption,
+    get_em_off,
     grab_and_drag,
     ground_slam,
     hail_of_boulders,
+    hand_of_glory,
+    hand_of_glory_lights,
+    kneecapper,
+    knife_thrower,
     momentum,
+    quicker_than_she_looks,
     ramp_up_costs_fear,
     ramp_up_sweeps,
     rampaging_fury,
     relentless,
+    shadow_fang,
+    shadow_fang_shakes_them,
+    shallow_cuts,
+    skin_crawling,
     spit_acid,
+    surprise,
+    surprise_hits_harder,
+    survival_instinct,
+    tail_swat,
+    torchbearer,
     trample,
     weak_structure,
+    wind_lord,
+    wrap_in_shadow_silk,
 )
 
 
@@ -159,6 +198,17 @@ def _duality(*, succeeds: bool, critical: bool = False) -> DualityRollResult:
         advantage_die_result=None,
         help_dice_results=None,
         difficulty=1 if succeeds else 100,
+    )
+
+
+def _landed(hp_marked: int = 1) -> AttackResult:
+    """A landed attack, for the on-hit reactions to answer."""
+    return AttackResult(
+        attack_roll=_d20(18),
+        damage_roll=DamageRollResult(
+            dice_groups=[DiceGroup(count=1, sides=8)], die_results=[[5]], modifier=0
+        ),
+        hp_marked=hp_marked,
     )
 
 
@@ -6380,3 +6430,1207 @@ def test_the_cap_still_binds_when_nothing_is_free():
         _take_gm_turn(fight)
 
     assert acted.call_count == 3, "party size + 1, unchanged"
+
+
+# --- Ahuizotl (SRD 2.0) ------------------------------------------------------
+
+
+def _ahuizotl(name: str = "Ahuizotl", **overrides):
+    return _adversary(
+        name,
+        features=["Aquatic Attacker", "Tail Swat", "Drag and Bag"],
+        hp_max=4,
+        stress_max=3,
+        **overrides,
+    )
+
+
+def test_the_ahuizotl_always_has_advantage_from_the_water():
+    """Ruled always-on: nothing records where a fight is happening."""
+    adversary = _ahuizotl()
+    target = _make_pc("Target")
+
+    assert aquatic_attacker(adversary, target, _fight()) is AdvantageState.ADVANTAGE
+
+
+def test_the_water_adds_a_die_to_every_attack():
+    adversary = _ahuizotl()
+    target = _make_pc("Target")
+
+    with patch("features.adversaries.random.randint", return_value=4):
+        assert aquatic_attacker_bites_deeper(adversary, target, _fight()) == 4
+
+
+def test_tail_swat_costs_a_stress_and_swings_bigger_than_the_bite():
+    """Also pins that Aquatic Attacker's die reaches an Action's own attack.
+
+    The Advantage half does not - `attack_advantage` is only asked of the standard
+    attack - but `damage_bonus` is asked wherever this adversary rolls damage, so
+    Tail Swat carries the d6 too. That asymmetry is declared on the feature, and
+    this is the case that would notice if it changed.
+    """
+    adversary = _ahuizotl()
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary])
+
+    with (
+        patch("adversaries.adversary.roll_d20", return_value=_d20(18)),
+        patch("features.adversaries.random.randint", return_value=3),
+        patch("adversaries.adversary.roll_damage") as rolled,
+    ):
+        tail_swat(adversary, target, fight)
+
+    assert adversary.stress_marked == 1
+    assert rolled.call_args.kwargs["dice_groups"] == [DiceGroup(count=1, sides=8)]
+    assert rolled.call_args.kwargs["modifier"] == 2 + 3
+
+
+def test_drag_and_bag_spends_a_fear_and_holds_them_for_the_fight():
+    """'Temporarily' on a PC is the whole fight - the standing reading."""
+    adversary = _ahuizotl()
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary], fear=3)
+
+    result = drag_and_bag(adversary, target, fight)
+
+    assert result is not None and result.made_an_attack is False
+    assert fight.fear == 2
+    assert fight.has_condition(target, RESTRAINED) is True
+    # No ender, so a GM turn coming round does not lift it.
+    assert fight.expire_conditions(target, ON_A_GM_TURN) == []
+
+
+def test_the_hold_buys_advantage_on_later_attacks():
+    adversary = _ahuizotl()
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary], fear=3)
+
+    assert drag_and_bag_holds_them(adversary, target, fight) is None
+
+    drag_and_bag(adversary, target, fight)
+
+    assert drag_and_bag_holds_them(adversary, target, fight) is AdvantageState.ADVANTAGE
+
+
+def test_one_ahuizotl_gets_nothing_from_anothers_hold():
+    holder = _ahuizotl()
+    other = _ahuizotl(name="Ahuizotl Two")
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[holder, other], fear=3)
+    drag_and_bag(holder, target, fight)
+
+    assert drag_and_bag_holds_them(other, target, fight) is None
+
+
+def test_drag_and_bag_declines_against_somebody_it_already_holds():
+    adversary = _ahuizotl()
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary], fear=3)
+    drag_and_bag(adversary, target, fight)
+
+    assert drag_and_bag(adversary, target, fight) is None
+    assert fight.fear == 2
+
+
+# --- Atotoll (SRD 2.0) -------------------------------------------------------
+
+
+def _atotoll(name: str = "Atotoll", **overrides):
+    return _adversary(
+        name,
+        features=["Wind Lord", "Stone of Omens", "Archer's Bane"],
+        hp_max=5,
+        **overrides,
+    )
+
+
+def test_wind_lord_hobbles_attacks_on_the_atotoll():
+    adversary = _atotoll()
+    attacker = _make_pc("Archer")
+    fight = _fight(adversaries=[adversary])
+    bow = find_weapon("Shortbow")
+
+    assert wind_lord(adversary, attacker, adversary, bow, fight) is True
+
+
+def test_wind_lord_does_not_hobble_attacks_on_anything_else():
+    """Without the scope check, one Atotoll would hobble the whole field."""
+    adversary = _atotoll()
+    other = _adversary("Somebody Else")
+    attacker = _make_pc("Archer")
+    fight = _fight(adversaries=[adversary, other])
+    bow = find_weapon("Shortbow")
+
+    assert wind_lord(adversary, attacker, other, bow, fight) is False
+
+
+def test_archers_bane_reflects_a_ranged_attackers_own_damage():
+    adversary = _atotoll()
+    attacker = _make_pc("Archer", hp_max=6)
+    fight = _fight(adversaries=[adversary], fear=3)
+    bow = find_weapon("Shortbow")
+
+    with patch("features.adversaries.roll_d20", return_value=_d20(18)):
+        archers_bane(adversary, attacker, bow, damage=7, hp_marked=1, fight=fight)
+
+    assert fight.fear == 2
+    assert attacker.hp_marked > 0
+
+
+def test_archers_bane_ignores_a_melee_attacker():
+    adversary = _atotoll()
+    attacker = _make_pc("Swordhand")
+    fight = _fight(adversaries=[adversary], fear=3)
+    blade = find_weapon("Broadsword")
+
+    archers_bane(adversary, attacker, blade, damage=7, hp_marked=1, fight=fight)
+
+    assert fight.fear == 3
+    assert attacker.hp_marked == 0
+
+
+def test_a_failed_reflection_still_costs_the_fear():
+    adversary = _atotoll()
+    attacker = _make_pc("Archer")
+    fight = _fight(adversaries=[adversary], fear=3)
+    bow = find_weapon("Shortbow")
+
+    with patch("features.adversaries.roll_d20", return_value=_d20(2)):
+        archers_bane(adversary, attacker, bow, damage=7, hp_marked=1, fight=fight)
+
+    assert fight.fear == 2
+    assert attacker.hp_marked == 0
+
+
+def test_a_hit_that_dealt_nothing_reflects_nothing():
+    adversary = _atotoll()
+    attacker = _make_pc("Archer")
+    fight = _fight(adversaries=[adversary], fear=3)
+    bow = find_weapon("Shortbow")
+
+    archers_bane(adversary, attacker, bow, damage=0, hp_marked=0, fight=fight)
+
+    assert fight.fear == 3
+
+
+def test_stone_of_omens_is_out_of_combat_rather_than_dismissed():
+    """The Hope and Fear are representable; searching a corpse mid-fight is not."""
+    assessment = assess(qualified(ADVERSARY, "Stone of Omens"))
+
+    assert assessment.status is Status.OUT_OF_COMBAT
+    assert assessment.status.is_dismissed is False
+    assert assessment.reason
+
+
+# --- Bugboar (SRD 2.0) -------------------------------------------------------
+
+
+def _bugboar(name: str = "Bugboar", **overrides):
+    return _adversary(
+        name,
+        features=["Surprise!", "Brutal", "Warheart"],
+        hp_max=5,
+        stress_max=3,
+        **overrides,
+    )
+
+
+def test_the_first_attack_of_the_scene_comes_with_advantage():
+    adversary = _bugboar()
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary])
+
+    assert surprise(adversary, target, fight) is AdvantageState.ADVANTAGE
+
+
+def test_the_second_attack_does_not():
+    adversary = _bugboar()
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary])
+
+    surprise(adversary, target, fight)
+
+    assert surprise(adversary, target, fight) is None
+
+
+def test_a_first_attack_that_missed_still_spends_the_surprise():
+    """The counter ticks in the advantage half, which is asked hit or miss."""
+    adversary = _bugboar()
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary])
+
+    surprise(adversary, target, fight)
+
+    assert surprise_hits_harder(adversary, target, fight) > 0
+    surprise(adversary, target, fight)
+    assert surprise_hits_harder(adversary, target, fight) == 0
+
+
+def test_a_bugboar_already_wounded_surprises_nobody():
+    adversary = _bugboar()
+    adversary.mark_hp(1)
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary])
+
+    assert surprise(adversary, target, fight) is None
+    assert surprise_hits_harder(adversary, target, fight) == 0
+
+
+def test_a_bugboar_that_has_marked_stress_surprises_nobody():
+    adversary = _bugboar()
+    adversary.mark_stress(1)
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary])
+
+    assert surprise(adversary, target, fight) is None
+
+
+def test_brutal_marks_a_stress_for_an_extra_die():
+    adversary = _bugboar()
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary])
+
+    with patch("features.adversaries.random.randint", return_value=5):
+        assert brutal(adversary, target, fight) == 5
+
+    assert adversary.stress_marked == 1
+
+
+def test_brutal_stops_when_the_stress_track_is_full():
+    """A Reaction asks `can_spend_stress`, not the desperation rule."""
+    adversary = _bugboar()
+    adversary.mark_stress(adversary.stress_max)
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary])
+
+    assert brutal(adversary, target, fight) == 0
+
+
+def test_warheart_spends_a_fear_to_shrug_a_condition_off():
+    adversary = _bugboar()
+    fight = _fight(adversaries=[adversary], fear=3)
+
+    fight.apply_condition(adversary, Condition(name=VULNERABLE, end=when_the_gm_pays))
+
+    assert fight.has_condition(adversary, VULNERABLE) is False
+    assert fight.fear == 2
+
+
+def test_warheart_cannot_refuse_what_it_cannot_pay_for():
+    adversary = _bugboar()
+    fight = _fight(adversaries=[adversary], fear=0)
+
+    fight.apply_condition(adversary, Condition(name=VULNERABLE, end=when_the_gm_pays))
+
+    assert fight.has_condition(adversary, VULNERABLE) is True
+
+
+# --- Common Ruffian (SRD 2.0) ------------------------------------------------
+
+
+def _ruffian(name: str = "Common Ruffian", **overrides):
+    return _adversary(
+        name,
+        features=["Group Attack", "Survival Instinct"],
+        difficulty=12,
+        major_threshold=6,
+        severe_threshold=10,
+        hp_max=4,
+        stress_max=4,
+        attack_modifier=0,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=0,
+        **overrides,
+    )
+
+
+def test_a_ruffian_that_rolls_high_flees_and_is_counted_as_defeated():
+    """Ruled: fleeing is modelled as defeat, and reports as a kill it isn't."""
+    adversary = _ruffian()
+    adversary.mark_hp(2)  # half of four
+    fight = _fight(adversaries=[adversary], fear=0)
+
+    with patch("features.adversaries.random.randint", return_value=6):
+        survival_instinct(adversary, 6, 2, fight)
+
+    assert adversary.is_defeated is True
+    assert fight.fear == 0
+
+
+def test_a_ruffian_that_rolls_low_stands_and_hands_the_gm_a_fear():
+    adversary = _ruffian()
+    adversary.mark_hp(2)
+    fight = _fight(adversaries=[adversary], fear=0)
+
+    with patch("features.adversaries.random.randint", return_value=1):
+        survival_instinct(adversary, 6, 2, fight)
+
+    assert adversary.is_defeated is False
+    assert fight.fear == 1
+
+
+def test_a_ruffian_above_half_rolls_nothing():
+    adversary = _ruffian()
+    adversary.mark_hp(1)
+    fight = _fight(adversaries=[adversary], fear=0)
+
+    with patch("features.adversaries.random.randint", return_value=6) as rolled:
+        survival_instinct(adversary, 3, 1, fight)
+
+    assert adversary.is_defeated is False
+    rolled.assert_not_called()
+
+
+def test_survival_instinct_rolls_once_however_many_wounds_follow():
+    adversary = _ruffian()
+    adversary.mark_hp(2)
+    fight = _fight(adversaries=[adversary], fear=0)
+
+    with patch("features.adversaries.random.randint", return_value=1):
+        survival_instinct(adversary, 6, 2, fight)
+        survival_instinct(adversary, 6, 1, fight)
+
+    assert fight.fear == 1, "the second wound must not roll again"
+
+
+def test_the_ruffians_group_attack_needed_no_new_code():
+    """The first non-Minion to carry it: the damage is built from its own attack."""
+    for name in ("Group Attack", "Survival Instinct", "Surprise!", "Warheart"):
+        assert assess(qualified(ADVERSARY, name)).status is Status.MODELLED
+
+
+# --- The Darkweaves (SRD 2.0) ------------------------------------------------
+
+
+def _bunched():
+    """Every band at its best reach, so a case is about the feature not the spread."""
+    return patch("content.aoe.random.random", return_value=0.0)
+
+
+def _spread():
+    """Melee at its narrower reach - one PC rather than two."""
+    return patch("content.aoe.random.random", return_value=0.99)
+
+
+def _crawler(name: str = "Darkweave Crawler", **overrides):
+    """Built defaults-then-update, so a case can override any printed stat.
+
+    Passing the fixed keywords straight through to `_adversary` alongside
+    `**overrides` is what broke twice in this file - a test that wants a different
+    Difficulty ends up handing it two.
+    """
+    defaults = dict(
+        features=["Minion (3)", "Skin-Crawling", "Group Attack", "Darkweave Venom"],
+        difficulty=10,
+        hp_max=1,
+        stress_max=1,
+        attack_modifier=-2,
+        damage_dice=[],
+        damage_modifier=2,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_skin_crawling_forces_a_stress_on_everybody_the_band_reaches():
+    adversary = _crawler()
+    party = _party(size=4)
+    fight = _fight(party=party, adversaries=[adversary], fear=3)
+
+    with _bunched():
+        assert skin_crawling(adversary, party[0], fight) is not None
+
+    assert fight.fear == 2
+    assert sum(1 for pc in party if pc.stress_marked) == 2
+
+
+def test_skin_crawling_declines_below_two_in_the_band():
+    """Group Attack's floor: a Fear for one Stress on one PC is thin."""
+    adversary = _crawler()
+    party = _party(size=4)
+    fight = _fight(party=party, adversaries=[adversary], fear=3)
+
+    with _spread():
+        assert skin_crawling(adversary, party[0], fight) is None
+
+    assert fight.fear == 3
+    assert all(pc.stress_marked == 0 for pc in party)
+
+
+def test_darkweave_venom_exhausts_the_target_for_a_stress():
+    adversary = _crawler()
+    target = _make_pc("Bitten")
+    fight = _fight(adversaries=[adversary])
+
+    darkweave_venom(adversary, target, _landed(), fight)
+
+    assert adversary.stress_marked == 1
+    assert fight.has_condition(target, EXHAUSTED) is True
+
+
+def test_exhaustion_charges_a_stress_before_every_action_roll():
+    adversary = _crawler()
+    target = _make_pc("Bitten")
+    fight = _fight(adversaries=[adversary])
+    darkweave_venom(adversary, target, _landed(), fight)
+
+    fight.apply_condition_effects(target, BEFORE_AN_ACTION_ROLL)
+    fight.apply_condition_effects(target, BEFORE_AN_ACTION_ROLL)
+
+    assert target.stress_marked == 2
+
+
+def test_exhaustion_lifts_on_a_successful_strength_roll():
+    adversary = _crawler()
+    target = _make_pc("Bitten")
+    fight = _fight(adversaries=[adversary])
+    darkweave_venom(adversary, target, _landed(), fight)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        assert fight.expire_conditions(target, WHEN_THEY_ACT) == [EXHAUSTED]
+
+
+def test_a_failed_strength_roll_leaves_them_exhausted():
+    adversary = _crawler()
+    target = _make_pc("Bitten")
+    fight = _fight(adversaries=[adversary])
+    darkweave_venom(adversary, target, _landed(), fight)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        assert fight.expire_conditions(target, WHEN_THEY_ACT) == []
+    assert fight.has_condition(target, EXHAUSTED) is True
+
+
+def _queen(name: str = "Darkweave Queen", **overrides):
+    defaults = dict(
+        features=[
+            "Relentless (3)",
+            "Terrifying (Miss)",
+            "Den Mother",
+            "Quicker Than She Looks",
+            "Darkfang Envenomation",
+        ],
+        difficulty=14,
+        major_threshold=8,
+        severe_threshold=15,
+        hp_max=9,
+        stress_max=4,
+        attack_modifier=3,
+        damage_dice=[DiceGroup(count=1, sides=12)],
+        damage_modifier=4,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_terrifying_banks_a_fear_on_a_failed_attack():
+    adversary = _queen()
+    attacker = _make_pc("Swordhand")
+    fight = _fight(adversaries=[adversary], fear=0)
+
+    apply_attack_missed(adversary, attacker, _duality(succeeds=False), fight)
+
+    assert fight.fear == 1
+
+
+def test_terrifying_reaches_a_real_weapon_swing():
+    """The new call site: `items/weapons.py` now announces the miss too."""
+    from items.weapons import attack_with
+
+    adversary = _queen(difficulty=99)  # nothing is beating this
+    attacker = _make_pc("Swordhand")
+    fight = _fight(adversaries=[adversary], fear=0)
+
+    attack_with(attacker, find_weapon("Broadsword"), adversary, fight=fight)
+
+    assert fight.fear == 1
+
+
+def test_a_pcs_own_missed_attack_content_is_not_the_targets():
+    """Dispatch scans the target's features, so nothing crosses the table."""
+    adversary = _adversary("Plain Thing")
+    attacker = _make_pc("Swordhand")
+    fight = _fight(adversaries=[adversary], fear=0)
+
+    apply_attack_missed(adversary, attacker, _duality(succeeds=False), fight)
+
+    assert fight.fear == 0
+
+
+def test_the_bare_name_is_the_skeleton_knights_variant():
+    """SRD 2.0 prints two features called Terrifying; the parameter tells them apart.
+
+    The Skeleton Knight's fires on its own successful attack, so a stat block
+    carrying the bare name must gain nothing when a PC merely misses it.
+    """
+    knight = _adversary("Skeleton Knight", features=["Terrifying"])
+    attacker = _make_pc("Swordhand")
+    fight = _fight(adversaries=[knight], fear=0)
+
+    apply_attack_missed(knight, attacker, _duality(succeeds=False), fight)
+
+    assert fight.fear == 0
+
+
+def test_an_unrecognised_variant_fires_nothing():
+    """A parameter nobody registered gets nothing rather than a guess."""
+    adversary = _adversary("Odd Thing", features=["Terrifying (Nonsense)"])
+    attacker = _make_pc("Swordhand")
+    fight = _fight(adversaries=[adversary], fear=0)
+
+    apply_attack_missed(adversary, attacker, _duality(succeeds=False), fight)
+
+    assert fight.fear == 0
+
+
+def test_den_mother_calls_two_of_the_brood_for_two_fear():
+    adversary = _queen()
+    fight = _fight(adversaries=[adversary], fear=4)
+
+    assert den_mother(adversary, _make_pc("Target"), fight) is not None
+
+    assert fight.fear == 2
+    assert len(fight.adversaries) == 3
+    assert all("Darkweave" in a.name for a in fight.adversaries)
+
+
+def test_the_brood_never_includes_another_queen():
+    adversary = _queen()
+    fight = _fight(adversaries=[adversary], fear=4)
+
+    den_mother(adversary, _make_pc("Target"), fight)
+
+    called = [a for a in fight.adversaries if a is not adversary]
+    assert all(a.name != "Darkweave Queen" for a in called)
+
+
+def test_the_broods_spotlights_are_free():
+    adversary = _queen()
+    fight = _fight(adversaries=[adversary], fear=4)
+
+    den_mother(adversary, _make_pc("Target"), fight)
+
+    called = [a for a in fight.adversaries if a is not adversary]
+    assert all(fight.take_free_activation(a) for a in called)
+
+
+def test_den_mother_is_called_once_a_scene():
+    adversary = _queen()
+    fight = _fight(adversaries=[adversary], fear=8)
+
+    den_mother(adversary, _make_pc("Target"), fight)
+
+    assert den_mother(adversary, _make_pc("Target"), fight) is None
+    assert fight.fear == 6
+
+
+def test_quicker_than_she_looks_buys_advantage_for_a_fear():
+    adversary = _queen()
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary], fear=3)
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(18)) as rolled:
+        quicker_than_she_looks(adversary, target, fight)
+
+    assert fight.fear == 2
+    assert rolled.call_args.kwargs["advantage_state"] is AdvantageState.ADVANTAGE
+
+
+def test_darkfang_envenomation_webs_them_for_a_fear():
+    adversary = _queen()
+    target = _make_pc("Webbed")
+    fight = _fight(adversaries=[adversary], fear=3)
+
+    darkfang_envenomation(adversary, target, _landed(), fight)
+
+    assert fight.fear == 2
+    assert fight.has_condition(target, RESTRAINED) is True
+    assert fight.has_condition(target, VULNERABLE) is True
+
+
+def test_one_strength_roll_lifts_both_halves_of_the_web():
+    """The pair prints one escape roll, so the PC must not have to roll twice."""
+    adversary = _queen()
+    target = _make_pc("Webbed")
+    fight = _fight(adversaries=[adversary], fear=3)
+    darkfang_envenomation(adversary, target, _landed(), fight)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ) as rolled:
+        fight.expire_conditions(target, WHEN_THEY_ACT)
+
+    assert fight.has_condition(target, RESTRAINED) is False
+    assert fight.has_condition(target, VULNERABLE) is False
+    assert rolled.call_count == 1
+
+
+def _spinner(name: str = "Darkweave Spinner", **overrides):
+    defaults = dict(
+        features=["Wrap in Shadow-Silk", "Shadow Fang"],
+        difficulty=12,
+        major_threshold=6,
+        severe_threshold=9,
+        hp_max=4,
+        stress_max=3,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=1,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_wrap_in_shadow_silk_costs_a_stress_and_webs_on_a_hit():
+    adversary = _spinner()
+    target = _make_pc("Webbed")
+    fight = _fight(adversaries=[adversary])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(18)):
+        wrap_in_shadow_silk(adversary, target, fight)
+
+    assert adversary.stress_marked == 1
+    assert fight.has_condition(target, RESTRAINED) is True
+    assert fight.has_condition(target, VULNERABLE) is True
+
+
+def test_a_missed_wrap_webs_nobody_but_still_costs_the_stress():
+    adversary = _spinner()
+    target = _make_pc("Target", evasion=30)
+    fight = _fight(adversaries=[adversary])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(2, evasion=30)):
+        wrap_in_shadow_silk(adversary, target, fight)
+
+    assert adversary.stress_marked == 1
+    assert fight.has_condition(target, RESTRAINED) is False
+
+
+def test_shadow_fang_makes_them_shaky_for_a_fear():
+    adversary = _spinner()
+    target = _make_pc("Shaken")
+    fight = _fight(adversaries=[adversary], fear=3)
+
+    shadow_fang(adversary, target, _landed(), fight)
+
+    assert fight.fear == 2
+    assert fight.has_condition(target, SHAKY) is True
+
+
+def test_being_shaky_hobbles_the_pcs_own_attacks():
+    adversary = _spinner()
+    target = _make_pc("Shaken")
+    other = _adversary("Somebody Else")
+    fight = _fight(adversaries=[adversary, other], fear=3)
+    blade = find_weapon("Broadsword")
+
+    assert shadow_fang_shakes_them(adversary, target, other, blade, fight) is False
+
+    shadow_fang(adversary, target, _landed(), fight)
+
+    # Hobbled at anything, not only at the Spinner - which is what the card says.
+    assert shadow_fang_shakes_them(adversary, target, other, blade, fight) is True
+
+
+def _swarmlings(name: str = "Darkweave Swarmlings", **overrides):
+    defaults = dict(
+        features=["Horde (1d4)", "Get 'em Off, Get 'em Off!"],
+        difficulty=9,
+        major_threshold=4,
+        severe_threshold=8,
+        hp_max=8,
+        stress_max=4,
+        attack_modifier=0,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=0,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_get_em_off_covers_a_wounded_target_in_spiders():
+    adversary = _swarmlings()
+    target = _make_pc("Crawling")
+    fight = _fight(adversaries=[adversary])
+
+    get_em_off(adversary, target, _landed(hp_marked=1), fight)
+
+    assert adversary.stress_marked == 1
+    assert fight.has_condition(target, COVERED_IN_SPIDERS) is True
+
+
+def test_a_hit_that_marked_no_hp_covers_nobody():
+    adversary = _swarmlings()
+    target = _make_pc("Untouched")
+    fight = _fight(adversaries=[adversary])
+
+    get_em_off(adversary, target, _landed(hp_marked=0), fight)
+
+    assert adversary.stress_marked == 0
+    assert fight.has_condition(target, COVERED_IN_SPIDERS) is False
+
+
+def test_the_spiders_feed_the_gm_a_fear_and_never_the_pcs_stress():
+    """Ruled: the GM always takes the Fear, so the PC's track is untouched."""
+    adversary = _swarmlings()
+    target = _make_pc("Crawling")
+    fight = _fight(adversaries=[adversary], fear=0)
+    get_em_off(adversary, target, _landed(hp_marked=1), fight)
+
+    with patch("features.adversaries.random.randint", return_value=5):
+        fight.apply_condition_effects(target, BEFORE_AN_ACTION_ROLL)
+
+    assert fight.fear == 1
+    assert target.stress_marked == 0
+
+
+def test_a_low_roll_costs_nobody_anything():
+    adversary = _swarmlings()
+    target = _make_pc("Crawling")
+    fight = _fight(adversaries=[adversary], fear=0)
+    get_em_off(adversary, target, _landed(hp_marked=1), fight)
+
+    with patch("features.adversaries.random.randint", return_value=2):
+        fight.apply_condition_effects(target, BEFORE_AN_ACTION_ROLL)
+
+    assert fight.fear == 0
+    assert target.stress_marked == 0
+
+
+# --- The Redcaps (SRD 2.0) ---------------------------------------------------
+#
+# Note the band-dependence of the two spread helpers above: `_bunched()` (0.0) is
+# Melee's *best* reach but Far's *short* one, because Far falls one short on a low
+# draw. Where a Redcap case cares about Far it patches the draw explicitly.
+
+
+def _breaker(name: str = "Redcap Breaker", **overrides):
+    defaults = dict(
+        features=["Backbreaker", "Kneecapper"],
+        difficulty=13,
+        major_threshold=8,
+        severe_threshold=15,
+        hp_max=6,
+        stress_max=3,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=12)],
+        damage_modifier=2,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_backbreaker_costs_a_stress_and_restrains_whoever_it_wounds():
+    adversary = _breaker()
+    target = _make_pc("Broken")
+    fight = _fight(adversaries=[adversary])
+    heavy = DamageRollResult(
+        dice_groups=[DiceGroup(count=3, sides=4)], die_results=[[4, 4, 4]], modifier=10
+    )
+
+    with (
+        patch("adversaries.adversary.roll_d20", return_value=_d20(18)),
+        patch("adversaries.adversary.roll_damage", return_value=heavy),
+    ):
+        backbreaker(adversary, target, fight)
+
+    assert adversary.stress_marked == 1
+    assert target.hp_marked > 0
+    assert fight.has_condition(target, RESTRAINED) is True
+
+
+def test_a_backbreaker_that_marked_no_hp_restrains_nobody():
+    adversary = _breaker()
+    target = _make_pc("Untouched", evasion=30)
+    fight = _fight(adversaries=[adversary])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(2, evasion=30)):
+        backbreaker(adversary, target, fight)
+
+    assert adversary.stress_marked == 1
+    assert fight.has_condition(target, RESTRAINED) is False
+
+
+def test_kneecapper_spends_a_fear_to_leave_them_vulnerable():
+    adversary = _breaker()
+    target = _make_pc("Limping")
+    fight = _fight(adversaries=[adversary], fear=3)
+
+    kneecapper(adversary, target, _landed(), fight)
+
+    assert fight.fear == 2
+    assert fight.has_condition(target, VULNERABLE) is True
+
+
+def test_kneecapper_does_not_pay_twice_for_one_condition():
+    adversary = _breaker()
+    target = _make_pc("Limping")
+    fight = _fight(adversaries=[adversary], fear=3)
+
+    kneecapper(adversary, target, _landed(), fight)
+    kneecapper(adversary, target, _landed(), fight)
+
+    assert fight.fear == 2
+
+
+def _butcher(name: str = "Redcap Butcher", **overrides):
+    defaults = dict(
+        features=["Chop Happy", "Knife Thrower"],
+        difficulty=12,
+        major_threshold=5,
+        severe_threshold=10,
+        hp_max=5,
+        stress_max=3,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=1,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def _chop(fight, adversary, damage: int):
+    """One Chop Happy swing that lands, for a fixed damage total."""
+    rolled = DamageRollResult(
+        dice_groups=[DiceGroup(count=1, sides=8)], die_results=[[damage]], modifier=0
+    )
+    return (
+        patch("adversaries.adversary.roll_d20", return_value=_d20(18)),
+        patch("adversaries.adversary.roll_damage", return_value=rolled),
+    )
+
+
+def test_chop_happy_banks_a_fear_for_each_target_it_wounds():
+    adversary = _butcher()
+    party = _party(size=4)
+    fight = _fight(party=party, adversaries=[adversary], fear=0)
+
+    swing, damage = _chop(fight, adversary, 22)
+    with _bunched(), swing, damage:
+        chop_happy(adversary, party[0], fight)
+
+    wounded = sum(1 for pc in party if pc.hp_marked)
+    assert wounded == 2, "Melee reaches two of a party of four"
+    assert fight.fear == wounded
+
+
+def test_chop_happy_pays_nothing_for_a_swing_that_marked_no_hp():
+    """The regression the before/after check exists for.
+
+    A hit an Armor Slot swallows entirely wounds nobody, and a PC who walked in
+    already carrying marked HP is not evidence that this swing did anything.
+    """
+    adversary = _butcher()
+    party = _party(size=4)
+    for pc in party:
+        pc.mark_hp(2)
+    fight = _fight(party=party, adversaries=[adversary], fear=0)
+
+    # 3 is under everyone's Major threshold, and the free Armor Slot takes it to
+    # nothing - so every target is struck and none is wounded.
+    swing, damage = _chop(fight, adversary, 3)
+    with _bunched(), swing, damage:
+        chop_happy(adversary, party[0], fight)
+
+    assert fight.fear == 0
+
+
+def test_chop_happy_declines_when_the_band_reaches_nobody():
+    adversary = _butcher()
+    fight = _fight(party=[], adversaries=[adversary], fear=0)
+
+    assert chop_happy(adversary, None, fight) is None
+    assert adversary.stress_marked == 0
+
+
+def test_knife_thrower_costs_a_stress_and_swings_plain_while_seen():
+    adversary = _butcher()
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary])
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(18)) as rolled:
+        knife_thrower(adversary, target, fight)
+
+    assert adversary.stress_marked == 1
+    assert rolled.call_args.kwargs["advantage_state"] is AdvantageState.NONE
+
+
+def test_a_hidden_butcher_throws_with_advantage():
+    adversary = _butcher()
+    target = _make_pc("Target")
+    fight = _fight(adversaries=[adversary])
+    fight.apply_condition(adversary, Condition(name=HIDDEN))
+
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(18)) as rolled:
+        knife_thrower(adversary, target, fight)
+
+    assert rolled.call_args.kwargs["advantage_state"] is AdvantageState.ADVANTAGE
+
+
+def _candlemaker(name: str = "Redcap Candlemaker", **overrides):
+    defaults = dict(
+        features=["Hand of Glory", "Torchbearer", "Dance in the Flames"],
+        difficulty=13,
+        major_threshold=7,
+        severe_threshold=13,
+        hp_max=6,
+        stress_max=3,
+        attack_modifier=3,
+        damage_dice=[DiceGroup(count=1, sides=10)],
+        damage_modifier=2,
+        damage_type="magic",
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_the_hand_of_glory_lights_five_candles_and_hides_them():
+    adversary = _candlemaker()
+    fight = _fight(adversaries=[adversary])
+
+    hand_of_glory_lights(adversary, fight)
+
+    assert fight.token_count(adversary, GLORY_TOKENS) == HAND_OF_GLORY_TOKENS
+    assert fight.is_hidden(adversary) is True
+
+
+def test_a_candle_goes_out_for_every_hit_point_marked():
+    adversary = _candlemaker()
+    fight = _fight(adversaries=[adversary])
+    hand_of_glory_lights(adversary, fight)
+
+    hand_of_glory(adversary, 12, 2, fight)
+
+    assert fight.token_count(adversary, GLORY_TOKENS) == HAND_OF_GLORY_TOKENS - 2
+    assert fight.is_hidden(adversary) is True
+
+
+def test_the_shadows_drop_when_the_last_candle_does():
+    adversary = _candlemaker()
+    fight = _fight(adversaries=[adversary])
+    hand_of_glory_lights(adversary, fight)
+
+    hand_of_glory(adversary, 30, HAND_OF_GLORY_TOKENS, fight)
+
+    assert fight.token_count(adversary, GLORY_TOKENS) == 0
+    assert fight.is_hidden(adversary) is False
+
+
+def test_burnt_out_candles_are_never_relit():
+    """A count of zero has to mean spent, not never placed."""
+    adversary = _candlemaker()
+    fight = _fight(adversaries=[adversary])
+    hand_of_glory_lights(adversary, fight)
+    hand_of_glory(adversary, 30, HAND_OF_GLORY_TOKENS, fight)
+
+    hand_of_glory_lights(adversary, fight)
+
+    assert fight.token_count(adversary, GLORY_TOKENS) == 0
+    assert fight.is_hidden(adversary) is False
+
+
+def _lit_pack(**overrides):
+    """A Candlemaker and three other Redcaps - Close reaches nobody below that."""
+    candlemaker = _candlemaker(**overrides)
+    pack = [_butcher(name=f"Redcap Butcher {index}") for index in range(3)]
+    fight = _fight(adversaries=[candlemaker, *pack])
+    hand_of_glory_lights(candlemaker, fight)
+    return candlemaker, pack, fight
+
+
+def _in_the_light():
+    return patch("features.adversaries.random.random", return_value=0.0)
+
+
+def test_torchbearer_adds_a_point_to_a_nearby_redcaps_damage():
+    candlemaker, pack, fight = _lit_pack()
+    target = _make_pc("Target")
+
+    with _in_the_light():
+        assert total_ally_damage_bonus(pack[0], target, fight) == TORCHBEARER_BONUS
+
+
+def test_the_candlemaker_does_not_light_itself():
+    """The card says *their allies*."""
+    candlemaker, pack, fight = _lit_pack()
+    target = _make_pc("Target")
+
+    with _in_the_light():
+        assert total_ally_damage_bonus(candlemaker, target, fight) == 0
+
+
+def test_only_redcaps_stand_in_the_light():
+    candlemaker, pack, fight = _lit_pack()
+    stranger = _adversary("Bugboar")
+    fight.summon(stranger)
+    target = _make_pc("Target")
+
+    with _in_the_light():
+        assert total_ally_damage_bonus(stranger, target, fight) == 0
+
+
+def test_the_light_goes_out_with_the_candles():
+    candlemaker, pack, fight = _lit_pack()
+    target = _make_pc("Target")
+    hand_of_glory(candlemaker, 30, HAND_OF_GLORY_TOKENS, fight)
+
+    with _in_the_light():
+        assert total_ally_damage_bonus(pack[0], target, fight) == 0
+
+
+def test_dance_in_the_flames_spends_a_candle():
+    candlemaker, pack, fight = _lit_pack()
+    party = _party(size=4)
+    fight.party = party
+    burst = DamageRollResult(
+        dice_groups=[DiceGroup(count=2, sides=10)], die_results=[[8, 8]], modifier=0
+    )
+
+    with (
+        patch("content.aoe.random.random", return_value=0.99),
+        patch("features.adversaries.roll_damage", return_value=burst),
+        patch(
+            "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+        ),
+    ):
+        dance_in_the_flames(candlemaker, party[0], fight)
+
+    assert fight.token_count(candlemaker, GLORY_TOKENS) == HAND_OF_GLORY_TOKENS - 1
+    assert all(pc.hp_marked for pc in party)
+
+
+def test_a_successful_agility_roll_halves_the_flames():
+    candlemaker, pack, fight = _lit_pack()
+    party = _party(size=4)
+    fight.party = party
+    burst = DamageRollResult(
+        dice_groups=[DiceGroup(count=2, sides=10)], die_results=[[8, 8]], modifier=0
+    )
+
+    with (
+        patch("content.aoe.random.random", return_value=0.99),
+        patch("features.adversaries.roll_damage", return_value=burst),
+        patch(
+            "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+        ),
+    ):
+        dance_in_the_flames(candlemaker, party[0], fight)
+
+    # 16 halves to 8, which is over a Major threshold of 6 but under Severe.
+    assert all(pc.hp_marked < 3 for pc in party)
+
+
+def _skinners(count: int = 3):
+    pack = [_adversary(
+        f"Redcap Skinner",
+        features=["Minion (4)", "Shallow Cuts", "Group Attack"],
+        difficulty=9,
+        hp_max=1,
+        stress_max=1,
+        attack_modifier=-1,
+        damage_dice=[],
+        damage_modifier=2,
+    ) for _ in range(count)]
+    return pack, _fight(adversaries=pack)
+
+
+def _unarmored(name: str):
+    """A PC with no armor, so a small hit's arithmetic is visible.
+
+    The free Armor Slot drops a hit one threshold band, which takes anything under
+    the Major threshold to nothing - so an armored PC absorbs Shallow Cuts entirely
+    and the case would pass whether or not the damage was ever dealt.
+    """
+    return _make_pc(name, armor_max=0, armor_item="")
+
+
+def test_shallow_cuts_bites_on_any_failed_roll():
+    """Two Skinners in Melee, one point each - and combined into a single hit.
+
+    The combining is the card's own wording and it is not cosmetic: two separate
+    1-point hits would mark a Hit Point each, where one 2-point hit is still under
+    the Major threshold of 6 and marks one. So the assertion below is exactly what
+    tells the two readings apart.
+    """
+    pack, fight = _skinners(3)
+    roller = _unarmored("Fumbler")
+    fight.party = [roller]
+
+    with _bunched():
+        shallow_cuts(pack[0], roller, _duality(succeeds=False), fight)
+
+    assert roller.hp_marked == 1
+
+
+def test_a_successful_roll_costs_nothing():
+    pack, fight = _skinners(3)
+    roller = _unarmored("Steady")
+    fight.party = [roller]
+
+    with _bunched():
+        shallow_cuts(pack[0], roller, _duality(succeeds=True), fight)
+
+    assert roller.hp_marked == 0
+
+
+def test_only_one_skinner_answers_for_the_swarm():
+    """`_gm_offers` asks every one of them; the count already speaks for all."""
+    pack, fight = _skinners(3)
+    roller = _unarmored("Fumbler")
+    fight.party = [roller]
+
+    with _bunched():
+        assert shallow_cuts(pack[1], roller, _duality(succeeds=False), fight) is None
+        assert shallow_cuts(pack[2], roller, _duality(succeeds=False), fight) is None
+
+    assert roller.hp_marked == 0
+
+
+def test_shallow_cuts_never_rewrites_the_roll():
+    """It rides the conversion hook as a notice, so it must return None."""
+    pack, fight = _skinners(3)
+    roller = _unarmored("Fumbler")
+    fight.party = [roller]
+
+    with _bunched():
+        assert shallow_cuts(pack[0], roller, _duality(succeeds=False), fight) is None
+
+
+def test_ankle_weights_is_insignificant_rather_than_dismissed():
+    assessment = assess(qualified(ADVERSARY, "Ankle Weights"))
+
+    assert assessment.status is Status.INSIGNIFICANT_COMBAT_EFFECT
+    assert assessment.reason
+
+
+def test_every_redcap_feature_is_modelled():
+    for name in (
+        "Backbreaker",
+        "Kneecapper",
+        "Chop Happy",
+        "Knife Thrower",
+        "Hand of Glory",
+        "Torchbearer",
+        "Dance in the Flames",
+        "Shallow Cuts",
+    ):
+        assert assess(qualified(ADVERSARY, name)).status is Status.MODELLED
+
+
+def test_every_darkweave_feature_is_modelled():
+    for name in (
+        "Skin-Crawling",
+        "Darkweave Venom",
+        "Terrifying",
+        "Den Mother",
+        "Quicker Than She Looks",
+        "Darkfang Envenomation",
+        "Wrap in Shadow-Silk",
+        "Shadow Fang",
+        "Get 'em Off, Get 'em Off!",
+    ):
+        assert assess(qualified(ADVERSARY, name)).status is Status.MODELLED

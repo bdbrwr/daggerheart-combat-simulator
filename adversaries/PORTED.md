@@ -126,9 +126,17 @@ small to change an outcome), **not implemented** (work still to do).
 | Adversary | Type | Batch | Features |
 |---|---|---|---|
 | Acid Burrower | Solo | 1 | Relentless (3), Earth Eruption, Spit Acid, Acid Bath *implemented* |
+| Ahuizotl | Skulk | 11 | Aquatic Attacker, Tail Swat, Drag and Bag *implemented* |
+| Atotoll | Standard | 11 | Wind Lord, Archer's Bane *implemented* · Stone of Omens *out of combat* |
 | Bear | Bruiser | 1 | Momentum, Bite *implemented* · Overwhelming Force *no combat effect* |
+| Bugboar | Bruiser | 11 | Surprise!, Brutal, Warheart *implemented* |
 | Cave Ogre | Solo | 1 | Bone Breaker, Ramp Up, Hail of Boulders, Rampaging Fury *implemented* |
+| Common Ruffian | Standard | 11 | Group Attack, Survival Instinct *implemented* — the first non-Minion to carry Group Attack, which needed no new code |
 | Construct | Solo | 1 | Relentless (2), Weak Structure, Trample, Overload, Death Quake *implemented* |
+| Darkweave Crawler | Minion | 12 | Minion (3), Group Attack, Skin-Crawling, Darkweave Venom *implemented* |
+| Darkweave Queen | Solo | 12 | Relentless (3), Terrifying (Miss), Den Mother, Quicker Than She Looks, Darkfang Envenomation *implemented* |
+| Darkweave Spinner | Standard | 12 | Wrap in Shadow-Silk, Shadow Fang *implemented* |
+| Darkweave Swarmlings | Horde (8/HP) | 12 | Horde (1d4), Get 'em Off, Get 'em Off! *implemented* |
 | Deeproot Defender | Bruiser | 1 | Ground Slam, Grab and Drag *implemented* |
 | Dire Wolf | Skulk | 2 | Pack Tactics, Hobbling Strike *implemented* |
 | Giant Mosquitoes | Horde (5/HP) | 2 | Horde (1d4+1), Flying (2), Bloodsucker *implemented* |
@@ -157,6 +165,11 @@ small to change an outcome), **not implemented** (work still to do).
 | Pirate Captain | Leader | 6 | Swashbuckler, Reinforcements, No Quarter, Momentum *implemented* |
 | Pirate Raiders | Horde (3/HP) | 6 | Horde (1d4+1), Swashbuckler *implemented* — needed no new code of its own |
 | Pirate Tough | Bruiser | 6 | Swashbuckler, Clear the Decks *implemented* |
+| Redcap Biters | Horde (3/HP) | 13 | Horde (1d4+2) *implemented* · Ankle Weights *irrelevant* |
+| Redcap Breaker | Bruiser | 13 | Backbreaker, Kneecapper *implemented* |
+| Redcap Butcher | Standard | 13 | Chop Happy, Knife Thrower *implemented* |
+| Redcap Candlemaker | Leader | 13 | Hand of Glory, Torchbearer, Dance in the Flames *implemented* — Torchbearer is the first feature to buff another adversary's damage |
+| Redcap Skinner | Minion | 13 | Minion (4), Group Attack, Shallow Cuts *implemented* |
 | Sellsword | Minion | 7 | Minion (4), Group Attack *implemented* — needed no new code at all, the third stat block after the Jagged Knife Lackey and the Minor Treant |
 | Skeleton Archer | Ranged | 7 | Opportunist, Deadly Shot *implemented* |
 | Skeleton Dredge | Minion | 7 | Minion (4), Group Attack *implemented* — needed no new code either |
@@ -179,8 +192,12 @@ small to change an outcome), **not implemented** (work still to do).
 are in — every tier 1 stat block it printed except the two Socials, which are
 skipped by rule — and the table above has no *not implemented* rows.
 
-**Against SRD 2.0 it is not.** The forty-nine above are still tier 1 and still
-run; 2.0 simply prints thirty-five more beside them, listed under *Outstanding*.
+**Against SRD 2.0 it is not.** The forty-nine ported against 1.0 are still tier 1
+and still run; 2.0 prints thirty-five more beside them. **Batch 11** took the first
+four (Ahuizotl, Atotoll, Bugboar, Common Ruffian), **batch 12** the four Darkweaves
+and **batch 13** the five Redcaps, so sixty-two of the eighty-six are in, three
+(Courtier, Petty Noble, Merchant) are Socials skipped by rule, and twenty-one are
+listed under *Outstanding*.
 
 Four of the forty-nine were spot-checked against SRD 2.0 while this file was being
 updated — Acid Burrower, Bear, Cave Ogre and Construct (2.0 pp. 97-98) — and every
@@ -238,6 +255,147 @@ fires at three or more — the same shape No Quarter has at six pirates and Drai
 and Multiply at four Brambles, and arriving the same way, from a printed count
 meeting a proportional band.
 
+### Batch 11 — the first four of SRD 2.0's tier 1 (4 stat blocks, 10 features)
+
+**Verified against the printed page** (SRD 2.0 pp. 97-98). The first adversaries
+ported against 2.0 rather than 1.0, and the first batch where the *type* had to be
+read off each stat block because the book's index does not carry it.
+
+| Adversary | Type | What it needed |
+|---|---|---|
+| **Ahuizotl** | Skulk | Aquatic Attacker (always-on Advantage plus a d6), Tail Swat, Drag and Bag |
+| **Atotoll** | Standard | Wind Lord (Disadvantage on attacks against it), Archer's Bane; Stone of Omens filed *out of combat* |
+| **Bugboar** | Bruiser | Surprise!, Brutal, Warheart — the first GM-side `condition_refusal` |
+| **Common Ruffian** | Standard | Survival Instinct; Group Attack needed **no new code at all** |
+
+**No new hooks.** Ten features across four stat blocks, all on machinery that
+existed — which is the first time an adversary batch has cost nothing shared since
+batch 10.
+
+Three things worth knowing before these are run:
+
+- **Archer's Bane deals somebody else's damage roll back.** Everything else that
+  answers an attack rolls its own dice; this carries the number just dealt, typed
+  as the attacker's weapon, so a big cast comes back exactly as big. "Beyond Close
+  range" is read off the attacker's weapon, the standing handle, which makes the
+  Atotoll a specific answer to ranged parties and free for a melee one.
+- **Warheart is the first GM-side condition refusal.** Bold Presence's mirror, and
+  what it mostly buys is stopping the party handing themselves Advantage, since
+  Vulnerable is the party's usual condition on an adversary and Restrained does
+  nothing by itself here.
+- **Common Ruffian is the first non-Minion to carry Group Attack**, and it worked
+  untouched: the feature builds its shared damage from whatever the holder's
+  printed attack is, so a Standard with 1d8 combines correctly where the Giant Rat's
+  flat 1 does.
+
+### Batch 12 — the four Darkweaves (4 stat blocks, 9 features, 3 conditions)
+
+**Verified against the printed page** (SRD 2.0 p. 99). Taken together rather than
+split across a batch boundary, because they are one encounter: the Queen summons
+the others, the Crawlers swarm, the Spinner webs.
+
+| Adversary | Type | What it needed |
+|---|---|---|
+| **Darkweave Crawler** | Minion | Skin-Crawling, Darkweave Venom; Minion (3) and Group Attack were already generic |
+| **Darkweave Queen** | Solo | Terrifying (Miss), Den Mother, Quicker Than She Looks, Darkfang Envenomation; Relentless (3) was already generic |
+| **Darkweave Spinner** | Standard | Wrap in Shadow-Silk, Shadow Fang |
+| **Darkweave Swarmlings** | Horde (8/HP) | Get 'em Off, Get 'em Off!; Horde (1d4) was already generic |
+
+**Four features needed no code at all** — Minion (3), Group Attack, Relentless (3)
+and Horde (1d4). The Crawler's Group Attack combines its flat 2 across the swarm
+the same way the Giant Rat's flat 1 does.
+
+**The first feature-name collision in the project.** SRD 2.0 prints *two*
+different features called **Terrifying** — the Skeleton Knight's fires on its own
+successful attack and drains a Hope from the front line; the Queen's fires on a
+PC's failed attack roll. Dispatch matches on the base name, so with both
+registered every stat block carrying either would have run both rules. Ruled as a
+general rule rather than a one-off: **the bare name is the default and a variant
+is named in the parameter**, `Flying (X)`'s arrangement, so the Knight keeps
+`"Terrifying"` and the Queen writes `"Terrifying (Miss)"`. The deciding reason was
+homebrew — a parameter lets any stat block ask for either rule by writing it. See
+`SIMULATION-RULES.md`. Expect more of these as tiers 2-4 land.
+
+**No new hook, but one new call site.** *Terrifying (Miss)* fires when a PC's attack
+**fails** against the Queen, and `apply_attack_failed` is scoped to the attacker,
+so the Queen could not use it. `attack_missed` already means "the target's own
+content answers an attack that failed against them" and was only ever announced
+from the GM turn — so `items/weapons.py` now announces it too. Both sides of the
+table trigger one hook, exactly as `on_hit` already fires from both places, and
+dispatch scans the target's own features so a PC's *Redirect* and the Queen's
+*Terrifying* each fire only on their own side.
+
+**Three new conditions, and the family's whole shape is conditions with a printed
+way out:**
+
+- **Exhausted** — a Stress before every action roll until a Strength Roll (9).
+  The most expensive condition the party can be under: the Giant Scorpion's Poison
+  rolls a d6 first and charges on a 4 or lower, and this simply charges.
+- **Shaky** — Disadvantage on the holder's own attack rolls until an Instinct Roll
+  (10). Vulnerable's mirror pointed at the holder's swings, which the GM's side
+  had no shape for before.
+- **Covered in Spiders** — a d6 before every action roll, and on a 4 or higher the
+  GM banks a Fear. The first condition anywhere whose payload is Fear.
+
+`_escapes_on` is the shared helper: an escape roll attempted at each `WHEN_THEY_ACT`
+moment, per the standing rule for a printed way out. It takes an `also_clear`
+argument because three of these apply **two** conditions lifted by **one** roll —
+"Vulnerable and Restrained until they succeed on a Strength Roll (10)" — so the
+Restrain carries the roll and clears the Vulnerable with it, rather than the PC
+rolling twice for one escape.
+
+**Worth watching when the Queen is run:** Relentless (3) plus Den Mother's two
+free spotlights can run a GM turn to six activations against a party of four, and
+*Terrifying* means the party's misses buy the Fear that pays for them.
+
+### Batch 13 — the five Redcaps (5 stat blocks, 8 features)
+
+**Verified against the printed page** (SRD 2.0 pp. 107-108). Taken together for
+the reason the Darkweaves were: they are a pack, and the Candlemaker's lantern is
+what the other four are worth having near.
+
+| Adversary | Type | What it needed |
+|---|---|---|
+| **Redcap Biters** | Horde (3/HP) | Nothing — Horde (1d4+2) was already generic, and Ankle Weights is ruled *insignificant* |
+| **Redcap Breaker** | Bruiser | Backbreaker, Kneecapper |
+| **Redcap Butcher** | Standard | Chop Happy, Knife Thrower |
+| **Redcap Candlemaker** | Leader | Hand of Glory, Torchbearer, Dance in the Flames |
+| **Redcap Skinner** | Minion | Shallow Cuts; Minion (4) and Group Attack were already generic |
+
+**One new hook: `ally_damage_bonus`.** *Torchbearer* gives every Redcap within
+Close range +1 to their damage rolls, and nothing on the GM's side could reach
+another adversary's damage — `damage_bonus` only ever scans the holder's own
+features. It is a mirror of that scanned across the living adversaries, with one
+call site in `Adversary._damage_for`. **This closes an asymmetry rather than
+serving one Leader**: the party has had `ally_extra_damage` since Breaking Blow,
+and buffing the pack is exactly what the Leader role does, so more registrants
+are likely in tiers 2-4.
+
+**One feature that needed no machinery but uses a hook oddly.** *Shallow Cuts*
+fires "when a PC fails **a roll**", not only an attack, and `on_party_attack_roll`
+only ever hears about attacks. `convert_party_roll` is already GM-side and asked
+on *every* PC roll at the point the outcome is spent, so Shallow Cuts registers
+there as a pure notice and always returns `None`. That is the trick Fane of the
+Wilds uses with a bonus hook, and it is declared on the feature so the unusual use
+is visible rather than buried.
+
+**The Candlemaker is the stat block to watch.** Its five candles are
+simultaneously its *Hidden*, its pack's damage bonus, and the ammunition for
+*Dance in the Flames* — so every fireball costs it defence and costs the pack
+damage, and it has only five against six Hit Points. It is the first tier 1 Leader
+whose own resource is spent three different ways.
+
+Two smaller things worth knowing:
+
+- **Chop Happy is the largest Fear return any tier 1 Action offers** — a Fear for
+  each target it *wounds*, up to three, for a single Stress. It pays on Hit Points
+  marked rather than on targets struck, which is the card's own wording.
+- **Knife Thrower's range half does nothing here.** The Butcher's printed attack is
+  Melee and the feature reaches Far, but no positions are tracked — so what the
+  Stress actually buys is the Advantage clause, and only while something has made
+  the Butcher *Hidden*. Declared on the feature rather than left to look like a
+  bonus that never fires.
+
 ---
 
 ## Outstanding
@@ -247,27 +405,41 @@ pp. 95-96**, which lists every stat block in the book by name under its tier. It
 is the one place the whole roster is enumerated, so it is what this section is
 kept against.
 
-### Tier 1 — thirty-five new
+### Tier 1 — twenty-one still to do
 
-2.0's tier 1 runs to **86 stat blocks**. Forty-nine are ported and two (Courtier,
-Petty Noble) are Socials skipped by rule, which leaves these thirty-five, in the
-index's own order:
+2.0's tier 1 runs to **86 stat blocks**. Sixty-two are ported and three are Socials
+skipped by rule, which leaves these twenty-one, in the index's own order:
 
 | | | |
 |---|---|---|
-| Ahuizotl | Masque Muerte | Redcap Candlemaker |
-| Atotoll | Mechanorb | Redcap Skinner |
-| Bugboar | Merchant | Rugaru |
-| Common Ruffian | Mountain Troll | Sawtoothed Gillbeast |
-| Darkweave Crawler | Octopus | Soul-Shattered Mage |
-| Darkweave Queen | Panther | Spellbound Armor |
-| Darkweave Spinner | Phantom | Viper |
-| Darkweave Swarmlings | Poltergeist | Waxwork Creation |
-| Elk | Rabble Mawb | Will-o'-the-Wisps |
-| Falcon | Redcap Biters | Yufo |
-| Grimmling Warband | Redcap Breaker | |
-| Harpy | Redcap Butcher | |
-| Kelpie | | |
+| Elk | Octopus | Sawtoothed Gillbeast |
+| Falcon | Panther | Soul-Shattered Mage |
+| Grimmling Warband | Phantom | Spellbound Armor |
+| Harpy | Poltergeist | Viper |
+| Kelpie | Rabble Mawb | Waxwork Creation |
+| Masque Muerte | Rugaru | Will-o'-the-Wisps |
+| Mechanorb | | Yufo |
+| Mountain Troll | | |
+
+**Merchant is a Social and is skipped**, confirmed on printed p. 104 — the third
+after Courtier and Petty Noble, and the question this list had been carrying.
+
+**Five of the twenty-one have already been read off the page** while hunting for
+others, so their pages need no second visit:
+
+| Adversary | Type | Page | Features |
+|---|---|---|---|
+| Mechanorb | Standard | 104 | Hive Mind, Adaptive Tactics — the latter uses a **Pool**, a shared token bank across several adversaries that nothing here has |
+| Poltergeist | Ranged | 107 | Specter, Possessor, Ghost Storm |
+| Rabble Mawb | Horde (3/HP) | 107 | Horde (1d4+1), Come Back Worse |
+| Rugaru | Solo | 108 | Relentless (3), Child of Night, Bloodthirsty, Howl at the Moon, Flesh Ripper |
+| Sawtoothed Gillbeast | Standard | 109 | Ka-Chomp, Feeding Frenzy, Scaly |
+
+Worth knowing before the next batch is planned: **Mechanorb's *Adaptive Tactics*
+is the first Pool** — SRD 2.0 defines one as "a collection of tokens shared by
+multiple adversaries", collected in a separate location rather than on a stat
+block (p. 94). Nothing in the project has shared state between adversaries, so
+that one will cost machinery.
 
 **Types are not in the index**, so which of these are Socials — and therefore
 skipped — is not yet known. `Merchant` is the obvious candidate to check first,

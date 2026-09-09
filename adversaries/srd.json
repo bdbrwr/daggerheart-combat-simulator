@@ -22,6 +22,42 @@
     },
 
     {
+      "name": "Ahuizotl",
+      "tier": 1,
+      "type": "Skulk",
+      "difficulty": 12,
+      "major_threshold": 5,
+      "severe_threshold": 9,
+      "hp_max": 4,
+      "stress_max": 3,
+      "attack_modifier": 2,
+      "range": "Melee",
+      "damage_dice": "1d6",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Aquatic Attacker", "Tail Swat", "Drag and Bag"],
+      "notes": "Bite: Melee, 1d6+2 physical. Experience: Stealth +2, Swimming +2. New in SRD 2.0. Aquatic Attacker is ruled always-on - see SIMULATION-RULES.md."
+    },
+
+    {
+      "name": "Atotoll",
+      "tier": 1,
+      "type": "Standard",
+      "difficulty": 12,
+      "major_threshold": 8,
+      "severe_threshold": 12,
+      "hp_max": 5,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Wind Lord", "Stone of Omens", "Archer's Bane"],
+      "notes": "Talons: Melee, 1d8+1 physical. Experience: Flight +3, Jungles +3. New in SRD 2.0. Carrying Wind Lord is what says this one is airborne; a grounded variant drops the feature, the same way Flying (X) moves its qualifier to the author."
+    },
+
+    {
       "name": "Bear",
       "tier": 1,
       "type": "Bruiser",
@@ -37,6 +73,24 @@
       "damage_type": "physical",
       "features": ["Overwhelming Force", "Bite", "Momentum"],
       "notes": "Claws: Melee, 1d8+3 physical. Experience: Ambusher +3, Keen Senses +2."
+    },
+
+    {
+      "name": "Bugboar",
+      "tier": 1,
+      "type": "Bruiser",
+      "difficulty": 13,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 5,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "range": "Very Close",
+      "damage_dice": "1d8",
+      "damage_modifier": 6,
+      "damage_type": "physical",
+      "features": ["Surprise!", "Brutal", "Warheart"],
+      "notes": "Spiked Mace: Very Close, 1d8+6 physical. Experience: Traps +3. New in SRD 2.0. The index sets the name in a face that reads easily as 'Bugbear'; the stat block on printed p. 98 is Bugboar."
     },
 
     {
@@ -58,6 +112,24 @@
     },
 
     {
+      "name": "Common Ruffian",
+      "tier": 1,
+      "type": "Standard",
+      "difficulty": 12,
+      "major_threshold": 6,
+      "severe_threshold": 10,
+      "hp_max": 4,
+      "stress_max": 4,
+      "attack_modifier": 0,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 0,
+      "damage_type": "physical",
+      "features": ["Group Attack", "Survival Instinct"],
+      "notes": "Improvised Weapon: Melee, 1d8 physical. Experience: Desperate +3. New in SRD 2.0. The first non-Minion to carry Group Attack, which needed no new code - the feature builds its damage from whatever the holder's printed attack is."
+    },
+
+    {
       "name": "Construct",
       "tier": 1,
       "type": "Solo",
@@ -73,6 +145,78 @@
       "damage_type": "physical",
       "features": ["Relentless (2)", "Weak Structure", "Trample", "Overload", "Death Quake"],
       "notes": "Fist Slam: Melee, 1d20 physical - the one tier 1 standard attack with no flat bonus. No Experience printed. Weak Structure worsens physical damage only, which the code now enforces; Death Quake's blast is magic and is typed where the feature rolls it."
+    },
+
+    {
+      "name": "Darkweave Crawler",
+      "tier": 1,
+      "type": "Minion",
+      "difficulty": 10,
+      "major_threshold": null,
+      "severe_threshold": null,
+      "hp_max": 1,
+      "stress_max": 1,
+      "attack_modifier": -2,
+      "range": "Melee",
+      "damage_dice": "",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Minion (3)", "Skin-Crawling", "Group Attack", "Darkweave Venom"],
+      "notes": "Bite: Melee, a flat 2 physical - no dice, so damage_dice is empty and the whole attack sits in damage_modifier, the Giant Rat's shape. Thresholds print as 'None'. Experience: Darkness +3. New in SRD 2.0. Minion (3) and Group Attack are both already generic; Group Attack combines its flat 2 across the swarm the same way the Rat's flat 1 does."
+    },
+
+    {
+      "name": "Darkweave Queen",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 14,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 9,
+      "stress_max": 4,
+      "attack_modifier": 3,
+      "range": "Very Close",
+      "damage_dice": "1d12",
+      "damage_modifier": 4,
+      "damage_type": "physical",
+      "features": ["Relentless (3)", "Terrifying (Miss)", "Den Mother", "Quicker Than She Looks", "Darkfang Envenomation"],
+      "notes": "Spider Bite: Very Close, 1d12+4 physical. Experience: Giant-Sized +3, Hunter +3. New in SRD 2.0. Relentless (3) is already generic. Worth watching when run: Relentless (3) plus Den Mother's two free spotlights makes for a very long GM turn."
+    },
+
+    {
+      "name": "Darkweave Spinner",
+      "tier": 1,
+      "type": "Standard",
+      "difficulty": 12,
+      "major_threshold": 6,
+      "severe_threshold": 9,
+      "hp_max": 4,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Wrap in Shadow-Silk", "Shadow Fang"],
+      "notes": "Fangs: Melee, 1d8+1 physical. Experience: Holes +2, Webs +2. New in SRD 2.0."
+    },
+
+    {
+      "name": "Darkweave Swarmlings",
+      "tier": 1,
+      "type": "Horde (8/HP)",
+      "difficulty": 9,
+      "major_threshold": 4,
+      "severe_threshold": 8,
+      "hp_max": 8,
+      "stress_max": 4,
+      "attack_modifier": 0,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 0,
+      "damage_type": "physical",
+      "features": ["Horde (1d4)", "Get 'em Off, Get 'em Off!"],
+      "notes": "Nibble: Melee, 1d8 physical. Experience: Climb +2. New in SRD 2.0. Horde (1d4) is already generic. The 8/HP in the type is flavour and has no bearing here - the number that matters is the one in the feature."
     },
 
     {
@@ -577,6 +721,96 @@
       "damage_type": "physical",
       "features": ["Swashbuckler", "Clear the Decks"],
       "notes": "Massive Fists: Melee, 2d6 physical - no flat bonus, the second tier 1 attack written that way after the Construct's. Experience: Sailor +2. Clear the Decks is worth barely more than the printed attack once its repositioning is stripped out, which is declared where it is registered."
+    },
+
+    {
+      "name": "Redcap Biters",
+      "tier": 1,
+      "type": "Horde (3/HP)",
+      "difficulty": 10,
+      "major_threshold": 6,
+      "severe_threshold": 11,
+      "hp_max": 5,
+      "stress_max": 3,
+      "attack_modifier": -1,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 4,
+      "damage_type": "physical",
+      "features": ["Horde (1d4+2)", "Ankle Weights"],
+      "notes": "Gnash: Melee, 1d8+4 physical. Experience: Nooks and Crannies +3. New in SRD 2.0. Horde (1d4+2) is already generic; Ankle Weights is ruled an insignificant combat effect - see SIMULATION-RULES.md."
+    },
+
+    {
+      "name": "Redcap Breaker",
+      "tier": 1,
+      "type": "Bruiser",
+      "difficulty": 13,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 6,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "range": "Melee",
+      "damage_dice": "1d12",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Backbreaker", "Kneecapper"],
+      "notes": "Wooden Mallet: Melee, 1d12+2 physical. Experience: Bones +2. New in SRD 2.0."
+    },
+
+    {
+      "name": "Redcap Butcher",
+      "tier": 1,
+      "type": "Standard",
+      "difficulty": 12,
+      "major_threshold": 5,
+      "severe_threshold": 10,
+      "hp_max": 5,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Chop Happy", "Knife Thrower"],
+      "notes": "Meat Cleaver: Melee, 1d8+1 physical. Experience: Scurry +2. New in SRD 2.0."
+    },
+
+    {
+      "name": "Redcap Candlemaker",
+      "tier": 1,
+      "type": "Leader",
+      "difficulty": 13,
+      "major_threshold": 7,
+      "severe_threshold": 13,
+      "hp_max": 6,
+      "stress_max": 3,
+      "attack_modifier": 3,
+      "range": "Very Close",
+      "damage_dice": "1d10",
+      "damage_modifier": 2,
+      "damage_type": "magic",
+      "features": ["Hand of Glory", "Torchbearer", "Dance in the Flames"],
+      "notes": "Burning Candlestick: Very Close, 1d10+2 magic - one of the few tier 1 stat blocks whose standard attack is magic. Experience: Vigilance +3. New in SRD 2.0. Torchbearer is the first thing in the catalogue to buff another adversary's damage, and the reason `ally_damage_bonus` exists."
+    },
+
+    {
+      "name": "Redcap Skinner",
+      "tier": 1,
+      "type": "Minion",
+      "difficulty": 9,
+      "major_threshold": null,
+      "severe_threshold": null,
+      "hp_max": 1,
+      "stress_max": 1,
+      "attack_modifier": -1,
+      "range": "Melee",
+      "damage_dice": "",
+      "damage_modifier": 2,
+      "damage_type": "physical",
+      "features": ["Minion (4)", "Shallow Cuts", "Group Attack"],
+      "notes": "Razor: Melee, a flat 2 physical - no dice, the Giant Rat's shape. Thresholds print as 'None'. Experience: Leatherwork +3. New in SRD 2.0. Minion (4) and Group Attack are both already generic."
     },
 
     {

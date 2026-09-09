@@ -39,14 +39,24 @@ from dataclasses import replace
 from adversaries.catalogue import parse_dice
 from adversaries.registry import find_adversary
 from combat.results import AttackResult
-from content.aoe import Range, chance_within, targets_in_area, targets_reached
+from content.aoe import (
+    Range,
+    band_named,
+    chance_within,
+    targets_in_area,
+    targets_reached,
+)
 from content.conditions import (
     BEFORE_AN_ACTION_ROLL,
+    COVERED_IN_SPIDERS,
+    EXHAUSTED,
     HIDDEN,
     POISONED,
     RESTRAINED,
+    SHAKY,
     TAUNTED,
     VULNERABLE,
+    WHEN_THEY_ACT,
     Condition,
     until_they_clear_hp,
     when_they_act,
@@ -57,11 +67,14 @@ from content.registry import (
     Fight,
     action,
     activation_limit,
+    ally_damage_bonus,
     apply_on_hit,
     attack_advantage,
     attack_advantage_against,
     attack_area,
+    attack_missed,
     before_attacked,
+    condition_refusal,
     convert_party_roll,
     damage_bonus,
     damage_multiplier,
@@ -78,6 +91,7 @@ from content.registry import (
     on_hit,
     on_party_attack_roll,
     on_spotlight,
+    out_of_combat_ability,
     party_attack_disadvantage,
     party_target_override,
     severity_increase,
@@ -3903,7 +3917,16 @@ def terrifying(adversary, target, result, fight: Fight) -> None:
     reliable one - All Must Fall needs the party to roll a failure with Fear,
     where this needs only the Knight to connect - and it pays the GM a Fear on
     top, which is Momentum's effect without Momentum's name.
+
+    **This is the bare, default variant.** SRD 2.0 prints a second feature under
+    this same name on the Darkweave Queen, and the two are told apart by the
+    parameter - see `terrifying_on_a_miss`. A stat block writing `Terrifying`
+    gets this one; anything writing a parameter is asking for another, so this
+    declines rather than running on top of it.
     """
+    if feature_parameter(adversary, TERRIFYING) is not None:
+        return
+
     caught = targets_in_area(Range.CLOSE, fight.conscious_party)
     if not caught:
         return
@@ -5642,6 +5665,1501 @@ def overwhelm(adversary, attacker, weapon, damage=0, hp_marked=0, fight=None) ->
     # Back and the Skeleton Knight's Dig Two Graves have the same problem and the
     # same answer. Asked generically.
     apply_on_hit(adversary, attacker, result, fight)
+
+
+# --- Ahuizotl (SRD 2.0) ------------------------------------------------------
+
+AQUATIC_ATTACKER = qualified(ADVERSARY, "Aquatic Attacker")
+
+AQUATIC_ATTACKER_DIE = 6
+
+
+@attack_advantage(
+    AQUATIC_ATTACKER,
+    unmodelled=[
+        "The Advantage reaches the **standard attack only**. `attack_advantage` is "
+        "asked once per activation in `combat/policy.py`, and an Action feature "
+        "that rolls its own attack passes no advantage - so the Ahuizotl's own "
+        "Tail Swat swings without it. The extra die below has no such limit, "
+        "because `damage_bonus` is asked wherever this adversary rolls damage",
+    ],
+)
+def aquatic_attacker(adversary, target, fight=None):
+    """Advantage on every standard attack, because it is always in the water.
+
+    SRD: "When the Ahuizotl attacks from the water, it has advantage on the attack
+    and deals an extra 1d6 damage."
+
+    SIMULATION RULE - policy, ruled. **The water is always to hand.** Nothing here
+    records where a fight is happening, and the user ruled this the way Consume
+    Kindling was ruled rather than declaring it a gap: the creature drowns victims
+    in rivers and carries Swimming +2, so a GM placing one puts it in water, and
+    the *availability* is the invented part rather than the effect. Declaring the
+    clause, and authoring an aquatic flag on the encounter, were both offered and
+    declined.
+
+    Worth being plain about the size, since it is larger than Consume Kindling's:
+    this is Advantage plus a die on **every** attack from the opening spotlight,
+    not a resource that runs out.
+    """
+    return AdvantageState.ADVANTAGE
+
+
+@damage_bonus(AQUATIC_ATTACKER)
+def aquatic_attacker_bites_deeper(adversary, target, fight=None) -> int:
+    """The extra 1d6, rolled and added before the target's thresholds.
+
+    Registered on the same name as the Advantage above - one feature reaching two
+    hooks. The die is **rolled here and returned as a flat number**, which is the
+    only shape the GM side has for extra dice: `total_damage_bonus` sums integers,
+    and `total_extra_damage` is never asked from `Adversary._damage_for`. What
+    matters for the fight is unchanged - the die lands before the thresholds are
+    read - and what is lost is that a play-by-play line reports the total rather
+    than the dice. Midnight-Touched's Fear Die takes the same shape on the party's
+    side.
+    """
+    return random.randint(1, AQUATIC_ATTACKER_DIE)
+
+
+TAIL_SWAT = qualified(ADVERSARY, "Tail Swat")
+
+TAIL_SWAT_DICE = 1
+TAIL_SWAT_DIE = 8
+TAIL_SWAT_MODIFIER = 2
+
+
+@action(TAIL_SWAT)
+def tail_swat(adversary, target, fight: Fight):
+    """Mark a Stress: an attack within Very Close for 1d8+2.
+
+    SRD: "Mark a Stress to make an attack against a target within Very Close
+    range. On a success, deal 1d8+2 physical damage."
+
+    Bigger than the Ahuizotl's printed Bite (1d6+2) and reaching a band further,
+    which is what the Stress buys.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the standing
+    Stress-desperation rule decides when it is on the table. The Ahuizotl has 4 HP
+    against three Stress, so the first is available from the opening spotlight.
+    """
+    if not adversary.will_spend_stress(1):
+        return None
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} lashes out with its tail (Tail Swat)")
+    return adversary.attack(
+        target,
+        fight=fight,
+        damage_dice=[DiceGroup(count=TAIL_SWAT_DICE, sides=TAIL_SWAT_DIE)],
+        damage_modifier=TAIL_SWAT_MODIFIER,
+        damage_type=DamageType.PHYSICAL,
+    )
+
+
+DRAG_AND_BAG = qualified(ADVERSARY, "Drag and Bag")
+
+DRAG_AND_BAG_FEAR = 1
+
+
+@action(
+    DRAG_AND_BAG,
+    unmodelled=[
+        "'grab a target within Close range' and 'pull the target into Melee "
+        "range' - both are repositioning, and no positions are tracked. What is "
+        "modelled is the Restrain and the Advantage it buys",
+    ],
+)
+def drag_and_bag(adversary, target, fight: Fight):
+    """Spend a Fear to Restrain a target, and swing at them with Advantage after.
+
+    SRD: "Spend a Fear to have the Ahuizotl grab a target within Close range with
+    its tail, pull the target into Melee range, and temporarily *Restrain* them.
+    The Ahuizotl has advantage on attacks against targets *Restrained* in this
+    way."
+
+    **This is the feature the Grab and Drag ruling exists for.** Restrained does
+    nothing by itself here, so an earlier version of this project would have
+    policied a card like this into never firing - and the standing rule is that a
+    feature must never be policied dead because of a system the simulator leaves
+    out. It is not dead in any case: the Advantage clause is real, and it is what
+    the Fear actually buys.
+
+    "Temporarily" on a **PC** lasts until their next rest, which is the whole
+    fight - the standing reading, and the opposite of what a condition the party
+    puts on an adversary gets. So the Restrain carries no ender.
+
+    No attack roll: the card grabs rather than strikes, so this resolves into an
+    activation with no roll behind it, the shape Spitter already has.
+
+    USAGE POLICY - ruled. The standing default for a Fear cost: spent whenever the
+    pool allows. Declines against a target this Ahuizotl already has hold of, per
+    the standing don't-re-apply rule - a second grab would buy nothing.
+    """
+    if fight.fear < DRAG_AND_BAG_FEAR:
+        return None
+
+    held = fight.condition_on(target, RESTRAINED)
+    if held is not None and held.source is adversary:
+        return None
+    if not fight.spend_fear(DRAG_AND_BAG_FEAR):
+        return None
+
+    fight.apply_condition(target, Condition(name=RESTRAINED, source=adversary))
+    fight.note(
+        f"{adversary.name} drags {target.name} down by the tail "
+        f"(Drag and Bag: GM spends a Fear)"
+    )
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+@attack_advantage(DRAG_AND_BAG)
+def drag_and_bag_holds_them(adversary, target, fight=None):
+    """Advantage against whoever this Ahuizotl is holding.
+
+    Registered on the same name as the action above. Scoped by the condition's
+    **source**, so an Ahuizotl gets nothing from somebody else's hold - which also
+    keeps two of them from sharing one grab.
+    """
+    if fight is None:
+        return None
+
+    held = fight.condition_on(target, RESTRAINED)
+    if held is None or held.source is not adversary:
+        return None
+    return AdvantageState.ADVANTAGE
+
+
+# --- Atotoll (SRD 2.0) -------------------------------------------------------
+
+WIND_LORD = qualified(ADVERSARY, "Wind Lord")
+
+
+@party_attack_disadvantage(WIND_LORD)
+def wind_lord(adversary, attacker, target, weapon, fight=None) -> bool:
+    """Attacks against this adversary are Disadvantaged, because it is airborne.
+
+    SRD: "While the Atotoll is flying, attacks against it are made with
+    disadvantage."
+
+    SIMULATION RULE - policy, ruled. **The "while flying" qualifier belongs to the
+    author**, which is the ruling `Flying (X)` already carries: nothing tracks
+    whether a creature is currently in the air, so a stat block that carries this
+    feature is one that spends the fight airborne, and a grounded variant simply
+    drops it from its `features` list. Ruling it always-on as a *rule*, and
+    declaring it a gap, were both offered and declined.
+
+    Where it differs from `Flying (X)`: that one is a number and can be authored as
+    an **average** uplift, so a creature airborne half the time is written
+    `Flying (1)`. Disadvantage is a tri-state and cannot be averaged, so this is on
+    or off per entry and nothing in between.
+
+    `target is adversary` is load-bearing. Party-attack content is scanned across
+    every living adversary, so without it one Atotoll on the field would hobble
+    every attack the party made at anything.
+    """
+    return target is adversary
+
+
+ARCHERS_BANE = qualified(ADVERSARY, "Archer's Bane")
+
+ARCHERS_BANE_FEAR = 1
+
+# "Beyond Close range" read off the attacker's weapon, the handle
+# Armor-Shredding Shards, Fall Back and Overwhelm all already use.
+BEYOND_CLOSE = (Range.FAR, Range.VERY_FAR)
+
+
+@on_attacked(
+    ARCHERS_BANE,
+    unmodelled=[
+        "Only a **weapon** attack reaches this. Content that rolls an attack of "
+        "its own - a Grimoire spell, the Beastbound companion - has no weapon and "
+        "so no range to read, and never triggers it. The gap Armor-Shredding "
+        "Shards declares",
+        "'would deal damage' is read as **did** deal damage: `on_attacked` is "
+        "asked after the hit resolves, so the reflection answers a blow that "
+        "landed rather than heading one off. What is lost is that the Atotoll "
+        "still takes the damage it reflects",
+    ],
+)
+def archers_bane(adversary, attacker, weapon, damage=0, hp_marked=0, fight=None) -> None:
+    """Spend a Fear to throw a distant attacker's own damage back at them.
+
+    SRD: "When a creature beyond Close range would deal damage to the Atotoll with
+    a weapon attack, you can spend a Fear to make an attack roll against them. On a
+    success, whirling winds reflect the attack and deal the attacker's damage back
+    to them."
+
+    **The first feature anywhere that deals somebody else's damage roll back.**
+    Everything else that answers an attack rolls its own dice; this one carries the
+    number that was just dealt, so a Wizard's big cast comes back exactly as big.
+
+    "Beyond Close range" is read off the **attacker's weapon**, which is the
+    standing handle for a range clause on this side of the table: everyone is
+    assumed to have attacked from the greatest range their weapon allows, so a bow
+    triggers it and a sword does not. That makes the Atotoll a specific answer to
+    ranged parties, which is the shape it has on the page.
+
+    The reflection is typed as the weapon's own, so a magic weapon's damage comes
+    back magic and anything resisting it resists the reflection too.
+
+    USAGE POLICY - ruled. A Reaction, so the standing rule applies - it fires on
+    every trigger the Fear can pay for, and the Stress-desperation rule that gates
+    Actions deliberately does not. Skipped on a hit that dealt nothing, per the
+    standing zero-benefit rule: there would be no damage to send back.
+    """
+    if fight is None or damage <= 0:
+        return
+    if band_named(weapon.range) not in BEYOND_CLOSE:
+        return
+    if fight.fear < ARCHERS_BANE_FEAR:
+        return
+    if not fight.spend_fear(ARCHERS_BANE_FEAR):
+        return
+
+    roll = roll_d20(modifier=adversary.attack_modifier, evasion=attacker.evasion)
+    if not roll.is_success:
+        fight.note(
+            f"{adversary.name}'s winds scatter around {attacker.name} ({roll})"
+        )
+        return
+
+    attacker.take_damage(
+        damage, fight, damage_type=getattr(weapon, "damage_type", None)
+    )
+    fight.note(
+        f"{adversary.name} turns {attacker.name}'s own shot back on them "
+        f"for {damage} (Archer's Bane: GM spends a Fear)"
+    )
+
+
+# --- Bugboar (SRD 2.0) -------------------------------------------------------
+
+SURPRISE = qualified(ADVERSARY, "Surprise!")
+
+SURPRISE_DIE = 8
+
+# How many standard attacks this adversary has made, so "its first attack in a
+# scene" can be answered. Counted rather than flagged because both halves of the
+# feature have to agree on which attack is the first, and they are asked at two
+# different moments of the same swing.
+SURPRISE_ATTACKS = "Surprise! attacks made"
+
+
+def _still_untouched(adversary) -> bool:
+    """Whether nothing has marked this adversary's HP or Stress yet."""
+    return adversary.hp_marked == 0 and adversary.stress_marked == 0
+
+
+@attack_advantage(
+    SURPRISE,
+    unmodelled=[
+        "Only standard attacks are counted, since `attack_advantage` is asked once "
+        "per activation from `combat/policy.py` and an Action rolling its own "
+        "attack is never offered it. The Bugboar has no attacking Action, so "
+        "nothing is lost on this stat block",
+    ],
+)
+def surprise(adversary, target, fight=None):
+    """Advantage on this adversary's first attack, while it is still untouched.
+
+    SRD: "If the Bugboar makes its first attack in a scene before it's marked HP or
+    Stress, it has advantage on the attack and deals an extra 1d8 damage."
+
+    The counter is incremented **here** rather than in the damage half, because
+    this hook is asked once per attack whether it hits or misses - so a first
+    attack that goes wide still spends the surprise, which is what "its first
+    attack" says. Reading it off the damage hook instead would have handed the
+    ambush to the second swing whenever the first one missed.
+
+    No policy to rule on: it costs nothing, has no limit, and states its own
+    trigger exactly.
+    """
+    if fight is None:
+        return None
+
+    made = fight.token_count(adversary, SURPRISE_ATTACKS) + 1
+    fight.set_token(adversary, SURPRISE_ATTACKS, made)
+
+    if made != 1 or not _still_untouched(adversary):
+        return None
+    fight.note(f"{adversary.name} comes out of nowhere (Surprise!)")
+    return AdvantageState.ADVANTAGE
+
+
+@damage_bonus(SURPRISE)
+def surprise_hits_harder(adversary, target, fight=None) -> int:
+    """The extra 1d8 on that same first attack.
+
+    Registered on the same name as the Advantage above and reading the same
+    counter, which is already at 1 by the time this is asked - `attack_advantage`
+    runs before the roll and this runs after the hit is known, both within one
+    swing.
+    """
+    if fight is None:
+        return 0
+    if fight.token_count(adversary, SURPRISE_ATTACKS) != 1:
+        return 0
+    if not _still_untouched(adversary):
+        return 0
+    return random.randint(1, SURPRISE_DIE)
+
+
+BRUTAL = qualified(ADVERSARY, "Brutal")
+
+BRUTAL_DIE = 6
+
+
+@damage_bonus(BRUTAL)
+def brutal(adversary, target, fight=None) -> int:
+    """Mark a Stress on a landed attack for an extra 1d6.
+
+    SRD: "When the Bugboar makes a successful standard attack, mark a Stress to
+    deal an extra 1d6 damage."
+
+    Asked after the hit is known and before the damage is rolled, which is exactly
+    the window the trigger describes - so the Stress is never spent on a miss.
+
+    USAGE POLICY - ruled. A Reaction, so it fires on every trigger it can pay for
+    and consults `can_spend_stress` rather than the Stress-desperation rule that
+    gates Actions. Three Stress on a 5 HP Bruiser means the first three landed
+    attacks each carry the extra die, from full health.
+    """
+    if fight is None or not adversary.can_spend_stress(1):
+        return 0
+
+    adversary.spend_stress(1)
+    rolled = random.randint(1, BRUTAL_DIE)
+    fight.note(f"{adversary.name} puts its weight behind it (Brutal: +{rolled})")
+    return rolled
+
+
+WARHEART = qualified(ADVERSARY, "Warheart")
+
+WARHEART_FEAR = 1
+
+
+@condition_refusal(WARHEART)
+def warheart(adversary, condition, fight=None) -> bool:
+    """Spend a Fear to shrug off a condition as it lands.
+
+    SRD: "When a condition would be imposed on the Bugboar, you can spend a Fear to
+    negate it."
+
+    **Bold Presence's mirror across the table**, and the first GM-side registrant
+    on `condition_refusal`. It is asked from `FightState.apply_condition`, which is
+    the one moment "when a condition would be imposed" happens - and only for a
+    condition the Bugboar does not already carry, since a refresh is not gaining
+    one.
+
+    Worth knowing what it is worth here: the party's conditions on an adversary are
+    mostly Vulnerable and Restrained, and Vulnerable is the one that matters, so
+    this is largely a Fear spent to keep the party from handing themselves
+    Advantage.
+
+    USAGE POLICY - ruled. A Reaction, so the standing rule applies: spent on every
+    condition the Fear can pay for, with no threshold. Holding it for a worse
+    condition would be inventing foresight, which is the same reasoning Bold
+    Presence's own ruling gives.
+    """
+    if fight is None or fight.fear < WARHEART_FEAR:
+        return False
+    if not fight.spend_fear(WARHEART_FEAR):
+        return False
+
+    fight.note(
+        f"{adversary.name} shrugs off {condition.name} "
+        f"(Warheart: GM spends a Fear)"
+    )
+    return True
+
+
+# --- Common Ruffian (SRD 2.0) ------------------------------------------------
+
+SURVIVAL_INSTINCT = qualified(ADVERSARY, "Survival Instinct")
+
+SURVIVAL_INSTINCT_DIE = 6
+SURVIVAL_INSTINCT_FLEES_AT = 4
+
+# Rolled once, the first time the Ruffian is half down. The trigger is a threshold
+# being crossed rather than a state being held, so without this it would re-roll on
+# every wound after the first.
+SURVIVAL_ROLLED = "Survival Instinct rolled"
+
+
+@on_damaged(SURVIVAL_INSTINCT)
+def survival_instinct(
+    adversary, amount, hp_marked, fight=None, marked_armor=False, damage_type=None
+) -> None:
+    """At half HP, a d6: the Ruffian runs, or the GM banks a Fear.
+
+    SRD: "When the Ruffian marks half their HP, roll a d6. On a result of 4 or
+    higher, the Ruffian flees the scene. Otherwise, you gain a Fear."
+
+    SIMULATION RULE - rules interpretation, ruled. **Fleeing is modelled as being
+    defeated** - its HP is marked out and it leaves the fight by the ordinary
+    route. `FightState.remove` exists for exactly this shape (the Green Ooze's
+    Split takes an adversary off the field without defeating it) and was offered;
+    the user ruled the simpler way. The cost is recorded rather than hidden: **a
+    Ruffian that runs is reported as a kill the party did not make**, and any
+    future statistic counting adversaries defeated will count it.
+
+    Rolled **once**, on the wound that first takes it to half - the trigger is a
+    line being crossed, not a state, so without the token every later hit would
+    roll again.
+
+    No policy to rule on. It costs nothing, has no limit, and both outcomes are the
+    page's own. Note which way the odds run: a d6 at 4 or higher is even money, and
+    the half that does not flee hands the GM a Fear - so the feature is good for
+    the GM either way, which is unusual for something that reads as cowardice.
+    """
+    if fight is None or hp_marked <= 0:
+        return
+    if adversary.hp_marked * 2 < adversary.hp_max:
+        return
+    if fight.token_count(adversary, SURVIVAL_ROLLED):
+        return
+
+    fight.set_token(adversary, SURVIVAL_ROLLED, 1)
+    if random.randint(1, SURVIVAL_INSTINCT_DIE) >= SURVIVAL_INSTINCT_FLEES_AT:
+        adversary.mark_hp(adversary.hp_max)
+        fight.note(f"{adversary.name} breaks and runs (Survival Instinct)")
+        return
+
+    fight.gain_fear(1)
+    fight.note(
+        f"{adversary.name} holds their ground (Survival Instinct: GM gains a Fear)"
+    )
+
+
+# --- The Darkweaves (SRD 2.0) ------------------------------------------------
+#
+# Four stat blocks that arrive as one encounter: a Queen who summons the others,
+# Crawlers that swarm, a Spinner that webs, and Swarmlings that get everywhere.
+# Four of their features needed no code at all - Minion (3), Group Attack,
+# Relentless (3) and Horde (1d4) were all already generic - and what is new is
+# mostly **conditions with a printed way out**, which is the shape this family has.
+
+
+def _escapes_on(trait: str, difficulty: int, also_clear: tuple = ()):
+    """A condition that lifts when its holder makes the printed Reaction Roll.
+
+    The standing rule for a condition the page gives an escape from: it is a
+    Reaction Roll the affected PC attempts at each announced moment, rather than a
+    declared gap. `WHEN_THEY_ACT` is the moment, so a held PC gets one attempt each
+    time the spotlight reaches them.
+
+    `also_clear` exists because three of these features apply **two** conditions
+    lifted by **one** roll - "Vulnerable and Restrained until they succeed on a
+    Strength Roll (10)". Each condition carries its own `end`, so giving both the
+    roll would make the PC roll twice for one escape. Instead the Restrain carries
+    it and clears the Vulnerable alongside itself. The consequence, declared rather
+    than hidden: something that lifted the Restrain by another route would leave
+    the Vulnerable behind, and nothing does that today.
+    """
+
+    def ends(holder, fight, moment: str) -> bool:
+        if fight is None or moment != WHEN_THEY_ACT:
+            return False
+
+        roll = _reaction_roll(holder, trait, difficulty, fight)
+        if not roll.is_success:
+            return False
+
+        for name in also_clear:
+            fight.clear_condition(holder, name)
+        return True
+
+    return ends
+
+
+def _web_them(adversary, target, fight: Fight, difficulty: int, feature: str) -> None:
+    """Vulnerable *and* Restrained, lifted together by one Strength Roll.
+
+    Shared by the Spinner's *Wrap in Shadow-Silk* and the Queen's *Darkfang
+    Envenomation*, which print the same pair at two different Difficulties. Both
+    are sourced to the adversary that applied them, so two Darkweaves cannot share
+    one web.
+    """
+    fight.apply_condition(target, Condition(name=VULNERABLE, source=adversary))
+    fight.apply_condition(
+        target,
+        Condition(
+            name=RESTRAINED,
+            end=_escapes_on("strength", difficulty, also_clear=(VULNERABLE,)),
+            source=adversary,
+        ),
+    )
+    fight.note(
+        f"{target.name} is wrapped in shadow-silk by {adversary.name} ({feature})"
+    )
+
+
+SKIN_CRAWLING = qualified(ADVERSARY, "Skin-Crawling")
+
+SKIN_CRAWLING_FEAR = 1
+
+# SIMULATION RULE - policy, ruled. Group Attack's floor read here rather than a
+# second number that could drift: a Fear spent to put one Stress on one PC is
+# thin, and the Crawler's own Group Attack is competing for the same Fear.
+SKIN_CRAWLING_WORTH_IT = 2
+
+
+@action(
+    SKIN_CRAWLING,
+    unmodelled=[
+        "'all PCs within Melee range of the Crawler' - no positions are tracked, "
+        "so the area rule decides how much of the party a single Crawler is on top "
+        "of",
+    ],
+)
+def skin_crawling(adversary, target, fight: Fight):
+    """Spend a Fear: everybody the Melee band reaches marks a Stress.
+
+    SRD: "Spend a Fear to force all PCs within Melee range of the Crawler to mark a
+    Stress."
+
+    No attack roll - the Fear buys the effect outright, which is Rune Circle's
+    shape on the other side of the table. The Stress is **forced**, so a PC with a
+    full track marks a Hit Point instead.
+
+    USAGE POLICY - ruled. Declines below `SKIN_CRAWLING_WORTH_IT` PCs in the band,
+    which is Group Attack's floor: below that a Fear buys a single Stress, and this
+    Crawler's other Action wants the same Fear.
+    """
+    if fight.fear < SKIN_CRAWLING_FEAR:
+        return None
+
+    caught = targets_in_area(Range.MELEE, fight.conscious_party)
+    if len(caught) < SKIN_CRAWLING_WORTH_IT:
+        return None
+    if not fight.spend_fear(SKIN_CRAWLING_FEAR):
+        return None
+
+    for pc in caught:
+        pc.mark_stress(1)
+    fight.note(
+        f"{adversary.name} swarms over {len(caught)} of the party "
+        f"(Skin-Crawling: GM spends a Fear)"
+    )
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+DARKWEAVE_VENOM = qualified(ADVERSARY, "Darkweave Venom")
+
+DARKWEAVE_VENOM_ESCAPE = 9
+
+
+def _exhaustion_bites(holder, fight, moment: str) -> None:
+    """The Stress *Exhausted* charges before each of its holder's action rolls."""
+    if moment != BEFORE_AN_ACTION_ROLL:
+        return
+
+    holder.mark_stress(1)
+    fight.note(f"{holder.name} drags themselves through it (Exhausted: a Stress)")
+
+
+@on_hit(DARKWEAVE_VENOM)
+def darkweave_venom(adversary, target, result, fight: Fight) -> None:
+    """Mark a Stress on a landed bite to leave the target *Exhausted*.
+
+    SRD: "When the Crawler makes a successful attack, you can mark a Stress to
+    *Exhaust* the target until they succeed on a Strength Roll (9). While
+    *Exhausted*, the target must mark a Stress each time they make an action roll."
+
+    **The most expensive condition the party can be under.** The Giant Scorpion's
+    Poison rolls a d6 first and charges on a 4 or lower; this simply charges, every
+    action roll, until the PC rolls their way out - so it is a tax on doing
+    anything at all.
+
+    A Minion with a single Stress slot pays for it, which is the whole cost: a
+    Crawler that venoms somebody has spent itself and cannot do it again.
+
+    USAGE POLICY - ruled. A Reaction, so it fires on every trigger it can pay for
+    and asks `can_spend_stress` rather than the desperation rule that gates
+    Actions. Declines against a target already Exhausted, per the standing
+    don't-re-apply rule.
+    """
+    if fight is None or result.damage_roll is None:
+        return
+    if fight.has_condition(target, EXHAUSTED):
+        return
+    if not adversary.can_spend_stress(1):
+        return
+
+    adversary.spend_stress(1)
+    fight.apply_condition(
+        target,
+        Condition(
+            name=EXHAUSTED,
+            end=_escapes_on("strength", DARKWEAVE_VENOM_ESCAPE),
+            effect=_exhaustion_bites,
+            source=adversary,
+        ),
+    )
+    fight.note(f"{target.name} is Exhausted by darkweave venom")
+
+
+# SRD 2.0 prints **two different features called Terrifying**: the Skeleton
+# Knight's fires on the Knight's own successful attack, and the Darkweave Queen's
+# on a PC's failed attack roll. Dispatch matches on the base name, so without
+# something to tell them apart each stat block would run both rules.
+#
+# SIMULATION RULE - ruled. **The variant is named in the parameter**, which is
+# `Flying (X)`'s arrangement: the bare `Terrifying` is the Skeleton Knight's, and
+# the Queen's entry writes `Terrifying (Miss)`. Each half checks the parameter and
+# declines when it is not theirs, so one name serves both and a homebrew stat block
+# picks whichever it wants by writing it. Scoping the registration to a stat block
+# name was offered and declined - it would have kept the catalogue verbatim to the
+# page, but left homebrew unable to ask for the Queen's version at all.
+TERRIFYING_ON_A_MISS = "Miss"
+
+
+@attack_missed(TERRIFYING)
+def terrifying_on_a_miss(adversary, attacker, roll, fight: Fight = None) -> None:
+    """Every attack that comes up short against this adversary banks the GM a Fear.
+
+    SRD: "When a PC fails an attack roll against the Queen, you gain a Fear."
+
+    Registered against the same base name as the Skeleton Knight's *Terrifying* and
+    told apart by the parameter - see the note above. A stat block writing the bare
+    name gets the Knight's rule and this declines.
+
+    **This is `attack_missed`'s second call site.** The hook has always meant "the
+    target's own content answers an attack that failed against them", and until now
+    only the GM turn announced it - so it could only ever hear about an adversary
+    missing a PC. `items/weapons.py` now announces it too, which costs no new hook
+    and makes the two sides symmetric, exactly as `on_hit` already fires from both.
+
+    Note what it does to the fight rather than to the roll: a high Difficulty
+    already makes the Queen hard to hit, and this makes every miss *pay* the GM -
+    so the party's bad luck buys extra activations for a Solo that is Relentless (3).
+
+    No policy to rule on: it costs nothing, has no limit and states its own trigger.
+    """
+    if fight is None:
+        return
+
+    written = feature_parameter(adversary, TERRIFYING)
+    if written is None or canonical(written) != canonical(TERRIFYING_ON_A_MISS):
+        return
+
+    fight.gain_fear(1)
+    fight.note(f"{attacker.name}'s nerve fails them ({adversary.name}: Terrifying)")
+
+
+DEN_MOTHER = qualified(ADVERSARY, "Den Mother")
+
+DEN_MOTHER_FEAR = 2
+DEN_MOTHER_SUMMONS = 2
+
+# "Darkweave adversaries (other than Darkweave Queens)" - the brood, by name.
+DEN_MOTHER_BROOD = (
+    "Darkweave Crawler",
+    "Darkweave Spinner",
+    "Darkweave Swarmlings",
+)
+
+DEN_MOTHER_CALLED = "Den Mother called"
+
+
+@action(
+    DEN_MOTHER,
+    unmodelled=[
+        "'who appear within Close range' - no positions are tracked, so they simply "
+        "arrive",
+    ],
+)
+def den_mother(adversary, target, fight: Fight):
+    """Once per scene, 2 Fear buys two more Darkweaves who act immediately.
+
+    SRD: "Once per scene, spend 2 Fear to summon up to two Darkweave adversaries
+    (other than Darkweave Queens), who appear within Close range and immediately
+    take the spotlight."
+
+    SIMULATION RULE - policy, ruled. **Two drawn at random from the brood, and
+    their spotlights are free.** Random among viable is the standing rule - picking
+    the scariest would be scoring the field on the party's behalf - and the free
+    activations are *Voice of the Forest*'s shape: the 2 Fear has already bought
+    them, so charging again for the spotlight would charge twice for one feature.
+    Free means outside both the Fear cost and the party-size+1 cap. Making them
+    cost as usual, and always summoning Crawlers, were both offered and declined.
+
+    Worth watching when this is run: the Queen is **Relentless (3)** as well, so a
+    turn where she calls the brood can run to six activations against a party of
+    four, and two of them are free.
+
+    Once per **scene**, which is a fight - so a token rather than a per-rest use,
+    since a per-rest use would wrongly survive into the next encounter unspent.
+    """
+    if fight.token_count(adversary, DEN_MOTHER_CALLED):
+        return None
+    if fight.fear < DEN_MOTHER_FEAR:
+        return None
+
+    brood = [found for name in DEN_MOTHER_BROOD if (found := find_adversary(name))]
+    if not brood:
+        return None
+    if not fight.spend_fear(DEN_MOTHER_FEAR):
+        return None
+
+    fight.set_token(adversary, DEN_MOTHER_CALLED, 1)
+    called = []
+    for _ in range(DEN_MOTHER_SUMMONS):
+        spawned = random.choice(brood).spawn()
+        fight.summon(spawned)
+        fight.grant_activation(spawned, free=True)
+        called.append(spawned.name)
+
+    fight.note(
+        f"{adversary.name} calls her brood: {', '.join(called)} "
+        f"(Den Mother: GM spends {DEN_MOTHER_FEAR} Fear)"
+    )
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+QUICKER_THAN_SHE_LOOKS = qualified(ADVERSARY, "Quicker Than She Looks")
+
+QUICKER_THAN_SHE_LOOKS_FEAR = 1
+
+
+@action(
+    QUICKER_THAN_SHE_LOOKS,
+    unmodelled=[
+        "'move up to Far range' - repositioning, and no positions are tracked. What "
+        "is modelled is the attack the move sets up, which is the half the Fear is "
+        "really spent on",
+    ],
+)
+def quicker_than_she_looks(adversary, target, fight: Fight):
+    """Spend a Fear for a standard attack with Advantage.
+
+    SRD: "Spend a Fear to move up to Far range and make a standard attack with
+    advantage."
+
+    The Queen's printed attack is 1d12+4 at +3, so Advantage on it is a large
+    thing to buy for one Fear - and unlike most Actions it costs her nothing of her
+    own.
+
+    USAGE POLICY - ruled. The standing default for a Fear cost: spent whenever the
+    pool allows. There is no state where swinging with Advantage is worse than
+    swinging without, so no threshold applies.
+    """
+    if fight.fear < QUICKER_THAN_SHE_LOOKS_FEAR:
+        return None
+    if not fight.spend_fear(QUICKER_THAN_SHE_LOOKS_FEAR):
+        return None
+
+    fight.note(
+        f"{adversary.name} is on {target.name} before they see her "
+        f"(Quicker Than She Looks: GM spends a Fear)"
+    )
+    return adversary.attack(target, AdvantageState.ADVANTAGE, fight)
+
+
+DARKFANG_ENVENOMATION = qualified(ADVERSARY, "Darkfang Envenomation")
+
+DARKFANG_FEAR = 1
+DARKFANG_ESCAPE = 12
+
+
+@on_hit(
+    DARKFANG_ENVENOMATION,
+    unmodelled=[
+        "'or take a rest' - the second way out. A rest happens between fights and "
+        "the condition does not outlive one, so the escape roll is the only ender "
+        "that ever bites",
+    ],
+)
+def darkfang_envenomation(adversary, target, result, fight: Fight) -> None:
+    """Spend a Fear on a landed bite: Vulnerable and Restrained at once.
+
+    SRD: "When the Queen succeeds on a standard attack, you can spend a Fear to
+    make the target *Vulnerable* and *Restrained* until they succeed on a Strength
+    Roll (12) or take a rest."
+
+    The hardest escape roll in tier 1 - a flat Strength Roll against 12 - and what
+    it holds back is the Vulnerable, since Restrained does nothing by itself here.
+    Both lift together on one roll; see `_escapes_on`.
+
+    USAGE POLICY - ruled. A Reaction, so the standing rule applies: spent on every
+    landed standard attack the Fear can pay for. Declines against a target already
+    held, per the standing don't-re-apply rule - a second web would refresh nothing
+    and cost a Fear.
+    """
+    if fight is None or result.damage_roll is None:
+        return
+    if fight.has_condition(target, RESTRAINED):
+        return
+    if fight.fear < DARKFANG_FEAR or not fight.spend_fear(DARKFANG_FEAR):
+        return
+
+    _web_them(adversary, target, fight, DARKFANG_ESCAPE, "Darkfang Envenomation")
+
+
+WRAP_IN_SHADOW_SILK = qualified(ADVERSARY, "Wrap in Shadow-Silk")
+
+WRAP_IN_SHADOW_SILK_ESCAPE = 10
+
+
+@action(WRAP_IN_SHADOW_SILK)
+def wrap_in_shadow_silk(adversary, target, fight: Fight):
+    """Mark a Stress: an attack that webs whoever it lands on.
+
+    SRD: "Mark a Stress to make an attack against a target within Melee range. On a
+    success, the target is *Vulnerable* and *Restrained* until they succeed on a
+    Strength Roll (10)."
+
+    The Queen's Darkfang Envenomation at a lower Difficulty and a lower price - a
+    Stress rather than a Fear - which is the Spinner's whole role in the family.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the standing
+    Stress-desperation rule decides when it is on the table. Declines against a
+    target already held, per the standing don't-re-apply rule, so the Stress is
+    never spent re-webbing somebody.
+    """
+    if fight.has_condition(target, RESTRAINED):
+        return None
+    if not adversary.will_spend_stress(1):
+        return None
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} spins a snare at {target.name} (Wrap in Shadow-Silk)")
+    result = adversary.attack(target, fight=fight)
+    if result.damage_roll is None:
+        return result
+
+    _web_them(adversary, target, fight, WRAP_IN_SHADOW_SILK_ESCAPE, "Wrap in Shadow-Silk")
+    return result
+
+
+SHADOW_FANG = qualified(ADVERSARY, "Shadow Fang")
+
+SHADOW_FANG_FEAR = 1
+SHADOW_FANG_ESCAPE = 10
+
+
+@on_hit(
+    SHADOW_FANG,
+    unmodelled=[
+        "'against a target within Melee range' - no positions are tracked. The "
+        "Spinner's printed attack is Melee, so every standard attack it lands "
+        "qualifies and nothing is lost on this stat block",
+    ],
+)
+def shadow_fang(adversary, target, result, fight: Fight) -> None:
+    """Spend a Fear on a landed bite to leave the target *Shaky*.
+
+    SRD: "When the Spinner makes a successful attack against a target within Melee
+    range, you can spend a Fear to make the target *Shaky* until they succeed on an
+    Instinct Roll (10). While *Shaky*, the target has disadvantage on attack rolls."
+
+    **Vulnerable's mirror, pointed the other way.** Every condition the GM has
+    applied so far changes how rolls against its holder go; this one changes the
+    holder's own swings, which is a shape the party side had (Hidden) and the GM
+    side did not.
+
+    USAGE POLICY - ruled. A Reaction, so it fires on every trigger the Fear can pay
+    for. Declines against a target already Shaky, per the standing don't-re-apply
+    rule.
+    """
+    if fight is None or result.damage_roll is None:
+        return
+    if fight.has_condition(target, SHAKY):
+        return
+    if fight.fear < SHADOW_FANG_FEAR or not fight.spend_fear(SHADOW_FANG_FEAR):
+        return
+
+    fight.apply_condition(
+        target,
+        Condition(
+            name=SHAKY,
+            end=_escapes_on("instinct", SHADOW_FANG_ESCAPE),
+            source=adversary,
+        ),
+    )
+    fight.note(f"{target.name}'s hands won't steady ({adversary.name}: Shadow Fang)")
+
+
+@party_attack_disadvantage(SHADOW_FANG)
+def shadow_fang_shakes_them(adversary, attacker, target, weapon, fight=None) -> bool:
+    """The Disadvantage *Shaky* puts on its holder's attacks.
+
+    Registered on the same name as the reaction above. The condition carries no
+    machinery of its own - it is the record that the state is on - and this reads
+    it, which is Dread's *Chains of Affliction* arrangement.
+
+    Scoped by the condition's **source**, so a second Spinner gets no credit for
+    the first one's bite. Note it hobbles the PC's attack at **anything**, not only
+    at the Spinner, which is what the card says.
+    """
+    if fight is None:
+        return False
+
+    shaky = fight.condition_on(attacker, SHAKY)
+    return shaky is not None and shaky.source is adversary
+
+
+GET_EM_OFF = qualified(ADVERSARY, "Get 'em Off, Get 'em Off!")
+
+COVERED_IN_SPIDERS_DIE = 6
+COVERED_IN_SPIDERS_FEEDS_AT = 4
+
+
+def _spiders_crawl(holder, fight, moment: str) -> None:
+    """The d6 *Covered in Spiders* rolls before each of its holder's action rolls."""
+    if moment != BEFORE_AN_ACTION_ROLL:
+        return
+    if random.randint(1, COVERED_IN_SPIDERS_DIE) < COVERED_IN_SPIDERS_FEEDS_AT:
+        return
+
+    fight.gain_fear(1)
+    fight.note(f"{holder.name} claws at the spiders (Covered in Spiders: a Fear)")
+
+
+@on_hit(GET_EM_OFF)
+def get_em_off(adversary, target, result, fight: Fight) -> None:
+    """Mark a Stress on a wound to leave the target Covered in Spiders.
+
+    SRD: "When an attack from the Swarmlings causes a target to mark HP, you can
+    mark a Stress to make the target temporarily *Covered in Spiders*. While
+    *Covered in Spiders*, the target must roll a d6 when they make an action roll.
+    On a result of 4 or higher, they must mark a Stress or you gain a Fear."
+
+    SIMULATION RULE - policy, ruled. **The GM always takes the Fear.** The card
+    offers a choice and says nothing about making it; the user ruled it to the Fear
+    outright rather than reading it as the PC's call. So the condition never touches
+    the PC's Stress track and instead feeds the GM's pool - which makes it the
+    first condition anywhere whose payload is Fear, and worth roughly half a Fear
+    per action roll for the rest of the fight. Marking the Stress while the shared
+    last-slot rule allowed it, and always marking the Stress, were both offered and
+    declined.
+
+    Keyed on **HP actually marked** rather than on damage dealt, which is what the
+    trigger says - a hit an Armor Slot swallowed caused nobody to mark anything.
+    Bloodsucker reads its own trigger the same way.
+
+    "Temporarily" on a PC is the whole fight, the standing reading, so this carries
+    no ender at all.
+
+    USAGE POLICY - ruled. A Reaction, so it fires on every trigger it can pay for.
+    Declines against a target already covered, per the standing don't-re-apply rule.
+    """
+    if fight is None or not result.hp_marked:
+        return
+    if fight.has_condition(target, COVERED_IN_SPIDERS):
+        return
+    if not adversary.can_spend_stress(1):
+        return
+
+    adversary.spend_stress(1)
+    fight.apply_condition(
+        target,
+        Condition(
+            name=COVERED_IN_SPIDERS,
+            effect=_spiders_crawl,
+            source=adversary,
+        ),
+    )
+    fight.note(f"{target.name} is covered in spiders ({adversary.name})")
+
+
+# --- The Redcaps (SRD 2.0) ---------------------------------------------------
+#
+# Five fey murderers who work as a pack: Biters underfoot, Skinners in numbers, a
+# Butcher and a Breaker doing the work, and a Candlemaker whose lantern makes all
+# of them hit harder. The Candlemaker is the reason `ally_damage_bonus` exists -
+# it is the first thing in the catalogue whose effect lands on somebody else's
+# damage roll.
+
+BACKBREAKER = qualified(ADVERSARY, "Backbreaker")
+
+BACKBREAKER_DICE = 3
+BACKBREAKER_DIE = 4
+BACKBREAKER_MODIFIER = 10
+
+
+@action(BACKBREAKER)
+def backbreaker(adversary, target, fight: Fight):
+    """Mark a Stress: 3d4+10, and a Restrain that only healing lifts.
+
+    SRD: "Mark a Stress to make an attack against a target within Melee range. On
+    a success, deal 3d4+10 physical damage. A target who marks HP from this attack
+    is *Restrained* until they clear a HP."
+
+    The Dire Wolf's *Hobbling Strike* pointed at Restrained instead of Vulnerable,
+    and with the same ender - `until_they_clear_hp`, measured **after** the hit so
+    the HP this attack just marked is part of what has to be cleared. Unlike the
+    SRD's usual "until they next act" it does not wear off on its own.
+
+    Keyed on Hit Points actually marked rather than on the attack landing, which
+    is what the trigger says: a hit an Armor Slot swallowed entirely leaves nobody
+    to hold.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the standing
+    Stress-desperation rule decides when it is on the table.
+    """
+    if not adversary.will_spend_stress(1):
+        return None
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} swings low at {target.name} (Backbreaker)")
+    result = adversary.attack(
+        target,
+        fight=fight,
+        damage_dice=[DiceGroup(count=BACKBREAKER_DICE, sides=BACKBREAKER_DIE)],
+        damage_modifier=BACKBREAKER_MODIFIER,
+        damage_type=DamageType.PHYSICAL,
+    )
+    if not result.hp_marked:
+        return result
+
+    fight.apply_condition(
+        target,
+        Condition(
+            name=RESTRAINED,
+            end=until_they_clear_hp(target.hp_marked),
+            source=adversary,
+        ),
+    )
+    fight.note(f"{target.name} goes down hard, and stays down until they heal")
+    return result
+
+
+KNEECAPPER = qualified(ADVERSARY, "Kneecapper")
+
+KNEECAPPER_FEAR = 1
+
+
+@on_hit(KNEECAPPER)
+def kneecapper(adversary, target, result, fight: Fight) -> None:
+    """Spend a Fear on a landed standard attack to leave the target Vulnerable.
+
+    SRD: "When the Breaker makes a successful standard attack, you can spend a
+    Fear to make the target temporarily *Vulnerable*."
+
+    "Temporarily" on a **PC** lasts until their next rest, which is the whole
+    fight - the standing reading, and the opposite of what a condition the party
+    puts on an adversary gets. So it carries no ender and the Fear buys the rest of
+    the fight.
+
+    USAGE POLICY - ruled. A Reaction, so the standing rule applies: spent on every
+    landed attack the Fear can pay for. Declines against a target already
+    Vulnerable, per the standing don't-re-apply rule.
+    """
+    if fight is None or result.damage_roll is None:
+        return
+    if fight.has_condition(target, VULNERABLE):
+        return
+    if fight.fear < KNEECAPPER_FEAR or not fight.spend_fear(KNEECAPPER_FEAR):
+        return
+
+    fight.apply_condition(target, Condition(name=VULNERABLE, source=adversary))
+    fight.note(
+        f"{adversary.name} takes {target.name}'s knee out "
+        f"(Kneecapper: GM spends a Fear)"
+    )
+
+
+CHOP_HAPPY = qualified(ADVERSARY, "Chop Happy")
+
+# "Up to three targets" - the card's own ceiling on what the band delivers.
+CHOP_HAPPY_TARGETS = 3
+
+
+@action(
+    CHOP_HAPPY,
+    unmodelled=[
+        "'up to three targets' names no range, so the Butcher's own printed band "
+        "answers it - Melee, which is what its Meat Cleaver reaches. The area rule "
+        "then decides how many of the party are in it",
+    ],
+)
+def chop_happy(adversary, target, fight: Fight):
+    """Mark a Stress: one shared swing at up to three, and a Fear for each it wounds.
+
+    SRD: "Mark a Stress to make a standard attack against up to three targets. For
+    each target who marks HP, you gain a Fear."
+
+    SIMULATION RULE - policy, ruled. **The Melee band, capped at three.** The card
+    names no range of its own, and the user ruled it to the Butcher's printed one -
+    its standard attack is Melee, and this is a standard attack. So the area rule
+    answers how many of the party are close enough and the card's own ceiling
+    trims it, which is Ramp Up's and Hail of Boulders' shape.
+
+    One roll against everyone caught, each checked against their own Evasion - the
+    standard area-attack shape on this side of the table.
+
+    **The Fear is per target wounded**, not per target hit, which is the card's own
+    wording: a swing an Armor Slot swallowed pays nothing. Against a bunched party
+    that is up to three Fear from one Stress, which is the largest Fear return any
+    tier 1 Action offers.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the standing
+    Stress-desperation rule decides when it is on the table. Declines when the band
+    reaches nobody.
+    """
+    if not adversary.will_spend_stress(1):
+        return None
+
+    caught = targets_in_area(Range.MELEE, fight.conscious_party)[:CHOP_HAPPY_TARGETS]
+    if not caught:
+        return None
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} wades in, cleaver swinging (Chop Happy)")
+
+    # Read before the swing, because the Fear is owed for Hit Points **this
+    # attack** marked - a PC who walked in already wounded is not proof of
+    # anything. `area_attack` returns one combined total rather than a figure per
+    # target, so the comparison has to be made here.
+    before = {id(pc): pc.hp_marked for pc in caught}
+    result, struck = adversary.area_attack(caught, fight=fight)
+
+    gained = 0
+    for pc in struck:
+        if pc.hp_marked > before[id(pc)]:
+            gained += fight.gain_fear(1)
+    if gained:
+        fight.note(f"{adversary.name} draws blood ({gained} Fear)")
+    return result
+
+
+KNIFE_THROWER = qualified(ADVERSARY, "Knife Thrower")
+
+
+@action(KNIFE_THROWER)
+def knife_thrower(adversary, target, fight: Fight):
+    """Mark a Stress for a standard attack at Far, with Advantage while Hidden.
+
+    SRD: "Mark a Stress to make a standard attack against a target within Far
+    range. If the Butcher is *Hidden*, they make the attack with advantage."
+
+    What it buys is **reach**: the Butcher's printed attack is Melee, and no
+    positions are tracked, so the range half changes nothing here - which is worth
+    saying plainly rather than pretending the Stress bought something.
+
+    The Advantage half is real and is read off the condition. Nothing on this stat
+    block makes the Butcher Hidden, so it fires only when something else does -
+    which in a Redcap pack is the Candlemaker's *Hand of Glory* lighting the
+    Butcher's own hiding place, or a future feature.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the standing
+    Stress-desperation rule decides when it is on the table.
+    """
+    if not adversary.will_spend_stress(1):
+        return None
+
+    adversary.spend_stress(1)
+    advantage = (
+        AdvantageState.ADVANTAGE
+        if fight is not None and fight.is_hidden(adversary)
+        else AdvantageState.NONE
+    )
+    fight.note(f"{adversary.name} sends a knife at {target.name} (Knife Thrower)")
+    return adversary.attack(target, advantage, fight)
+
+
+HAND_OF_GLORY = qualified(ADVERSARY, "Hand of Glory")
+
+HAND_OF_GLORY_TOKENS = 5
+
+# The candles still burning, held on the stat block. While any remain the
+# Candlemaker is Hidden and its pack hits harder.
+GLORY_TOKENS = "Hand of Glory candles"
+
+# Set once the five have been placed, so a Candlemaker whose candles have all gone
+# out is not handed five more the next time anything looks. A count of zero has to
+# mean "spent" rather than "never placed".
+GLORY_PLACED = "Hand of Glory placed"
+
+
+def _glory_lit(adversary, fight: Fight) -> int:
+    """How many candles are burning, placing them the first time it is asked.
+
+    "When the Candlemaker appears" is the start of the fight, and there is no
+    moment announced for an adversary arriving - so the tokens are placed lazily
+    the first time anything looks, which is Strategic Approach's arrangement on the
+    party's side. A second token records that they have been placed, so a
+    Candlemaker whose candles have all gone out is not handed five more.
+    """
+    if fight is None:
+        return 0
+    if not fight.token_count(adversary, GLORY_PLACED):
+        fight.set_token(adversary, GLORY_PLACED, 1)
+        fight.set_token(adversary, GLORY_TOKENS, HAND_OF_GLORY_TOKENS)
+    return fight.token_count(adversary, GLORY_TOKENS)
+
+
+@on_damaged(HAND_OF_GLORY)
+def hand_of_glory(
+    adversary, amount, hp_marked, fight=None, marked_armor=False, damage_type=None
+) -> None:
+    """A candle gutters out for every Hit Point the Candlemaker marks.
+
+    SRD: "When the Candlemaker appears, place 5 tokens on this stat block. Remove a
+    token whenever the Candlemaker marks a HP. While this stat block has 1 or more
+    tokens on it, the Candlemaker is *Hidden*."
+
+    **Five candles against six Hit Points**, so in practice the Candlemaker is
+    Hidden for nearly the whole of its life and stops being so on the blow that
+    very nearly finishes it. Hidden is modelled outright here - every roll against
+    a hidden combatant has Disadvantage - which makes this the largest defensive
+    passive in tier 1.
+
+    One token per Hit Point marked rather than per wound: a hit that marks three
+    puts out three candles, which is what "whenever the Candlemaker marks a HP"
+    says read literally.
+
+    The *Hidden* itself is applied here rather than carried as a standing state,
+    because the condition is what `FightState.is_hidden` reads and the tokens are
+    what decide it.
+    """
+    if fight is None or hp_marked <= 0:
+        return
+
+    lit = max(_glory_lit(adversary, fight) - hp_marked, 0)
+    fight.set_token(adversary, GLORY_TOKENS, lit)
+
+    if lit:
+        fight.note(f"{adversary.name}'s hand of glory gutters ({lit} candles left)")
+        return
+
+    fight.clear_condition(adversary, HIDDEN)
+    fight.note(f"{adversary.name}'s last candle goes out, and the shadows drop")
+
+
+@on_spotlight(HAND_OF_GLORY)
+def hand_of_glory_lights(adversary, fight=None) -> None:
+    """Keep the Candlemaker Hidden for as long as a candle burns.
+
+    Registered on the same name as the damage response above. Asked at every one of
+    this adversary's spotlights, which is also the first moment anything looks at
+    the stat block - so this is where the five candles get placed.
+    """
+    if fight is None:
+        return
+    if not _glory_lit(adversary, fight):
+        return
+    if fight.has_condition(adversary, HIDDEN):
+        return
+
+    fight.apply_condition(adversary, Condition(name=HIDDEN, source=adversary))
+    fight.note(f"{adversary.name} keeps to the candlelight ({HIDDEN})")
+
+
+TORCHBEARER = qualified(ADVERSARY, "Torchbearer")
+
+TORCHBEARER_BONUS = 1
+
+# Matched canonically on part of a name, the way ZOMBIE already is - the card says
+# "each **Redcap** adversary", which is a kind rather than a stat block.
+REDCAP = canonical("Redcap")
+
+
+@ally_damage_bonus(TORCHBEARER)
+def torchbearer(adversary, attacker, target, fight=None) -> int:
+    """The +1 the Candlemaker's light puts on every nearby Redcap's damage.
+
+    SRD: "The light of the Candlemaker's Hand of Glory inspires bloodlust in their
+    allies. While this stat block has 1 or more tokens on it, each Redcap adversary
+    within Close range gains a +1 bonus to their damage rolls."
+
+    **The first thing in the catalogue whose effect lands on another adversary's
+    damage roll**, and the reason `ally_damage_bonus` exists - `damage_bonus` is
+    holder-scoped and could only ever reach the Candlemaker's own swings. The
+    party's side has had the same shape since Breaking Blow.
+
+    SIMULATION RULE - policy, ruled. **"Within Close range" is the area rule**, the
+    standing answer for a range clause, asked per damage roll through
+    `chance_within` - so whether a given Redcap is standing in the light is
+    re-rolled each time it swings, exactly as Natural Familiar's d6 is. The field it
+    is measured over is the rest of the GM's side rather than the party, since that
+    is who the band has to reach.
+
+    "Each **Redcap** adversary" is matched on part of a name, the third feature in
+    the catalogue to do so after *Too Many to Handle*'s Zombies and *No Quarter*'s
+    Pirates - and it correctly excludes the Candlemaker itself, since the card says
+    *their allies*.
+
+    Gone the moment the last candle does, which ties the pack's damage to how badly
+    the Candlemaker is doing.
+    """
+    if fight is None or attacker is adversary:
+        return 0
+    if REDCAP not in canonical(attacker.name):
+        return 0
+    if not _glory_lit(adversary, fight):
+        return 0
+
+    others = len(fight.living_adversaries) - 1
+    if others <= 0 or random.random() >= chance_within(Range.CLOSE, others):
+        return 0
+
+    fight.note(f"{attacker.name} swings in the candlelight (+{TORCHBEARER_BONUS})")
+    return TORCHBEARER_BONUS
+
+
+DANCE_IN_THE_FLAMES = qualified(ADVERSARY, "Dance in the Flames")
+
+DANCE_DICE = 2
+DANCE_DIE = 10
+
+
+@action(
+    DANCE_IN_THE_FLAMES,
+    unmodelled=[
+        "'a group of PCs within Far range' - no positions are tracked, so the area "
+        "rule decides how much of the party the fireball catches",
+    ],
+)
+def dance_in_the_flames(adversary, target, fight: Fight):
+    """Spend a candle to drop 2d10 on the Far band, halved by an Agility save.
+
+    SRD: "Spend a token from the Hand of Glory. The Candlemaker conjures a ball of
+    fire on a group of PCs within Far range. Each target must make an Agility
+    Reaction Roll. Targets who fail take 2d10 magic damage. Targets who succeed
+    take half damage."
+
+    **Its cost is the Candlemaker's own defence**, which is the interesting part of
+    the stat block: every cast is a candle, and the candles are what keep it Hidden
+    and what buff the pack. So the Leader chooses between hurting the party now and
+    staying hard to hit - and the choice is real, because it has only five.
+
+    One damage roll rolled once and reused across everybody caught, the standing
+    area reading, and halving on a successful save rounds **down**.
+
+    USAGE POLICY - ruled. The standing default: cast whenever a candle can be
+    spent and the band reaches somebody. No threshold - the fire is the largest
+    thing this stat block does, and the tokens are limited rather than renewable,
+    so there is no state where holding one back is clearly better.
+    """
+    if fight is None:
+        return None
+
+    lit = _glory_lit(adversary, fight)
+    if not lit:
+        return None
+
+    caught = targets_in_area(Range.FAR, fight.conscious_party)
+    if not caught:
+        return None
+
+    fight.set_token(adversary, GLORY_TOKENS, lit - 1)
+    if lit - 1 <= 0:
+        fight.clear_condition(adversary, HIDDEN)
+
+    damage = roll_damage(
+        dice_groups=[DiceGroup(count=DANCE_DICE, sides=DANCE_DIE)], modifier=0
+    )
+    fight.note(
+        f"{adversary.name} throws a candle, and it blooms into fire "
+        f"(Dance in the Flames: {lit - 1} candles left)"
+    )
+    for pc in caught:
+        roll = _reaction_roll(pc, "agility", adversary.difficulty, fight)
+        dealt = damage.total // 2 if roll.is_success else damage.total
+        pc.take_damage(dealt, fight, damage_type=DamageType.MAGIC)
+        fight.note(f"{pc.name} takes {dealt} from the flames")
+
+    return AttackResult(attack_roll=None, damage_roll=damage)
+
+
+SHALLOW_CUTS = qualified(ADVERSARY, "Shallow Cuts")
+
+SHALLOW_CUTS_EACH = 1
+
+
+@convert_party_roll(
+    SHALLOW_CUTS,
+    unmodelled=[
+        "This rides the roll-**conversion** hook as a pure notice rather than "
+        "converting anything, because that hook is the only GM-side one asked on "
+        "*every* PC roll rather than on attack rolls alone. It always returns "
+        "None, so nothing it does can rewrite a roll. Fane of the Wilds uses a "
+        "bonus hook the same way",
+    ],
+)
+def shallow_cuts(adversary, roller, roll, fight=None):
+    """Every failed roll costs a PC a point per Skinner underfoot.
+
+    SRD: "When a PC fails a roll, they take 1 physical damage for each Skinner
+    within Melee range of them. Combine this damage."
+
+    **Any failed roll, not just an attack**, which is what the page says - a missed
+    swing, a failed Spellcast, a Reaction Roll that came up short. That is why this
+    sits on the conversion hook: it is asked at the point a roll's outcome is spent,
+    for every roll a PC makes, where `on_party_attack_roll` would only ever hear
+    about attacks.
+
+    SIMULATION RULE - policy, ruled. **How many Skinners are on that PC is the area
+    rule**, asked at the moment the roll fails - `targets_reached` over the swarm at
+    the Melee band, the same question *Group Attack* asks of its own kin. So a lone
+    Skinner is worth a point and a full pack several, and it is re-rolled each time
+    rather than fixed.
+
+    Combined into **one** amount before it is dealt, which the card says outright -
+    so it crosses the PC's thresholds once rather than arriving as separate points.
+
+    Registered once for the swarm: the first Skinner asked answers for all of them,
+    and the rest return nothing, so a pack of four does not deal four times over.
+    """
+    if fight is None or roll.is_success:
+        return None
+
+    kin = [
+        other
+        for other in fight.living_adversaries
+        if canonical(other.name) == canonical(adversary.name)
+    ]
+    # Only the first of the swarm answers - `_gm_offers` asks every one of them,
+    # and the count below already speaks for the whole pack.
+    if not kin or kin[0] is not adversary:
+        return None
+
+    underfoot = targets_reached(Range.MELEE, len(kin))
+    if underfoot <= 0:
+        return None
+
+    dealt = underfoot * SHALLOW_CUTS_EACH
+    roller.take_damage(dealt, fight, damage_type=DamageType.PHYSICAL)
+    fight.note(
+        f"{roller.name} stumbles, and {underfoot} {adversary.name}s open them up "
+        f"for {dealt} (Shallow Cuts)"
+    )
+    return None
+
+
+insignificant_combat_effect(
+    qualified(ADVERSARY, "Ankle Weights"),
+    "A PC must mark a Stress to move out of the Redcap Biters' Melee range. The "
+    "size, which is what this state has to state: **one Stress per disengagement, "
+    "and a simulated fight contains zero disengagements** - nothing here moves, so "
+    "the toll is never charged and the expected cost across a high-N run is 0.0 "
+    "Stress. Ruled into this state by the user rather than into *no combat "
+    "effect*; the distinction being drawn is that Stress is a resource the "
+    "simulator represents completely, so the effect has something to touch even "
+    "though its trigger never arrives. Worth knowing that it leaves the Biters "
+    "with only their Horde passive, and that it would become real the moment "
+    "positions were tracked.",
+)
+
+
+out_of_combat_ability(
+    qualified(ADVERSARY, "Stone of Omens"),
+    "Inside the Atotoll is a stone that foretells fortune, and a PC who searches "
+    "its remains makes a fate roll: an even result hands the party Hope to "
+    "distribute, an odd one hands the GM Fear. **Not a dismissal.** Hope and Fear "
+    "are the two currencies this whole simulator is built around, so the effect is "
+    "as representable as anything gets - what puts it in this state is *when*: "
+    "searching a corpse is something a party does after the fighting stops, and "
+    "the payout would be carried into the next encounter rather than spent in this "
+    "one. The user ruled it here on that reading, so it joins the "
+    "sequenced-encounter list with A Soldier's Bond and Armorer rather than being "
+    "written as something that fires mid-fight. Modelling it as firing "
+    "automatically when the Atotoll is defeated was offered and declined - the "
+    "page requires a PC to spend the effort.",
+)
 
 
 no_combat_effect(

@@ -47,6 +47,7 @@ from content.registry import (
     apply_attack_failed,
     apply_before_attacked,
     apply_on_attacked,
+    apply_attack_missed,
     granted_action_roll_advantage,
     granted_attack_advantage,
     maximise_damage_dice,
@@ -233,6 +234,16 @@ def attack_with(
         # place a PC's attack is known to have failed with the target still in
         # hand. Nothing here knows what any of it is.
         apply_attack_failed(attacker, target, attack_roll, fight)
+        # And content the **target** carries that answers an attack failing
+        # against them - the Darkweave Queen's Terrifying, which banks a Fear
+        # every time a PC comes up short. This is `attack_missed`'s second call
+        # site: the hook has always meant "the target's own content answers an
+        # attack that failed", and until now only the GM turn announced it, so it
+        # could only ever hear about an adversary missing a PC. Both sides of the
+        # table trigger it now, exactly as `on_hit` already fires from here and
+        # from the GM turn. Dispatch scans the target's own features, so a PC's
+        # Redirect and an adversary's Terrifying each fire only on their own side.
+        apply_attack_missed(target, attacker, attack_roll, fight)
         return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
     # Content the *character* carries that changes the shape of the pool before

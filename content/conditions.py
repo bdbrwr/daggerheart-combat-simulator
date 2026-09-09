@@ -287,6 +287,34 @@ INCORPOREAL = "Incorporeal"
 # simulator's own label.
 FEAR_FUELED = "Fear-Fueled"
 
+# **Exhausted**, from the Darkweave Crawler's *Darkweave Venom*: "the target must
+# mark a Stress each time they make an action roll", until they succeed on a
+# Strength Roll (9).
+#
+# The second condition after the Giant Scorpion's Poison whose whole effect is a
+# cost taken at `BEFORE_AN_ACTION_ROLL`, and the more expensive of the two - the
+# Scorpion's asks for a d6 first, and this one simply charges.
+EXHAUSTED = "Exhausted"
+
+# **Shaky**, from the Darkweave Spinner's *Shadow Fang*: "while *Shaky*, the target
+# has disadvantage on attack rolls", until they succeed on an Instinct Roll (10).
+#
+# Vulnerable's mirror pointed at the holder's own swings rather than at rolls made
+# against them, and the first condition to do that. It carries no machinery here:
+# the Spinner's own `party_attack_disadvantage` hook reads the name, the same
+# arrangement Dread's *Chains of Affliction* uses.
+SHAKY = "Shaky"
+
+# **Covered in Spiders**, from the Darkweave Swarmlings' *"Get 'em Off, Get 'em
+# Off!"*: the holder rolls a d6 on each action roll and, on a 4 or higher, the GM
+# gains a Fear.
+#
+# Applied "temporarily" to a PC, which is the whole fight - the standing reading.
+# Its effect is at `BEFORE_AN_ACTION_ROLL` like Exhausted's, but it feeds the GM's
+# pool rather than draining the PC's Stress, which makes it the first condition
+# anywhere whose payload is Fear.
+COVERED_IN_SPIDERS = "Covered in Spiders"
+
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to
 # fire. The same vocabulary serves both, so a condition that costs something at a

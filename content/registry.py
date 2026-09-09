@@ -335,6 +335,7 @@ _on_attacked: dict[str, Callable] = {}
 _before_attacked: dict[str, Callable] = {}
 _on_spotlight: dict[str, Callable] = {}
 _ally_on_spotlights: dict[str, Callable] = {}
+_ally_damage_bonuses: dict[str, Callable] = {}
 _skip_spotlight: dict[str, Callable] = {}
 _spotlight_while_defeated: dict[str, Callable] = {}
 _on_party_attack_rolls: dict[str, Callable] = {}
@@ -412,6 +413,39 @@ def severity_response(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_severity_responses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def ally_damage_bonus(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that adds to **another adversary's** damage roll.
+
+    Signature: `(holder, attacker, target, fight) -> int`, where `holder` carries
+    the feature and `attacker` is the adversary actually swinging.
+
+    The GM-side twin of `damage_bonus`, which is holder-scoped and so can only
+    ever reach the swing of whoever carries it. The Redcap Candlemaker's
+    *Torchbearer* is the first thing that needs the other shape - "each Redcap
+    adversary within Close range gains a +1 bonus to their damage rolls" belongs
+    to the Candlemaker and lands on somebody else's dice.
+
+    **This closes an asymmetry rather than serving one feature.** The party's side
+    has had `ally_extra_damage` since Breaking Blow; the GM's side had nothing,
+    which is why a Leader could grant an extra activation or Advantage but never a
+    damage bonus. Leaders are exactly the role that does this, so expect more
+    registrants as tiers 2-4 land.
+
+    Whether the two adversaries are in range is the **feature's** business, not
+    this hook's - the area rule answers it, as it answers every other range clause.
+
+    One call site, in `Adversary._damage_for`, beside the holder-scoped
+    `total_damage_bonus` it mirrors.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_damage_bonuses, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -3811,6 +3845,22 @@ def apply_ally_on_hit(attacker, target, result, fight: Fight = None) -> None:
     _discover()
     for holder, respond in _party_offers(fight, _ally_on_hits):
         respond(holder, attacker, target, result, fight)
+
+
+def total_ally_damage_bonus(attacker, target, fight: Fight = None) -> int:
+    """Everything the GM's *other* adversaries add to this one's damage, summed.
+
+    Zero unless something answers, and the answers sum. The GM-side twin of
+    `total_damage_bonus` - see `ally_damage_bonus` for why the holder-scoped one
+    cannot say this.
+
+    Zero without a fight, since there is no field to scan.
+    """
+    _discover()
+    total = 0
+    for holder, contribute in _gm_offers(fight, _ally_damage_bonuses):
+        total += contribute(holder, attacker, target, fight)
+    return total
 
 
 def apply_ally_on_spotlight(adversary, fight: Fight = None, paid: bool = False) -> None:

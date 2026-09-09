@@ -44,6 +44,7 @@ from content.registry import (
     soften_damage,
     standard_attack_damage,
     standard_attack_damage_type,
+    total_ally_damage_bonus,
     total_damage_bonus,
     total_difficulty_bonus,
     total_evasion_bonus,
@@ -251,7 +252,19 @@ class Adversary:
             if swapped is not None:
                 dice, modifier = swapped
 
-        bonus = total_damage_bonus(self, target, fight) if fight is not None else 0
+        # What this adversary's own features add, plus what the **rest of the
+        # field** adds to its swing - the Redcap Candlemaker's Torchbearer lights
+        # the pack up. The second is the GM-side twin of `damage_bonus`, which is
+        # holder-scoped and so could only ever reach its own holder's dice; see
+        # `ally_damage_bonus`. Whether the two are in range is the feature's own
+        # business, answered by the area rule. Asked generically, and nothing here
+        # knows what any of it is.
+        bonus = (
+            total_damage_bonus(self, target, fight)
+            + total_ally_damage_bonus(self, target, fight)
+            if fight is not None
+            else 0
+        )
         return roll_damage(
             dice_groups=self.damage_dice if dice is None else dice,
             modifier=(self.damage_modifier if modifier is None else modifier) + bonus,
