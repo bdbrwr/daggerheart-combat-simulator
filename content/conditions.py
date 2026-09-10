@@ -315,6 +315,22 @@ SHAKY = "Shaky"
 # anywhere whose payload is Fear.
 COVERED_IN_SPIDERS = "Covered in Spiders"
 
+# **Enchanted**, from the Kelpie's *Enchant*: a PC who fails an Instinct Reaction
+# Roll "perceives the Kelpie as a trusted friend or ally and will do what the
+# Kelpie says unless it contradicts the PC's most deeply held morals", until they
+# take damage.
+#
+# What that comes to in a fight is the user's ruling: the PC **loses their
+# spotlight entirely**, carried on `prevents_action`. The two narrower readings -
+# acting normally but never at the Kelpie, or turning on an ally - were both
+# offered and declined. So this is the second condition after Sheltered to stop a
+# *PC* acting, and the first that an adversary puts on one.
+#
+# Its ender is damage rather than a moment, which nothing else here needed: see
+# `until_they_take_damage`. That matters for how it plays - the party's way out is
+# to hit their own charmed friend, which is a real cost rather than a formality.
+ENCHANTED = "Enchanted"
+
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to
 # fire. The same vocabulary serves both, so a condition that costs something at a
@@ -481,6 +497,41 @@ def until_they_clear_hp(marked_when_applied: int):
 
     def ended(holder, fight, moment: str) -> bool:
         return holder.hp_marked < marked_when_applied
+
+    return ended
+
+
+def until_they_take_damage(hp_when_applied: int, armor_when_applied: int):
+    """Ends once the conditioned combatant has taken a hit of any size.
+
+    The SRD's "until they take damage", which the Kelpie's *Enchant* prints.
+    Stateful for `until_they_clear_hp`'s reason and built the same way - the
+    question is about a change since the condition landed, not about an absolute -
+    so it is a factory returning the predicate.
+
+    **Two tracks, because damage does not always mark a Hit Point.** A PC marks a
+    free Armor Slot against most hits, and a hit entirely absorbed by armor is
+    still damage taken; reading `hp_marked` alone would leave a PC enchanted
+    through a blow their armor happened to swallow. Either track moving is the
+    trigger, and a clean miss moves neither.
+
+    **What it deliberately does not catch** is damage reduced all the way to
+    nothing before either track is touched. That is rare, and erring this way
+    keeps the condition on rather than lifting it for free, which is the reading
+    that costs the party something.
+
+    Checked at whichever moments the loop announces, so it can outlast the hit by
+    up to one of them - the granularity every ender here has. `ON_A_GM_TURN` is
+    the one that matters for a condition that stops its holder acting: a PC who
+    cannot act is skipped rather than spotlighted, so `WHEN_THEY_ACT` never comes
+    round for them, and the GM turn is what lifts it.
+    """
+
+    def ended(holder, fight, moment: str) -> bool:
+        return (
+            holder.hp_marked > hp_when_applied
+            or getattr(holder, "armor_marked", 0) > armor_when_applied
+        )
 
     return ended
 

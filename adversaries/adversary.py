@@ -34,7 +34,9 @@ from content.names import ADVERSARY, qualified
 from content.aoe import Range, band_named, targets_hit
 from content.damage_types import damage_type_named, reduced
 from content.registry import (
+    apply_ally_defeated,
     apply_on_damaged,
+    apply_stress_marked,
     deals_direct_damage,
     force_adversary_reroll,
     harden_damage,
@@ -406,8 +408,18 @@ class Adversary:
         damage_modifier=None,
         direct: bool | None = None,
         damage_type=None,
+        attack_modifier=None,
     ) -> AttackResult:
         """Standard attack: d20 + attack_modifier against the target's Evasion.
+
+        `attack_modifier` overrides the stat block's, for a feature whose printed
+        text moves the roll itself rather than the damage - the Falcon's *Dive
+        Bomb* "gains a +2 bonus to the attack and damage rolls". It is the fourth
+        override in this signature and the only one that had been missing: dice,
+        flat damage, directness and type could all be stated by a feature, and the
+        one number a feature could not state was how well it swings. Content
+        passes the whole modifier rather than a delta, the way `damage_modifier`
+        already does.
 
         On a hit, rolls this adversary's damage dice plus its flat modifier and
         applies the total to the target. Adversaries whose attack does something
@@ -433,9 +445,13 @@ class Adversary:
         # attack. Nothing here knows what content answers.
         evasion = target.evasion + total_evasion_bonus(target, self, fight)
 
+        swings_at = (
+            self.attack_modifier if attack_modifier is None else attack_modifier
+        )
+
         def swing():
             return roll_d20(
-                modifier=self.attack_modifier,
+                modifier=swings_at,
                 evasion=evasion,
                 advantage_state=advantage_state,
             )
@@ -476,7 +492,7 @@ class Adversary:
     def clear_hp(self, amount: int) -> None:
         self.hp_marked = max(self.hp_marked - amount, 0)
 
-    def mark_stress(self, amount: int) -> None:
+    def mark_stress(self, amount: int, fight=None) -> None:
         """Mark Stress this adversary is being *forced* to take.
 
         Per the SRD: "When a character must mark 1 or more Stress but can't, they
@@ -495,11 +511,23 @@ class Adversary:
         `spend_stress` instead. The SRD keeps the two apart: a move requiring Stress
         simply can't be used when the track is full, and must never fall through
         to HP.
+
+        `fight` is optional and is here only so content can be told this happened -
+        the Elk's *Bolt* bolts when it marks a Hit Point **or a Stress**. It is
+        never used for anything else, which is why it can be left off: a caller
+        without one still marks the Stress correctly and simply announces nothing.
+        See `content/registry.py`'s `on_stress_marked`.
         """
         free = self.stress_max - self.stress_marked
         self.stress_marked = min(self.stress_marked + amount, self.stress_max)
         if amount > free:
             self.mark_hp(1)
+
+        # Announced after the marking has settled, so content keyed on "marks its
+        # last Stress" sees a full track. Told the amount *asked for* rather than
+        # the amount that fitted; see the hook. Nothing here knows what answers.
+        if fight is not None:
+            apply_stress_marked(self, amount, fight)
 
     def clear_stress(self, amount: int) -> None:
         self.stress_marked = max(self.stress_marked - amount, 0)
@@ -636,6 +664,12 @@ class Adversary:
         # Structure reads it.
         kind = damage_type_named(damage_type)
 
+        # Whether this adversary was already down before the hit landed, so the
+        # defeat below can be announced on the *transition* rather than on every
+        # later hit against a body - `Won't Stay Dead` means an adversary can be
+        # attacked after `is_defeated` first goes true.
+        was_defeated = self.is_defeated
+
         amount = reduced(amount, resistance_to(self, kind, fight))
         if amount <= 0:
             hp_to_mark = 0
@@ -661,7 +695,7 @@ class Adversary:
             self.stress_unmarked,
         )
         if converted:
-            self.mark_stress(converted)
+            self.mark_stress(converted, fight)
             hp_to_mark -= converted
 
         self.mark_hp(hp_to_mark)
@@ -683,4 +717,14 @@ class Adversary:
         # exist. See `FightState.release_conditions_from` for what is spared.
         if fight is not None and self.is_defeated:
             fight.release_conditions_from(self)
+
+            # And the rest of the field is told, once, on the way down - the
+            # Grimmling Warband breaks when an allied Leader falls. Only on the
+            # transition, so a body being hit again announces nothing. The routes
+            # to defeat that don't pass through here announce nothing either;
+            # that gap is declared where the content registers, and damage is how
+            # essentially everything in the catalogue is defeated. Nothing here
+            # knows what answers.
+            if not was_defeated:
+                apply_ally_defeated(self, fight)
         return hp_to_mark

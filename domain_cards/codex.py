@@ -366,9 +366,9 @@ def wild_flame(caster: Holder, target, fight: Fight) -> AttackResult | None:
             damage_roll.total, fight, damage_type=DamageType.MAGIC
         )
         # Not a voluntary cost, so it is marked rather than spent - and an
-        # adversary with a full Stress track simply loses nothing, since the
-        # SRD's overflow-into-HP rule is a PC rule.
-        adversary.mark_stress(1)
+        # adversary with a full Stress track marks a Hit Point instead, since the
+        # SRD's overflow rule applies on both sides of the table.
+        adversary.mark_stress(1, fight)
 
     fight.note(
         f"{caster.name} looses wild flame, catching {len(caught)} "

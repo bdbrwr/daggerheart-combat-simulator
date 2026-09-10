@@ -28,6 +28,7 @@ from combat.report import FightResult
 from combat.state import FightState
 from content import (
     activations_allowed,
+    apply_adversary_on_spotlight,
     apply_ally_on_roll,
     apply_ally_on_spotlight,
     apply_on_party_attack_roll,
@@ -364,6 +365,14 @@ def _take_gm_turn(state: FightState) -> None:
             # activation and a rallied ally's spotlight correctly pay nothing.
             # Nothing here knows what any of that content is.
             apply_ally_on_spotlight(adversary, state, bought)
+            # And the same moment on the GM's own side of the table, for content
+            # that answers the *field* moving rather than its own holder acting -
+            # the Harpy's Toxic Aura redraws who is standing in its stench. The
+            # holder-scoped `on_spotlight` inside `take_adversary_turn` cannot
+            # say it; see `adversary_on_spotlight`. Asked before the activation
+            # resolves, so an aura is current for whatever the adversary then
+            # does.
+            apply_adversary_on_spotlight(adversary, state, bought)
             take_adversary_turn(adversary, state)
         finally:
             state.acting_free = None

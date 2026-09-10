@@ -1175,7 +1175,7 @@ def death_grip(caster: Holder, target, fight: Fight) -> AttackResult | None:
         # Forced rather than spent, so an adversary with a full Stress track marks
         # a Hit Point instead - the SRD's overflow rule applies on both sides of
         # the table. See `Adversary.mark_stress`.
-        target.mark_stress(DEATH_GRIP_STRESS)
+        target.mark_stress(DEATH_GRIP_STRESS, fight)
         fight.note(
             f"{caster.name} constricts {target.name}, forcing "
             f"{DEATH_GRIP_STRESS} Stress"

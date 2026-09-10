@@ -1738,7 +1738,7 @@ def damnation(caster: Holder, target, fight: Fight) -> AttackResult | None:
             if adversary is not target
         ]
         for adversary in witnesses:
-            adversary.mark_stress(1)
+            adversary.mark_stress(1, fight)
         if witnesses:
             fight.note(f"{len(witnesses)} of the field feel {target.name} go")
 
@@ -2075,7 +2075,7 @@ def wall_of_hunger(caster: Holder, target, fight: Fight) -> AttackResult | None:
 
     caster.spend_hope(1)
     for adversary in caught:
-        adversary.mark_stress(WALL_OF_HUNGER_STRESS)
+        adversary.mark_stress(WALL_OF_HUNGER_STRESS, fight)
     fight.note(
         f"{caster.name} raises a wall of hunger, and {len(caught)} choke on it "
         f"({WALL_OF_HUNGER_STRESS} Stress each)"

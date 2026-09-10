@@ -49,6 +49,7 @@ from content.aoe import (
 from content.conditions import (
     BEFORE_AN_ACTION_ROLL,
     COVERED_IN_SPIDERS,
+    ENCHANTED,
     EXHAUSTED,
     HIDDEN,
     POISONED,
@@ -59,6 +60,7 @@ from content.conditions import (
     WHEN_THEY_ACT,
     Condition,
     until_they_clear_hp,
+    until_they_take_damage,
     when_they_act,
 )
 from content.damage_types import BOTH, RESISTED, DamageType, includes
@@ -67,6 +69,7 @@ from content.registry import (
     Fight,
     action,
     activation_limit,
+    adversary_on_spotlight,
     ally_damage_bonus,
     apply_on_hit,
     attack_advantage,
@@ -86,11 +89,13 @@ from content.registry import (
     force_adversary_reroll,
     insignificant_combat_effect,
     no_combat_effect,
+    on_ally_defeated,
     on_attacked,
     on_damaged,
     on_hit,
     on_party_attack_roll,
     on_spotlight,
+    on_stress_marked,
     out_of_combat_ability,
     party_attack_disadvantage,
     party_target_override,
@@ -7128,6 +7133,617 @@ def shallow_cuts(adversary, roller, roll, fight=None):
         f"for {dealt} (Shallow Cuts)"
     )
     return None
+
+
+# --- Five beasts and a shapeshifter (SRD 2.0) ---------------------------------
+#
+# Elk, Falcon, Grimmling Warband, Harpy and Kelpie: nothing that fights as a pack,
+# and the batch where two of them introduce something the catalogue had never had -
+# **an adversary leaving a fight without being defeated.** The Elk bolts when it is
+# hurt and the Warband breaks when its Leader falls, and both go through
+# `FightState.remove`, which the Green Ooze's *Split* built and nothing has used to
+# take something off the field for good.
+#
+# Worth being plain about what that means for a result: a fled adversary is not a
+# defeated one, but the fight still ends when the field is empty, because
+# `_check_finished` reads `living_adversaries` and a removed adversary is not in
+# it. So the party can win without landing a killing blow.
+
+
+ELK_HEADBUTT = qualified(ADVERSARY, "Headbutt")
+
+HEADBUTT_DICE = 1
+HEADBUTT_DIE = 12
+HEADBUTT_MODIFIER = 2
+
+# Who the Elk last lowered its antlers at, stored as a token. Tokens are counts, so
+# the *identity* is kept by storing `id(target)` as the value - which is a stable
+# integer for as long as the PC is alive, and never 0, so an unset token reads
+# correctly as "nobody yet".
+HEADBUTT_LAST_TARGET = "Headbutt last target"
+
+
+@standard_damage(
+    ELK_HEADBUTT,
+    unmodelled=[
+        "The last target is recorded only on an attack that **landed**, because "
+        "this hook is asked from inside the damage roll and a missed swing never "
+        "reaches it. So an Elk that misses a PC and then hits the same PC counts "
+        "as having switched, and Headbutts. It errs toward the feature firing",
+    ],
+)
+def headbutt(adversary, target, roll=None, fight=None):
+    """A charging standard attack deals 1d12+2 instead of the printed damage.
+
+    SRD: "When the Elk moves from Close range or farther before making a standard
+    attack, it deals 1d12+2 physical damage instead of their standard damage."
+
+    SIMULATION RULE - policy, ruled. No movement is tracked, so the trigger is read
+    as **the Elk swinging at somebody other than whoever it last swung at** - a new
+    target is the one visible sign that it crossed the field to reach them. The
+    user ruled it; "always" and "never" were both offered and declined, and so was
+    the narrower "first attack of the fight only".
+
+    **The opening attack counts as a charge.** With no previous target recorded the
+    Elk closed from wherever it was standing, which the user ruled explicitly. So a
+    lone Elk against a party of four Headbutts on its first swing and then whenever
+    random targeting moves it on - and against a single PC it Headbutts once and
+    never again, which is the shape the reading is meant to have.
+
+    1d12+2 averages 8.5 against the printed 1d8+1 at 5.5.
+    """
+    if fight is None:
+        return None
+
+    # Read before it is overwritten: the comparison is against the *previous*
+    # swing, and this one becomes the previous swing for the next.
+    last = fight.token_count(adversary, HEADBUTT_LAST_TARGET)
+    fight.set_token(adversary, HEADBUTT_LAST_TARGET, id(target))
+    if last == id(target):
+        return None
+
+    fight.note(f"{adversary.name} lowers its antlers and charges {target.name}")
+    return [DiceGroup(count=HEADBUTT_DICE, sides=HEADBUTT_DIE)], HEADBUTT_MODIFIER
+
+
+BOLT = qualified(ADVERSARY, "Bolt")
+
+BOLT_DIFFICULTY = 10
+
+
+def _bolts(adversary, fight) -> None:
+    """The Reaction Roll that decides whether a spooked animal stays in the fight.
+
+    Shared by this feature's two registrations rather than written twice, since the
+    printed text gives one rule with two triggers.
+
+    An adversary rolls a **flat d20** with no modifier, so the trait named here is
+    only which roll the page called for; the SRD prints none for this one at all.
+
+    A defeated Elk does not flee - there is nothing left to run, and removing it
+    would take a body off the field that the party has already earned.
+    """
+    if fight is None or adversary.is_defeated:
+        return
+
+    roll = _reaction_roll(adversary, "instinct", BOLT_DIFFICULTY, fight)
+    if roll.is_success:
+        fight.note(f"{adversary.name} shies but holds its ground ({roll})")
+        return
+
+    fight.note(f"{adversary.name} bolts and is gone ({roll})")
+    fight.remove(adversary)
+
+
+@on_damaged(BOLT)
+def bolt_when_wounded(
+    adversary, amount: int, hp_marked: int, fight=None, marked_armor: bool = False,
+    damage_type=None,
+) -> None:
+    """Half of *Bolt*: the Elk flees a wound unless it makes a Reaction Roll (10).
+
+    SRD: "When the Elk marks a HP or Stress, it must succeed on a Reaction Roll
+    (10) or flee the scene."
+
+    Keyed on Hit Points actually marked rather than on damage arriving, which is
+    what the trigger says. Adversaries mark no Armor Slots, so on this side of the
+    table any landed hit marks at least one and the distinction rarely bites - but
+    a hit softened away to nothing really did make the Elk mark nothing.
+
+    **The first feature in the catalogue that takes an adversary off the field
+    without defeating it.** `FightState.remove` is the Green Ooze's machinery
+    pointed at a different end: Split removes an Ooze and puts two back, and this
+    removes an Elk and puts nothing back.
+
+    USAGE POLICY - none to make. It is not a choice: the page says *must*.
+    """
+    if fight is None or hp_marked <= 0:
+        return
+    _bolts(adversary, fight)
+
+
+@on_stress_marked(BOLT)
+def bolt_when_stressed(adversary, amount: int, fight=None) -> None:
+    """The other half of *Bolt*, and the reason `on_stress_marked` exists.
+
+    "Marks a HP **or Stress**" - and nothing announced the second. `on_damaged`
+    above hears about the Hit Points and could never hear about the Stress, since
+    the two arrive by completely different routes: one through the damage
+    pipeline, the other from party content forcing a mark (Death Grip, Hush's
+    Stun, a wall of hunger).
+
+    Registered on the same name as the damage response above, which is the Redcap
+    Candlemaker's *Hand of Glory* arrangement - one printed feature, two moments.
+
+    Forced Stress only, never Stress the Elk spends: it has no feature to spend it
+    on, and the hook draws that line for everything that follows.
+    """
+    _bolts(adversary, fight)
+
+
+NIMBLE_FLYER = qualified(ADVERSARY, "Nimble Flyer")
+
+
+@difficulty_bonus(NIMBLE_FLYER)
+def nimble_flyer(adversary) -> int:
+    """+X to this adversary's Difficulty, because it fights on the wing.
+
+    SRD: "While flying, the Falcon gains a +3 bonus to its Difficulty."
+
+    **Word for word the Giant Mosquitoes' `Flying`, under a different printed
+    name**, so it is parameterised the same way and resolved the same way - into
+    `Adversary.difficulty` at spawn time, where none of the four readers of
+    Difficulty has to know it exists. See `flying` above for the whole of the
+    reasoning; the only thing that differs is which word the book chose.
+
+    It is registered under its own name rather than authored as `Flying (3)`
+    because a catalogue entry is meant to be checkable against the printed page,
+    and a reader looking for *Nimble Flyer* should find it. Homebrew can reach
+    either name, which is what the parameterised-name convention is for.
+
+    The Falcon is written `Nimble Flyer (3)` - the full printed bonus, on the same
+    reading the Mosquitoes got: a bird of prey is airborne for the whole of a
+    fight, so the average uplift and the printed number are the same. A grounded
+    variant would be authored with a smaller one.
+    """
+    written = feature_parameter(adversary, NIMBLE_FLYER)
+    if written is None:
+        return 0
+    try:
+        return int(written)
+    except ValueError:
+        return 0
+
+
+DIVE_BOMB = qualified(ADVERSARY, "Dive Bomb")
+
+DIVE_BOMB_BONUS = 2
+
+
+@action(DIVE_BOMB)
+def dive_bomb(adversary, target, fight: Fight):
+    """Mark a Stress for a standard attack at +2 to both rolls.
+
+    SRD: "Mark a Stress to make a standard attack against a target from above. The
+    Falcon gains a +2 bonus to the attack and damage rolls."
+
+    **The first feature to move an adversary's attack roll rather than its
+    damage**, which is why `Adversary.attack` grew an `attack_modifier` override -
+    dice, flat damage, directness and damage type could all already be stated by a
+    feature, and how well it swings could not.
+
+    "From above" is the Falcon being airborne, which *Nimble Flyer* already says it
+    is for the whole fight - so the qualifier is always satisfied and costs nothing
+    to check, the same handling the Ahuizotl's `Aquatic Attacker` got.
+
+    The printed dice are passed explicitly rather than left to default. That is not
+    cosmetic: `_damage_for` treats unstated dice as its cue to ask content whether
+    the standard attack's dice should be swapped, and an answer would arrive
+    carrying its own flat modifier and quietly discard this +2. The Falcon has no
+    such feature today, and stating the dice means it never could.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the standing
+    Stress-desperation rule decides when it is on the table: three slots against 3
+    HP puts the Falcon inside the line from full health.
+    """
+    if not adversary.will_spend_stress(1):
+        return None
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} folds its wings and stoops on {target.name}")
+    return adversary.attack(
+        target,
+        fight=fight,
+        attack_modifier=adversary.attack_modifier + DIVE_BOMB_BONUS,
+        damage_dice=list(adversary.damage_dice),
+        damage_modifier=adversary.damage_modifier + DIVE_BOMB_BONUS,
+    )
+
+
+COWARDLY = qualified(ADVERSARY, "Cowardly")
+
+COWARDLY_DIE = 6
+COWARDLY_FLEES_ON = 2
+
+# The printed type the SRD's own feature text names - "an allied **Leader**".
+LEADER = "Leader"
+
+
+def _loses_nerve(adversary, fight, because: str) -> None:
+    """The d6 the Warband rolls to see whether it stays in the fight.
+
+    Shared by this feature's two registrations, as `_bolts` is by the Elk's: one
+    printed rule with two triggers.
+    """
+    if fight is None or adversary.is_defeated:
+        return
+
+    roll = random.randint(1, COWARDLY_DIE)
+    if roll > COWARDLY_FLEES_ON:
+        fight.note(f"{adversary.name} wavers but holds ({because}, d6: {roll})")
+        return
+
+    fight.note(f"{adversary.name} breaks and scatters ({because}, d6: {roll})")
+    fight.remove(adversary)
+
+
+@on_stress_marked(COWARDLY)
+def cowardly_at_the_last_stress(adversary, amount: int, fight=None) -> None:
+    """Half of *Cowardly*: the Warband may scatter when its Stress track fills.
+
+    SRD: "When the Warband marks its last Stress or an allied Leader is defeated,
+    roll a d6. On a result of 2 or lower, the Warband flees the scene."
+
+    **Its last Stress specifically**, so this is asked after the marking has
+    settled and checks that nothing is left - a Warband forced to mark one of two
+    is not at its last. A forced mark that overflows the track has still filled it,
+    and correctly triggers.
+
+    A third of the time it goes, which over a Horde with 2 Stress is a real chance
+    the party clears a stat block by pressure rather than damage.
+    """
+    if fight is None or adversary.stress_unmarked > 0:
+        return
+    _loses_nerve(adversary, fight, "its last Stress")
+
+
+@on_ally_defeated(
+    COWARDLY,
+    unmodelled=[
+        "A Leader defeated by something other than damage announces nothing - "
+        "Stress overflowing into a last Hit Point, or content marking HP "
+        "outright - because `on_ally_defeated` is announced from "
+        "`Adversary.take_damage`. Damage is how essentially every adversary in "
+        "the catalogue is defeated",
+    ],
+)
+def cowardly_when_a_leader_falls(adversary, defeated, fight=None) -> None:
+    """The other half of *Cowardly*, and the reason `on_ally_defeated` exists.
+
+    Nothing announced an adversary being defeated: the fight loop notices only that
+    `living_adversaries` has got shorter, and `on_damaged` belongs to whoever took
+    the hit rather than to whoever watched.
+
+    **The first feature anywhere to read an adversary's printed `type`.** The
+    standing note is that type carries no mechanics and the fight loop never reads
+    it - which is still true, and is about the *loop*. The SRD's own feature text
+    names a type here ("an allied **Leader**"), so content reading it is the page
+    being followed rather than the rule being bent. Matched canonically, like every
+    other name in the project.
+
+    No range clause on the page, so none is applied: a Warband anywhere on the
+    field sees its Leader go down. That is the printed text rather than a reading -
+    contrast *Torchbearer*, which says "within Close range" and gets the area rule.
+    """
+    if fight is None or canonical(getattr(defeated, "type", "")) != canonical(LEADER):
+        return
+    _loses_nerve(adversary, fight, f"{defeated.name} falls")
+
+
+TOXIC_AURA = qualified(ADVERSARY, "Toxic Aura")
+
+# Matched on part of a name, the way REDCAP and ZOMBIE are - the page says "all
+# non-Harpies", which is a kind rather than a stat block.
+HARPY = canonical("Harpy")
+
+
+@adversary_on_spotlight(TOXIC_AURA)
+def toxic_aura(adversary, spotlighted, fight=None, paid: bool = False) -> None:
+    """Everything standing in the stench is Vulnerable, re-drawn as the field moves.
+
+    SRD: "The Harpy emits a foul stench that renders all non-Harpies *Vulnerable*
+    while within Very Close range."
+
+    SIMULATION RULE - policy, ruled. A standing aura rather than a triggered
+    effect, and **who is inside it is re-drawn at every adversary spotlight** - the
+    user's ruling, chosen over drawing it once at the start of the fight and over
+    reading it only off whoever the Harpy attacks. That is why this rides
+    `adversary_on_spotlight` rather than `on_spotlight`: the aura is a fact about
+    where people are standing, which changes as the whole field takes its turns and
+    not only when the Harpy acts.
+
+    **"All non-Harpies" includes the Harpy's own side**, on the standing
+    printed-noun ruling - the SRD alternates "creatures" and "targets" deliberately,
+    and this says neither, it says everyone who is not a Harpy. So a Harpy fighting
+    alongside anything else makes its allies Vulnerable too, which is a real cost
+    for fielding one.
+
+    How many are caught is `targets_reached` at the Very Close band over that whole
+    field. Worth knowing the arithmetic before reading any numbers: Very Close takes
+    a third, floored at one and capped at two, so a party of four with no other
+    adversaries has **exactly one** of its members Vulnerable at any moment, and it
+    takes six non-Harpies on the field before a second is caught.
+
+    The previous draw is lifted before the new one is taken, which is what makes it
+    an aura people walk in and out of rather than a condition that accumulates.
+    Only conditions **this** Harpy applied are lifted - a Vulnerable somebody else
+    put on a PC is not the Harpy's to clear, which is what `Condition.source` is
+    for - and a creature already Vulnerable from elsewhere is left alone rather
+    than having its own ender overwritten.
+
+    One Harpy answers for the flock, the arrangement *Shallow Cuts* uses: the band
+    is measured over everyone who is not a Harpy, so a second stench would
+    re-draw the same question and double nothing.
+    """
+    if fight is None:
+        return
+
+    flock = [
+        other for other in fight.living_adversaries if HARPY in canonical(other.name)
+    ]
+    if not flock or flock[0] is not adversary:
+        return
+
+    outsiders = list(fight.conscious_party) + [
+        other
+        for other in fight.living_adversaries
+        if HARPY not in canonical(other.name)
+    ]
+    if not outsiders:
+        return
+
+    for creature in outsiders:
+        held = fight.condition_on(creature, VULNERABLE)
+        if held is not None and held.source is adversary:
+            fight.clear_condition(creature, VULNERABLE)
+
+    caught = random.sample(
+        outsiders, min(targets_reached(Range.VERY_CLOSE, len(outsiders)), len(outsiders))
+    )
+    for creature in caught:
+        if fight.is_vulnerable(creature):
+            continue
+        fight.apply_condition(
+            creature, Condition(name=VULNERABLE, source=adversary)
+        )
+    if caught:
+        fight.note(
+            f"{adversary.name}'s stench turns the air, and "
+            f"{len(caught)} gag on it ({VULNERABLE})"
+        )
+
+
+SWOOPING_ATTACK = qualified(ADVERSARY, "Swooping Attack")
+
+SWOOPING_DICE = 3
+SWOOPING_DIE = 6
+
+
+@action(
+    SWOOPING_ATTACK,
+    unmodelled=[
+        "The Harpy's flight path - it moves in a straight line to a point within "
+        "Far range - has no representation, so the attack simply reaches whoever "
+        "the GM's targeting rule picked. The page names one target either way",
+    ],
+)
+def swooping_attack(adversary, target, fight: Fight):
+    """Mark a Stress to dive the length of the field for 3d6.
+
+    SRD: "Mark a Stress to have the Harpy move in a straight line to a point within
+    Far range and make an attack against a target in the Harpy's path. On a
+    success, the Harpy deals 3d6 physical damage."
+
+    **A target in the path, singular**, so this is one attack against one PC rather
+    than an area effect - the SRD writes its area features as "all targets within",
+    and this is not one of them. The line itself is movement and reaches nothing
+    here.
+
+    3d6 averages 10.5 against the printed 1d8+1 at 5.5, with a tighter spread than
+    a single big die - which against threshold bands is a different thing from the
+    same average on 1d12+4.
+
+    USAGE POLICY - ruled. An Action costing Stress, so the standing
+    Stress-desperation rule decides when it is on the table.
+    """
+    if not adversary.will_spend_stress(1):
+        return None
+
+    adversary.spend_stress(1)
+    fight.note(f"{adversary.name} stoops the length of the field at {target.name}")
+    return adversary.attack(
+        target,
+        fight=fight,
+        damage_dice=[DiceGroup(count=SWOOPING_DICE, sides=SWOOPING_DIE)],
+        damage_modifier=0,
+        damage_type=DamageType.PHYSICAL,
+    )
+
+
+SHAPESHIFTER = qualified(ADVERSARY, "Shapeshifter")
+
+# Which PC finds the Kelpie's current form alluring, kept as `id(pc)` for the
+# reason HEADBUTT_LAST_TARGET is - a token is a count, and an identity stored as
+# one is a stable integer that is never 0.
+SHAPESHIFTER_FORM = "Shapeshifter form"
+
+
+@action(
+    SHAPESHIFTER,
+    unmodelled=[
+        "The page hobbles *rolls* against the Kelpie and this hobbles attack "
+        "rolls, which is the only kind `party_attack_disadvantage` is asked "
+        "about. A PC rolling to find or resist the Kelpie is unaffected",
+    ],
+)
+def shapeshifter(adversary, target, fight: Fight):
+    """Mark a Stress to wear the shape one PC finds hardest to strike.
+
+    SRD: "Mark a Stress to change the Kelpie's physical form into any creature or
+    object smaller than a wagon. A creature has disadvantage on rolls against the
+    Kelpie while the Kelpie is in a form the creature finds pleasing or alluring."
+
+    SIMULATION RULE - policy, ruled. **One PC, for the rest of the fight.** A form
+    is tailored to one creature's desire, and *Heart's Desire* is what tells the
+    Kelpie whose - so the Kelpie always finds a form that works on somebody, and
+    never on everybody. Applying it to the whole party, and ending it on the next
+    hit the Kelpie takes, were both offered and declined.
+
+    Which PC is chosen at random, per the standing rule for a choice nothing in the
+    printed text decides. Nothing here reads who is most dangerous: that is a
+    statistic nobody at a table computes.
+
+    Not taken again while a form is already worn - re-shaping would spend a Stress
+    to move the Disadvantage from one PC to another for no gain, which is the
+    standing don't-re-apply rule reaching a feature that carries a token rather
+    than a condition.
+
+    No roll of its own, so it hands back a rollless `AttackResult` the way the
+    flame features do: the spotlight was spent and nothing was thrown.
+
+    USAGE POLICY - ruled. An Action costing Stress. Note what the Kelpie's stat
+    block does to the desperation rule - five Stress against 3 HP means it clears
+    the line from full health and can afford to shift early.
+    """
+    if fight is None or not adversary.will_spend_stress(1):
+        return None
+    if fight.token_count(adversary, SHAPESHIFTER_FORM):
+        return None
+
+    charmed = list(fight.conscious_party)
+    if not charmed:
+        return None
+
+    adversary.spend_stress(1)
+    chosen = random.choice(charmed)
+    fight.set_token(adversary, SHAPESHIFTER_FORM, id(chosen))
+    fight.note(
+        f"{adversary.name} takes a shape {chosen.name} cannot bring themselves "
+        f"to strike cleanly"
+    )
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+@party_attack_disadvantage(SHAPESHIFTER)
+def shapeshifter_beguiles(adversary, attacker, target, weapon, fight=None) -> bool:
+    """The Disadvantage the Kelpie's borrowed shape puts on one PC's swings.
+
+    Registered on the same name as the action above - one printed feature, one
+    moment that sets the state and one that reads it, the *Hand of Glory*
+    arrangement.
+
+    Scoped to attacks **against the Kelpie itself**, which is what the page says:
+    the form is what the attacker cannot bear to hit, so it does nothing to that
+    PC's swings at anything else. Contrast the Darkweave Spinner's *Shadow Fang*,
+    registered on the same hook, which hobbles its victim's attacks generally.
+    """
+    if fight is None or target is not adversary:
+        return False
+    return fight.token_count(adversary, SHAPESHIFTER_FORM) == id(attacker)
+
+
+ENCHANT = qualified(ADVERSARY, "Enchant")
+
+ENCHANT_FEAR = 1
+
+
+@action(ENCHANT)
+def enchant(adversary, target, fight: Fight):
+    """Spend a Fear to talk a PC out of the fight until somebody hits them.
+
+    SRD: "Spend a Fear to have the Kelpie beguile a PC within Close range. The PC
+    must succeed on an Instinct Reaction Roll or become *Enchanted* until they take
+    damage. While *Enchanted*, the PC perceives the Kelpie as a trusted friend or
+    ally and will do what the Kelpie says unless it contradicts the PC's most
+    deeply held morals."
+
+    SIMULATION RULE - policy, ruled. **An Enchanted PC loses their spotlight
+    entirely**, carried on `Condition.prevents_action` - the user's ruling, chosen
+    over letting them act but never at the Kelpie, and over turning them on an ally.
+    So this is the first thing on the GM's side of the table that can stop a PC
+    acting at all, and the party's only way out is to wound their own charmed
+    friend.
+
+    The condition is applied with no printed Difficulty, so the Kelpie's own
+    Difficulty is used - the standing rule where the SRD names a Reaction Roll and
+    no number.
+
+    "Within Close range" goes through the area rule, asked of the party, which is
+    the standing answer for a range clause naming one specific creature.
+
+    **The Fear is spent before the roll**, because the page spends it to *have the
+    Kelpie beguile* rather than on the result - a successful save costs the GM the
+    Fear all the same.
+
+    USAGE POLICY - ruled. Free among the affordable options, gated by the standing
+    don't-re-apply rule: a PC who is already Enchanted is not worth a second Fear,
+    since the condition has no stacking half.
+    """
+    if fight is None or fight.has_condition(target, ENCHANTED):
+        return None
+
+    party = len(fight.conscious_party)
+    if party <= 0 or random.random() >= chance_within(Range.CLOSE, party):
+        return None
+    if not fight.spend_fear(ENCHANT_FEAR):
+        return None
+
+    roll = _reaction_roll(target, "instinct", adversary.difficulty, fight)
+    if roll.is_success:
+        fight.note(f"{target.name} shakes off the Kelpie's voice ({roll})")
+        return AttackResult(attack_roll=None, damage_roll=None)
+
+    fight.apply_condition(
+        target,
+        Condition(
+            name=ENCHANTED,
+            end=until_they_take_damage(target.hp_marked, target.armor_marked),
+            source=adversary,
+            prevents_action=True,
+        ),
+    )
+    fight.note(
+        f"{target.name} takes the Kelpie for a friend and stops fighting "
+        f"({ENCHANTED}, until they are hurt)"
+    )
+    return AttackResult(attack_roll=None, damage_roll=None)
+
+
+insignificant_combat_effect(
+    qualified(ADVERSARY, "Captivating"),
+    "A PC must mark a Stress to move out of the Kelpie's Melee range. Word for "
+    "word the Redcap Biters' Ankle Weights, and ruled into the same state by the "
+    "user, so the same number applies: **one Stress per disengagement, and a "
+    "simulated fight contains zero disengagements**, for an expected cost of 0.0 "
+    "Stress across a high-N run. The state is the one it is because Stress is a "
+    "resource represented completely here - the effect has something to touch - "
+    "and only its trigger never arrives. It would become real the moment "
+    "positions were tracked.",
+)
+
+
+no_combat_effect(
+    qualified(ADVERSARY, "Heart's Desire"),
+    "After the Kelpie has watched a creature for at least a hundred heartbeats, "
+    "it knows the physical form that creature would find most pleasing. The "
+    "effect is **knowledge**, and knowledge has no representation here: nothing "
+    "in the simulator holds information that a combatant could act on or lack. "
+    "What it is *for* is Shapeshifter, which is modelled and which carries the "
+    "whole mechanical half - the ruling that the Kelpie always finds a form "
+    "somebody finds alluring is exactly this passive being assumed true. So "
+    "dismissing it loses nothing, and modelling it would mean writing a second "
+    "copy of Shapeshifter's own effect.",
+)
 
 
 insignificant_combat_effect(

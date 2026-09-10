@@ -341,7 +341,7 @@ def hypnotic_shimmer(caster: Holder, target, fight: Fight) -> AttackResult | Non
                 prevents_action=True,
             ),
         )
-        adversary.mark_stress(1)
+        adversary.mark_stress(1, fight)
 
     if dazzled:
         fight.note(
@@ -993,7 +993,7 @@ def mass_enrapture(caster: Holder, target, fight: Fight) -> AttackResult | None:
     # held by Enrapture keeps its compulsion.
     caster.spend_stress(1)
     for adversary in caught:
-        adversary.mark_stress(1)
+        adversary.mark_stress(1, fight)
         fight.clear_condition(adversary, ENRAPTURED)
     fight.note(
         f"{caster.name} breaks the spell, costing {len(caught)} adversaries a Stress"

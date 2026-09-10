@@ -335,7 +335,10 @@ _on_attacked: dict[str, Callable] = {}
 _before_attacked: dict[str, Callable] = {}
 _on_spotlight: dict[str, Callable] = {}
 _ally_on_spotlights: dict[str, Callable] = {}
+_adversary_on_spotlights: dict[str, Callable] = {}
 _ally_damage_bonuses: dict[str, Callable] = {}
+_on_stress_marked: dict[str, Callable] = {}
+_ally_defeats: dict[str, Callable] = {}
 _skip_spotlight: dict[str, Callable] = {}
 _spotlight_while_defeated: dict[str, Callable] = {}
 _on_party_attack_rolls: dict[str, Callable] = {}
@@ -478,6 +481,116 @@ def ally_on_spotlight(name: str, unmodelled: Iterable[str] = ()):
 
     def register(function: Callable) -> Callable:
         _claim(_ally_on_spotlights, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def adversary_on_spotlight(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that answers **any** adversary being spotlighted.
+
+    Signature: `(holder, adversary, fight, paid) -> None`, where `holder` carries
+    the feature and `adversary` is whoever the GM just put up. The two are often
+    different, and may be the same - a feature is not excluded from its own
+    holder's spotlight.
+
+    **The GM-side mirror of `ally_on_spotlight`**, sharing its one call site in
+    `combat/fight.py`. That hook scans the conscious party; `on_spotlight` next
+    door is holder-scoped on whoever is acting. Between them there was no way for
+    a stat block to hear about *somebody else* taking a spotlight, which is what
+    the Harpy's *Toxic Aura* needs: the aura is a standing fact about who is
+    near the Harpy, so it is re-drawn as the field moves rather than only on the
+    Harpy's own activations.
+
+    **This closes an asymmetry rather than serving one feature**, the way
+    `ally_damage_bonus` did for damage. The party could watch the GM's economy and
+    the GM could watch nothing at all. Widening `ally_on_spotlight` to scan both
+    sides was the alternative and was not taken: the project's precedent is a
+    mirror per side, so each hook's docstring can say plainly whose content it is
+    and a reader never has to work out which half of a scan a feature belongs to.
+
+    `paid` travels for the same reason it does on the party side - see
+    `ally_on_spotlight`. Nothing registered here reads it yet.
+
+    Everything registered is asked and nothing short-circuits: a spotlight is not
+    a resource anybody is competing for.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_adversary_on_spotlights, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def on_stress_marked(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that answers its holder being **forced** to mark Stress.
+
+    Signature: `(holder, amount, fight) -> None`. Holder-scoped on whoever marked
+    it, and asked after the marking has settled - so content keyed on "marks its
+    last Stress" sees a full track.
+
+    **Forced only, never voluntary.** It is announced from `mark_stress` and not
+    from `spend_stress`, which is the SRD's own distinction and the one
+    `Adversary` already keeps: a feature's Stress cost is a choice its holder
+    makes, and a Reaction to "when the Warband marks its last Stress" is not
+    meant to fire on the Warband spending it. The Elk's *Bolt* and the Grimmling
+    Warband's *Cowardly* are the reason it exists, and both are written about
+    something being done to them.
+
+    **`fight` may be None, and content must decline on it.** That is not a
+    formality here: `Adversary.mark_stress` takes the fight as an optional
+    argument, so this fires only where a caller had one to give. Every piece of
+    content in the project that forces Stress onto an adversary does, but a stat
+    block built and stressed directly in a test does not, and neither would a
+    future caller that forgot. Content whose whole answer needs a fight - both of
+    today's do, since fleeing means leaving one - simply does nothing there.
+
+    Announced for the *amount asked for*, not the amount that fit. A holder forced
+    to mark more Stress than it has left marks one Hit Point instead, per the
+    overflow rule that applies on both sides of the table, and content reading
+    `stress_unmarked` afterwards can see that for itself.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_on_stress_marked, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def on_ally_defeated(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that answers **another adversary** going down.
+
+    Signature: `(holder, defeated, fight) -> None`, where `holder` carries the
+    feature and `defeated` is the adversary that has just been taken out. The
+    holder is never the defeated one: a stat block reacting to its own defeat is a
+    different feature and has `spotlight_while_defeated` for it.
+
+    The Grimmling Warband's *Cowardly* is the reason - "when the Warband marks its
+    last Stress **or an allied Leader is defeated**, roll a d6". Nothing announced
+    a defeat: the fight loop notices only that `living_adversaries` has got
+    shorter, and `on_damaged` is holder-scoped on whoever took the hit.
+
+    **Which allies count is the feature's business.** This hook says only that
+    somebody went down; whether they were a Leader, in range, or of the right kind
+    is read off `defeated` by the content, exactly as `ally_damage_bonus` leaves
+    range to the area rule.
+
+    Announced from `Adversary.take_damage`, on the transition into defeat, so it
+    fires once rather than on every later hit against a body. **The gap that
+    leaves** is a defeat by any route other than damage - an adversary that
+    overflows its Stress track into its last Hit Point, or content that marks HP
+    outright - since neither passes through that method with a fight in hand.
+    Damage is how essentially every adversary in the catalogue is defeated, and
+    the gap is declared where the content registers rather than here.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_ally_defeats, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -3875,6 +3988,60 @@ def apply_ally_on_spotlight(adversary, fight: Fight = None, paid: bool = False) 
     _discover()
     for holder, respond in _party_offers(fight, _ally_on_spotlights):
         respond(holder, adversary, fight, paid)
+
+
+def apply_adversary_on_spotlight(
+    adversary, fight: Fight = None, paid: bool = False
+) -> None:
+    """Let GM-side content answer an adversary being spotlighted. Everyone gets a say.
+
+    The mirror of `apply_ally_on_spotlight` across the table, called from the same
+    moment in `combat/fight.py` and immediately after it. Scanned across the
+    living adversaries, so a stat block hears about the whole field taking its
+    turns rather than only its own - see `adversary_on_spotlight`.
+
+    The holder is **not** excluded when it is the one being spotlighted: a
+    standing aura is no less true on the Harpy's own activation than on anybody
+    else's, and content that wants the distinction can compare the two itself.
+
+    Nothing without a fight, since there is no field to scan.
+    """
+    _discover()
+    for holder, respond in _gm_offers(fight, _adversary_on_spotlights):
+        respond(holder, adversary, fight, paid)
+
+
+def apply_stress_marked(holder, amount: int, fight: Fight = None) -> None:
+    """Let this holder's own content answer Stress it was just forced to mark.
+
+    Holder-scoped, and everything registered is asked with nothing
+    short-circuiting - a marked Stress is not a resource anybody is competing for.
+
+    Called from `Adversary.mark_stress` with whatever fight the caller had. See
+    `on_stress_marked` for why it is forced Stress only, and why `fight` can be
+    None.
+    """
+    _discover()
+    for name in holder.named_features:
+        respond = _registered(_on_stress_marked, name)
+        if respond is not None:
+            respond(holder, amount, fight)
+
+
+def apply_ally_defeated(defeated, fight: Fight = None) -> None:
+    """Let the rest of the field answer one adversary having just been defeated.
+
+    Scanned across the living adversaries, which by the time this is asked no
+    longer includes `defeated` - so a stat block is never told about its own
+    defeat here. Everything registered is asked and nothing short-circuits.
+
+    Nothing without a fight, since there is no field to scan.
+    """
+    _discover()
+    for holder, respond in _gm_offers(fight, _ally_defeats):
+        if holder is defeated:
+            continue
+        respond(holder, defeated, fight)
 
 
 def apply_ally_on_damaged(target, amount: int, hp_marked: int, fight: Fight = None) -> None:

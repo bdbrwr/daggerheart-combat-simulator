@@ -139,10 +139,14 @@ small to change an outcome), **not implemented** (work still to do).
 | Darkweave Swarmlings | Horde (8/HP) | 12 | Horde (1d4), Get 'em Off, Get 'em Off! *implemented* |
 | Deeproot Defender | Bruiser | 1 | Ground Slam, Grab and Drag *implemented* |
 | Dire Wolf | Skulk | 2 | Pack Tactics, Hobbling Strike *implemented* |
+| Elk | Skulk | 14 | Headbutt, Bolt *implemented* — the first adversary that can leave a fight without being defeated |
+| Falcon | Skulk | 14 | Nimble Flyer (3), Dive Bomb *implemented* |
 | Giant Mosquitoes | Horde (5/HP) | 2 | Horde (1d4+1), Flying (2), Bloodsucker *implemented* |
 | Giant Rat | Minion | 2 | Minion (3), Group Attack *implemented* |
 | Giant Scorpion | Bruiser | 2 | Momentum, Double Strike, Venomous Stinger *implemented* |
 | Glass Snake | Standard | 2 | Armor-Shredding Shards, Spinning Serpent, Spitter *implemented* |
+| Grimmling Warband | Horde (4/HP) | 14 | Horde (1d4+1), Cowardly *implemented* — Cowardly is the only feature that reads an adversary's printed type |
+| Harpy | Skulk | 14 | Toxic Aura, Swooping Attack *implemented* |
 | Harrier | Standard | 3 | Fall Back *implemented* · Maintain Distance *no combat effect* |
 | Archer Guard | Ranged | 3 | Hobbling Shot *implemented* |
 | Bladed Guard | Standard | 3 | Detain *implemented* · Shield Wall *no combat effect* |
@@ -154,6 +158,7 @@ small to change an outcome), **not implemented** (work still to do).
 | Jagged Knife Lieutenant | Leader | 4 | Tactician, More Where That Came From, Coup de Grace, Momentum *implemented* |
 | Jagged Knife Shadow | Skulk | 4 | Backstab, Cloaked *implemented* |
 | Jagged Knife Sniper | Ranged | earlier | Unseen Strike *irrelevant* |
+| Kelpie | Skulk | 14 | Shapeshifter, Enchant *implemented* · Captivating *irrelevant* · Heart's Desire *no combat effect* |
 | Minor Chaos Elemental | Solo | 4 | Arcane Form, Sickening Flux, Remake Reality, Magical Reflection, Momentum *implemented* — Arcane Form was the last one outstanding and landed with damage-type resistance |
 | Minor Fire Elemental | Solo | 5 | Relentless (2), Scorched Earth, Explosion, Consume Kindling, Momentum *implemented* |
 | Minor Demon | Solo | 5 | Relentless (2), All Must Fall, Hellfire, Reaper, Momentum *implemented* |
@@ -194,10 +199,11 @@ skipped by rule — and the table above has no *not implemented* rows.
 
 **Against SRD 2.0 it is not.** The forty-nine ported against 1.0 are still tier 1
 and still run; 2.0 prints thirty-five more beside them. **Batch 11** took the first
-four (Ahuizotl, Atotoll, Bugboar, Common Ruffian), **batch 12** the four Darkweaves
-and **batch 13** the five Redcaps, so sixty-two of the eighty-six are in, three
-(Courtier, Petty Noble, Merchant) are Socials skipped by rule, and twenty-one are
-listed under *Outstanding*.
+four (Ahuizotl, Atotoll, Bugboar, Common Ruffian), **batch 12** the four Darkweaves,
+**batch 13** the five Redcaps and **batch 14** the Elk, Falcon, Grimmling Warband,
+Harpy and Kelpie, so sixty-seven of the eighty-six are in, three (Courtier, Petty
+Noble, Merchant) are Socials skipped by rule, and sixteen are listed under
+*Outstanding*.
 
 Four of the forty-nine were spot-checked against SRD 2.0 while this file was being
 updated — Acid Burrower, Bear, Cave Ogre and Construct (2.0 pp. 97-98) — and every
@@ -396,6 +402,75 @@ Two smaller things worth knowing:
   the Butcher *Hidden*. Declared on the feature rather than left to look like a
   bonus that never fires.
 
+### Batch 14 — five beasts and a shapeshifter (5 stat blocks, 11 features)
+
+**Verified against the printed page** (SRD 2.0 pp. 100-103). Unlike the last two
+batches these do not fight as a group; they are simply the next five in the book's
+order.
+
+| Adversary | Type | What it needed |
+|---|---|---|
+| **Elk** | Skulk | Headbutt, Bolt |
+| **Falcon** | Skulk | Nimble Flyer (3), Dive Bomb |
+| **Grimmling Warband** | Horde (4/HP) | Cowardly; Horde (1d4+1) was already generic |
+| **Harpy** | Skulk | Toxic Aura, Swooping Attack |
+| **Kelpie** | Skulk | Shapeshifter, Enchant; Captivating and Heart's Desire are dismissed |
+
+**An adversary can now leave a fight without being defeated.** The Elk's *Bolt*
+and the Warband's *Cowardly* both remove their holder from the field on a bad
+roll, through `FightState.remove` - machinery the Green Ooze's *Split* built and
+which nothing had used to take something away for good. The consequence worth
+knowing before a run is read: the fight still ends when the field is empty,
+because `_check_finished` reads `living_adversaries`, so **the party can win
+without landing a killing blow** and a defeat-count and a victory no longer
+have to agree.
+
+**Three new hooks**, which is the most any batch has cost. Two were approved
+before the code was written and the third fell out of a ruling:
+
+- **`on_stress_marked`** - one call site in `Adversary.mark_stress`, which gained
+  an optional `fight` to carry it. Both flee features trigger on "marks a HP **or
+  Stress**", and `on_damaged` could only ever hear about the first half; the two
+  arrive by completely different routes. Forced Stress only, never Stress an
+  adversary spends, which is the SRD's own distinction.
+- **`on_ally_defeated`** - announced from `Adversary.take_damage` on the
+  transition into defeat. Nothing said an adversary had gone down: the loop
+  notices only that `living_adversaries` got shorter.
+- **`adversary_on_spotlight`** - the GM-side mirror of `ally_on_spotlight`,
+  sharing its call site in `_take_gm_turn`. Wanted by *Toxic Aura*, which is
+  re-drawn at **every** adversary spotlight rather than only the Harpy's, and
+  `on_spotlight` is holder-scoped. Built as a mirror rather than by widening the
+  party-side hook, which is the arrangement `ally_damage_bonus` set in batch 13.
+
+**One smaller piece.** `Adversary.attack` gained an `attack_modifier` override,
+for *Dive Bomb*'s "+2 bonus to the attack **and** damage rolls". Dice, flat
+damage, directness and damage type could all already be stated by a feature; how
+well it swings was the one number that could not.
+
+Three rulings worth carrying forward:
+
+- **Headbutt reads movement as a change of target.** "Moves from Close range or
+  farther before making a standard attack" becomes "swings at somebody other than
+  last time", with the opening attack of the fight counting as a charge. The Elk
+  keeps its last target as a token, so against a lone PC it Headbutts once and
+  never again, and against a party it fires whenever random targeting moves it on.
+- **Toxic Aura catches the Harpy's own side.** "All non-Harpies" is neither of the
+  SRD's two usual nouns, and it is read literally, so a Harpy fielded beside
+  anything else makes its allies Vulnerable too. The arithmetic to know: Very
+  Close takes a third floored at one, so a party of four has exactly **one**
+  member Vulnerable at any moment, and it takes six non-Harpies before a second
+  is caught.
+- **An Enchanted PC loses their spotlight.** The Kelpie's *Enchant* is the first
+  thing on the GM's side that can stop a PC acting at all, and the only way out is
+  the party wounding their own charmed friend - `until_they_take_damage` reads
+  both the HP and the Armor track, since a hit an Armor Slot swallowed is still
+  damage taken.
+
+**Cowardly is the only feature that reads an adversary's printed `type`.** The
+standing note that type carries no mechanics is about the *fight loop*, which
+still never reads it; the SRD's own text names a type here ("an allied
+**Leader**"), so the feature follows the page.
+
 ---
 
 ## Outstanding
@@ -405,21 +480,27 @@ pp. 95-96**, which lists every stat block in the book by name under its tier. It
 is the one place the whole roster is enumerated, so it is what this section is
 kept against.
 
-### Tier 1 — twenty-one still to do
+### Tier 1 — sixteen still to do
 
-2.0's tier 1 runs to **86 stat blocks**. Sixty-two are ported and three are Socials
-skipped by rule, which leaves these twenty-one, in the index's own order:
+2.0's tier 1 runs to **86 stat blocks**. Sixty-seven are ported and three are
+Socials skipped by rule, which leaves these sixteen, in the index's own order:
 
 | | | |
 |---|---|---|
-| Elk | Octopus | Sawtoothed Gillbeast |
-| Falcon | Panther | Soul-Shattered Mage |
-| Grimmling Warband | Phantom | Spellbound Armor |
-| Harpy | Poltergeist | Viper |
-| Kelpie | Rabble Mawb | Waxwork Creation |
-| Masque Muerte | Rugaru | Will-o'-the-Wisps |
-| Mechanorb | | Yufo |
-| Mountain Troll | | |
+| Masque Muerte | Poltergeist | Soul-Shattered Mage |
+| Mechanorb | Rabble Mawb | Spellbound Armor |
+| Mountain Troll | Rugaru | Viper |
+| Octopus | Sawtoothed Gillbeast | Waxwork Creation |
+| Panther | | Will-o'-the-Wisps |
+| Phantom | | Yufo |
+
+**Masque Muerte has been read off the page** (printed p. 103, alongside the
+Kelpie): Tier 1 **Solo**, Difficulty 13, thresholds 7/14, HP 8, Stress 4, ATK +4,
+Open-Handed Strike Melee 1d12+2 **magic**. Experience: Grappler +3, Showboat +3.
+Features: *Libre* (can't be Restrained), *Heel Turn*, *Spectral Suplex*,
+*Unmasking Death*, *Tag Team*. Worth knowing before it is planned: three of the
+five key on *Restrained* or a new *Pinned*, and Restrained is recorded-but-inert
+here, so it will want a ruling rather than just code.
 
 **Merchant is a Social and is skipped**, confirmed on printed p. 104 — the third
 after Courtier and Petty Noble, and the question this list had been carrying.

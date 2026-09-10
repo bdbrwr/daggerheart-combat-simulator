@@ -29,6 +29,7 @@ from content.damage_types import DamageType
 from content.conditions import (
     BEFORE_AN_ACTION_ROLL,
     COVERED_IN_SPIDERS,
+    ENCHANTED,
     EXHAUSTED,
     HIDDEN,
     ON_A_GM_TURN,
@@ -60,8 +61,13 @@ from dice.d20 import D20RollResult
 from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityOutcome, DualityRollResult
 from features.adversaries import (
+    BOLT_DIFFICULTY,
+    DIVE_BOMB_BONUS,
     GLORY_TOKENS,
     HAND_OF_GLORY_TOKENS,
+    SHAPESHIFTER_FORM,
+    SWOOPING_DICE,
+    SWOOPING_DIE,
     TORCHBEARER_BONUS,
     acid_bath,
     aquatic_attacker,
@@ -69,26 +75,34 @@ from features.adversaries import (
     archers_bane,
     backbreaker,
     bite,
+    bolt_when_stressed,
+    bolt_when_wounded,
     bone_breaker,
     brutal,
     chop_happy,
+    cowardly_at_the_last_stress,
+    cowardly_when_a_leader_falls,
     dance_in_the_flames,
     darkfang_envenomation,
     darkweave_venom,
     death_quake,
     den_mother,
+    dive_bomb,
     drag_and_bag,
     drag_and_bag_holds_them,
     earth_eruption,
+    enchant,
     get_em_off,
     grab_and_drag,
     ground_slam,
     hail_of_boulders,
     hand_of_glory,
     hand_of_glory_lights,
+    headbutt,
     kneecapper,
     knife_thrower,
     momentum,
+    nimble_flyer,
     quicker_than_she_looks,
     ramp_up_costs_fear,
     ramp_up_sweeps,
@@ -97,13 +111,17 @@ from features.adversaries import (
     shadow_fang,
     shadow_fang_shakes_them,
     shallow_cuts,
+    shapeshifter,
+    shapeshifter_beguiles,
     skin_crawling,
     spit_acid,
     surprise,
     surprise_hits_harder,
     survival_instinct,
+    swooping_attack,
     tail_swat,
     torchbearer,
+    toxic_aura,
     trample,
     weak_structure,
     wind_lord,
@@ -7632,5 +7650,558 @@ def test_every_darkweave_feature_is_modelled():
         "Wrap in Shadow-Silk",
         "Shadow Fang",
         "Get 'em Off, Get 'em Off!",
+    ):
+        assert assess(qualified(ADVERSARY, name)).status is Status.MODELLED
+
+
+# --- Elk ---------------------------------------------------------------------
+
+
+def _elk(name: str = "Elk", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Headbutt", "Bolt"],
+        difficulty=13,
+        major_threshold=4,
+        severe_threshold=8,
+        hp_max=3,
+        stress_max=2,
+        attack_modifier=0,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=1,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_headbutt_charges_the_first_target_of_the_fight():
+    """No previous target means the Elk closed from somewhere - ruled to fire."""
+    elk = _elk()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[elk])
+
+    swapped = headbutt(elk, party[0], None, fight)
+
+    assert swapped is not None
+    dice, modifier = swapped
+    assert dice == [DiceGroup(count=1, sides=12)]
+    assert modifier == 2
+
+
+def test_headbutt_does_not_fire_on_the_same_target_twice():
+    """The Elk stayed where it was, so its antlers are back to 1d8+1."""
+    elk = _elk()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[elk])
+
+    headbutt(elk, party[0], None, fight)
+
+    assert headbutt(elk, party[0], None, fight) is None
+
+
+def test_headbutt_fires_again_when_the_elk_switches_target():
+    elk = _elk()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[elk])
+
+    headbutt(elk, party[0], None, fight)
+
+    assert headbutt(elk, party[1], None, fight) is not None
+
+
+def test_bolt_leaves_the_fight_on_a_failed_reaction_roll():
+    """The first feature that removes an adversary without defeating it."""
+    elk = _elk()
+    fight = _fight(adversaries=[elk])
+
+    with patch(
+        "features.adversaries.roll_d20",
+        return_value=_d20(3, evasion=BOLT_DIFFICULTY),
+    ):
+        bolt_when_wounded(elk, amount=4, hp_marked=1, fight=fight)
+
+    assert elk not in fight.living_adversaries
+    assert not elk.is_defeated
+
+
+def test_bolt_holds_its_ground_on_a_successful_reaction_roll():
+    elk = _elk()
+    fight = _fight(adversaries=[elk])
+
+    with patch(
+        "features.adversaries.roll_d20",
+        return_value=_d20(15, evasion=BOLT_DIFFICULTY),
+    ):
+        bolt_when_wounded(elk, amount=4, hp_marked=1, fight=fight)
+
+    assert elk in fight.living_adversaries
+
+
+def test_bolt_ignores_a_hit_that_marked_nothing():
+    elk = _elk()
+    fight = _fight(adversaries=[elk])
+
+    with patch(
+        "features.adversaries.roll_d20",
+        return_value=_d20(3, evasion=BOLT_DIFFICULTY),
+    ) as rolled:
+        bolt_when_wounded(elk, amount=0, hp_marked=0, fight=fight)
+
+    assert not rolled.called
+    assert elk in fight.living_adversaries
+
+
+def test_bolt_also_answers_forced_stress():
+    """The half of the printed rule that `on_stress_marked` exists for."""
+    elk = _elk()
+    fight = _fight(adversaries=[elk])
+
+    with patch(
+        "features.adversaries.roll_d20",
+        return_value=_d20(3, evasion=BOLT_DIFFICULTY),
+    ):
+        bolt_when_stressed(elk, 1, fight)
+
+    assert elk not in fight.living_adversaries
+
+
+def test_a_defeated_elk_does_not_flee():
+    elk = _elk()
+    elk.mark_hp(elk.hp_max)
+    fight = _fight(adversaries=[elk])
+
+    with patch(
+        "features.adversaries.roll_d20",
+        return_value=_d20(3, evasion=BOLT_DIFFICULTY),
+    ) as rolled:
+        bolt_when_wounded(elk, amount=9, hp_marked=3, fight=fight)
+
+    assert not rolled.called
+
+
+def test_forced_stress_reaches_the_hook_only_with_a_fight():
+    """`Adversary.mark_stress` takes the fight optionally; no fight, no notice."""
+    elk = _elk()
+
+    with patch("features.adversaries.roll_d20") as rolled:
+        elk.mark_stress(1)
+
+    assert not rolled.called
+    assert elk.stress_marked == 1
+
+
+# --- Falcon ------------------------------------------------------------------
+
+
+def test_nimble_flyer_reads_its_bonus_off_the_stat_block():
+    assert nimble_flyer(_adversary(features=["Nimble Flyer (3)"])) == 3
+
+
+def test_nimble_flyer_without_a_number_grants_nothing():
+    """The number is the whole feature, exactly as with Flying and Relentless."""
+    assert nimble_flyer(_adversary(features=["Nimble Flyer"])) == 0
+
+
+def test_nimble_flyer_lands_in_the_difficulty_at_spawn():
+    falcon = _adversary("Falcon", features=["Nimble Flyer (3)"], difficulty=12)
+
+    assert falcon.spawn().difficulty == 15
+
+
+def test_dive_bomb_adds_two_to_both_rolls():
+    falcon = _adversary(
+        "Falcon",
+        features=["Dive Bomb"],
+        hp_max=3,
+        stress_max=3,
+        attack_modifier=2,
+        damage_dice=[DiceGroup(count=1, sides=6)],
+        damage_modifier=1,
+    )
+    pc = _make_pc("Quarry")
+    fight = _fight(party=[pc], adversaries=[falcon])
+
+    with patch.object(
+        Adversary, "attack", return_value=AttackResult(attack_roll=None, damage_roll=None)
+    ) as swing:
+        dive_bomb(falcon, pc, fight)
+
+    assert swing.call_args.kwargs["attack_modifier"] == 2 + DIVE_BOMB_BONUS
+    assert swing.call_args.kwargs["damage_modifier"] == 1 + DIVE_BOMB_BONUS
+    assert falcon.stress_marked == 1
+
+
+def test_dive_bomb_states_its_dice_so_nothing_can_swap_them():
+    """Unstated dice are `_damage_for`'s cue to offer the swap that would eat the +2."""
+    falcon = _adversary(
+        "Falcon", features=["Dive Bomb"], hp_max=3, stress_max=3,
+        damage_dice=[DiceGroup(count=1, sides=6)],
+    )
+    pc = _make_pc("Quarry")
+    fight = _fight(party=[pc], adversaries=[falcon])
+
+    with patch.object(
+        Adversary, "attack", return_value=AttackResult(attack_roll=None, damage_roll=None)
+    ) as swing:
+        dive_bomb(falcon, pc, fight)
+
+    assert swing.call_args.kwargs["damage_dice"] == [DiceGroup(count=1, sides=6)]
+
+
+def test_dive_bomb_waits_for_the_stress_rule():
+    falcon = _adversary("Falcon", features=["Dive Bomb"], hp_max=20, stress_max=3)
+    pc = _make_pc("Quarry")
+    fight = _fight(party=[pc], adversaries=[falcon])
+
+    assert dive_bomb(falcon, pc, fight) is None
+    assert falcon.stress_marked == 0
+
+
+# --- Grimmling Warband -------------------------------------------------------
+
+
+def _warband(name: str = "Grimmling Warband", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Horde (1d4+1)", "Cowardly"],
+        type="Horde (4/HP)",
+        difficulty=12,
+        major_threshold=5,
+        severe_threshold=11,
+        hp_max=3,
+        stress_max=2,
+        attack_modifier=1,
+        damage_modifier=2,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_cowardly_waits_for_the_last_stress():
+    warband = _warband()
+    fight = _fight(adversaries=[warband])
+    warband.mark_stress(1, fight)
+
+    with patch("features.adversaries.random.randint", return_value=1) as rolled:
+        cowardly_at_the_last_stress(warband, 1, fight)
+
+    assert not rolled.called
+    assert warband in fight.living_adversaries
+
+
+def test_cowardly_scatters_on_a_low_die():
+    warband = _warband()
+    fight = _fight(adversaries=[warband])
+    warband.mark_stress(2, fight)
+
+    with patch("features.adversaries.random.randint", return_value=2):
+        cowardly_at_the_last_stress(warband, 1, fight)
+
+    assert warband not in fight.living_adversaries
+    assert not warband.is_defeated
+
+
+def test_cowardly_holds_on_a_high_die():
+    warband = _warband()
+    fight = _fight(adversaries=[warband])
+    warband.mark_stress(2, fight)
+
+    with patch("features.adversaries.random.randint", return_value=3):
+        cowardly_at_the_last_stress(warband, 1, fight)
+
+    assert warband in fight.living_adversaries
+
+
+def test_cowardly_answers_a_leader_falling():
+    """The only feature in the catalogue that reads an adversary's printed type."""
+    warband = _warband()
+    leader = _adversary("Head Guard", type="Leader")
+    fight = _fight(adversaries=[warband, leader])
+
+    with patch("features.adversaries.random.randint", return_value=1):
+        cowardly_when_a_leader_falls(warband, leader, fight)
+
+    assert warband not in fight.living_adversaries
+
+
+def test_cowardly_ignores_anything_that_is_not_a_leader():
+    warband = _warband()
+    grunt = _adversary("Sellsword", type="Minion")
+    fight = _fight(adversaries=[warband, grunt])
+
+    with patch("features.adversaries.random.randint", return_value=1) as rolled:
+        cowardly_when_a_leader_falls(warband, grunt, fight)
+
+    assert not rolled.called
+    assert warband in fight.living_adversaries
+
+
+# --- Harpy -------------------------------------------------------------------
+
+
+def _harpy(name: str = "Harpy", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Toxic Aura", "Swooping Attack"],
+        difficulty=12,
+        major_threshold=3,
+        severe_threshold=7,
+        hp_max=3,
+        stress_max=3,
+        attack_modifier=0,
+        damage_modifier=1,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def _reeking(fight) -> list:
+    return [
+        creature
+        for creature in list(fight.conscious_party) + list(fight.living_adversaries)
+        if fight.is_vulnerable(creature)
+    ]
+
+
+def test_toxic_aura_catches_exactly_one_of_a_party_of_four():
+    """Very Close takes a third, floored at one - four PCs is one of them."""
+    harpy = _harpy()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[harpy])
+
+    toxic_aura(harpy, harpy, fight)
+
+    assert len(_reeking(fight)) == 1
+
+
+def test_toxic_aura_catches_the_harpys_own_allies():
+    """"All non-Harpies" is the printed noun, and it does not stop at the party."""
+    harpy = _harpy()
+    ally = _adversary("Bugboar")
+    fight = _fight(party=[], adversaries=[harpy, ally])
+
+    toxic_aura(harpy, harpy, fight)
+
+    assert fight.is_vulnerable(ally)
+    assert not fight.is_vulnerable(harpy)
+
+
+def test_toxic_aura_lifts_its_previous_draw():
+    """It is an aura people walk out of, not a condition that accumulates."""
+    harpy = _harpy()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[harpy])
+
+    toxic_aura(harpy, harpy, fight)
+    toxic_aura(harpy, harpy, fight)
+
+    assert len(_reeking(fight)) == 1
+
+
+def test_toxic_aura_leaves_somebody_elses_vulnerable_alone():
+    harpy = _harpy()
+    party = _party(4)
+    other = _adversary("Elemental")
+    fight = _fight(party=party, adversaries=[harpy, other])
+    for pc in party:
+        fight.apply_condition(pc, Condition(name=VULNERABLE, source=other))
+
+    toxic_aura(harpy, harpy, fight)
+
+    for pc in party:
+        assert fight.condition_on(pc, VULNERABLE).source is other
+
+
+def test_one_harpy_answers_for_the_flock():
+    harpy, second = _harpy("Harpy"), _harpy("Harpy")
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[harpy, second])
+
+    toxic_aura(second, second, fight)
+
+    assert _reeking(fight) == []
+
+
+def test_swooping_attack_deals_three_d6():
+    harpy = _harpy(hp_max=3, stress_max=3)
+    pc = _make_pc("Quarry")
+    fight = _fight(party=[pc], adversaries=[harpy])
+
+    with patch.object(
+        Adversary, "attack", return_value=AttackResult(attack_roll=None, damage_roll=None)
+    ) as swing:
+        swooping_attack(harpy, pc, fight)
+
+    assert swing.call_args.kwargs["damage_dice"] == [
+        DiceGroup(count=SWOOPING_DICE, sides=SWOOPING_DIE)
+    ]
+    assert swing.call_args.kwargs["damage_modifier"] == 0
+    assert harpy.stress_marked == 1
+
+
+# --- Kelpie ------------------------------------------------------------------
+
+
+def _kelpie(name: str = "Kelpie", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Captivating", "Heart's Desire", "Shapeshifter", "Enchant"],
+        difficulty=12,
+        major_threshold=4,
+        severe_threshold=8,
+        hp_max=3,
+        stress_max=5,
+        attack_modifier=-2,
+        damage_modifier=2,
+        range="Very Close",
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_shapeshifter_hobbles_exactly_one_pc():
+    kelpie = _kelpie()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[kelpie])
+
+    shapeshifter(kelpie, party[0], fight)
+
+    hobbled = [
+        pc for pc in party if shapeshifter_beguiles(kelpie, pc, kelpie, None, fight)
+    ]
+    assert len(hobbled) == 1
+    assert kelpie.stress_marked == 1
+
+
+def test_shapeshifter_only_hobbles_swings_at_the_kelpie():
+    kelpie = _kelpie()
+    party = _party(4)
+    other = _adversary("Bugboar")
+    fight = _fight(party=party, adversaries=[kelpie, other])
+
+    shapeshifter(kelpie, party[0], fight)
+    charmed = next(
+        pc for pc in party if shapeshifter_beguiles(kelpie, pc, kelpie, None, fight)
+    )
+
+    assert not shapeshifter_beguiles(kelpie, charmed, other, None, fight)
+
+
+def test_shapeshifter_is_not_worn_twice():
+    kelpie = _kelpie()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[kelpie])
+
+    shapeshifter(kelpie, party[0], fight)
+
+    assert shapeshifter(kelpie, party[0], fight) is None
+    assert kelpie.stress_marked == 1
+
+
+def test_shapeshifter_holds_its_form_for_the_fight():
+    """No ender - the token stays until something clears it, and nothing does."""
+    kelpie = _kelpie()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[kelpie])
+
+    shapeshifter(kelpie, party[0], fight)
+
+    assert fight.token_count(kelpie, SHAPESHIFTER_FORM)
+
+
+def test_enchant_stops_a_pc_acting_on_a_failed_save():
+    kelpie = _kelpie()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[kelpie], fear=2)
+
+    with patch("features.adversaries.random.random", return_value=0.0), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        enchant(kelpie, party[0], fight)
+
+    assert fight.has_condition(party[0], ENCHANTED)
+    assert fight.cannot_act(party[0])
+
+
+def test_enchant_lifts_when_the_pc_is_hurt():
+    kelpie = _kelpie()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[kelpie], fear=2)
+
+    with patch("features.adversaries.random.random", return_value=0.0), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        enchant(kelpie, party[0], fight)
+
+    party[0].mark_hp_and_check_death(1)
+    list(fight.expire_conditions(party[0], ON_A_GM_TURN))
+
+    assert not fight.has_condition(party[0], ENCHANTED)
+
+
+def test_enchant_survives_a_gm_turn_nobody_hit_them_on():
+    kelpie = _kelpie()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[kelpie], fear=2)
+
+    with patch("features.adversaries.random.random", return_value=0.0), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        enchant(kelpie, party[0], fight)
+
+    list(fight.expire_conditions(party[0], ON_A_GM_TURN))
+
+    assert fight.has_condition(party[0], ENCHANTED)
+
+
+def test_enchant_costs_the_fear_even_when_the_save_lands():
+    """The page spends the Fear to beguile, not on the outcome."""
+    kelpie = _kelpie()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[kelpie], fear=2)
+
+    with patch("features.adversaries.random.random", return_value=0.0), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        enchant(kelpie, party[0], fight)
+
+    assert fight.fear == 1
+    assert not fight.has_condition(party[0], ENCHANTED)
+
+
+def test_enchant_is_not_spent_on_an_already_enchanted_pc():
+    kelpie = _kelpie()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[kelpie], fear=2)
+    fight.apply_condition(party[0], Condition(name=ENCHANTED, prevents_action=True))
+
+    assert enchant(kelpie, party[0], fight) is None
+    assert fight.fear == 2
+
+
+# --- The batch's dismissals --------------------------------------------------
+
+
+def test_captivating_is_insignificant_rather_than_dismissed():
+    assessment = assess(qualified(ADVERSARY, "Captivating"))
+
+    assert assessment.status is Status.INSIGNIFICANT_COMBAT_EFFECT
+    assert assessment.reason
+
+
+def test_hearts_desire_has_no_combat_effect():
+    assessment = assess(qualified(ADVERSARY, "Heart's Desire"))
+
+    assert assessment.status is Status.NO_COMBAT_EFFECT
+    assert assessment.reason
+
+
+def test_every_feature_of_the_five_beasts_is_modelled():
+    for name in (
+        "Headbutt",
+        "Bolt",
+        "Nimble Flyer",
+        "Dive Bomb",
+        "Cowardly",
+        "Toxic Aura",
+        "Swooping Attack",
+        "Shapeshifter",
+        "Enchant",
     ):
         assert assess(qualified(ADVERSARY, name)).status is Status.MODELLED
