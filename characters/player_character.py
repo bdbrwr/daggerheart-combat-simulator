@@ -23,6 +23,7 @@ from pathlib import Path
 from content import (
     ally_extra_armor_slots,
     ally_soften_damage,
+    apply_adversary_on_damaged,
     apply_ally_on_damaged,
     apply_on_damaged,
     death_move_prevented,
@@ -680,6 +681,14 @@ class PlayerCharacter:
         # or your allies". The party-wide twin of the call above, asked from the
         # same place and on the same trigger. Nothing here knows what any of it is.
         apply_ally_on_damaged(self, amount, hp_to_mark, fight)
+
+        # And the GM's side, which the two calls above cannot reach at all: the
+        # Sawtoothed Gillbeast's Feeding Frenzy piles onto whoever is bleeding, and
+        # "when a creature marks HP" was ruled to mean any creature. The mirror of
+        # the call above, announced from both places a combatant can be wounded.
+        # Nothing here knows what any of it is.
+        if fight is not None:
+            apply_adversary_on_damaged(self, amount, hp_to_mark, fight)
         return hp_to_mark
 
     def mark_hp_and_check_death(self, amount: int, fight=None) -> None:

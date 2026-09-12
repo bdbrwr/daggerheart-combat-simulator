@@ -15,6 +15,7 @@ Two things are worth knowing before adding to this file:
   build the stat block with the printed name.
 """
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -25,14 +26,19 @@ from characters.player_character import PlayerCharacter
 from combat.results import AttackResult
 from combat.state import FightState
 from content.aoe import Range
-from content.damage_types import DamageType
+from content.damage_types import RESISTED, DamageType
 from content.conditions import (
     BEFORE_AN_ACTION_ROLL,
     COVERED_IN_SPIDERS,
     ENCHANTED,
+    ENVENOMATED,
     EXHAUSTED,
     HIDDEN,
     ON_A_GM_TURN,
+    PINNED,
+    SLOWED,
+    TRAPPED,
+    WEAPON_STUCK,
     POISONED,
     RESTRAINED,
     SHAKY,
@@ -48,28 +54,57 @@ from content.registry import (
     Status,
     activations_allowed,
     apply_attack_missed,
+    apply_on_party_attack_roll,
     assess,
+    denies_critical_bonus,
+    refuses_stress,
     deals_direct_damage,
     extra_spotlight_cost,
     feature_parameter,
     harden_damage,
+    resistance_to,
+    soften_damage,
+    spotlights_while_defeated,
     standard_attack_area,
     total_ally_damage_bonus,
+    total_attack_roll_bonus,
+    total_live_difficulty_bonus,
+    total_reaction_roll_bonus,
 )
 from dice.common import AdvantageState
 from dice.d20 import D20RollResult
 from dice.damage import DamageRollResult, DiceGroup
 from dice.duality import DualityOutcome, DualityRollResult
 from features.adversaries import (
+    BLOODTHIRSTY_TOKENS,
     BOLT_DIFFICULTY,
+    COME_BACK_TIMES,
     DIVE_BOMB_BONUS,
+    ENRAGED_MOUNTAIN_TROLL,
+    FEAR_AURA_DIFFICULTY,
     GLORY_TOKENS,
     HAND_OF_GLORY_TOKENS,
+    LINGERING_HAUNT_COUNTDOWN,
+    SHADOW_STALKER_BONUS,
     SHAPESHIFTER_FORM,
+    STOLEN_ARMOR_COUNTDOWN,
     SWOOPING_DICE,
     SWOOPING_DIE,
     TORCHBEARER_BONUS,
     acid_bath,
+    adaptive_tactics_aims,
+    adaptive_tactics_learns,
+    adaptive_tactics_resets,
+    bloodthirsty,
+    bloodthirsty_is_broken,
+    bloodthirsty_sharpens,
+    broken_magic,
+    broken_magic_time_resumes,
+    child_of_night,
+    clatter_and_recombobulate,
+    come_back_worse,
+    come_back_worse_sharpens,
+    come_back_worse_steadies,
     aquatic_attacker,
     aquatic_attacker_bites_deeper,
     archers_bane,
@@ -88,21 +123,44 @@ from features.adversaries import (
     death_quake,
     den_mother,
     dive_bomb,
+    double_swipe,
     drag_and_bag,
     drag_and_bag_holds_them,
     earth_eruption,
     enchant,
+    fascinating,
+    fear_aura,
+    feeding_frenzy,
+    feel_my_pain,
+    flail_swipe,
+    flesh_ripper,
     get_em_off,
     grab_and_drag,
+    grapple,
     ground_slam,
     hail_of_boulders,
     hand_of_glory,
     hand_of_glory_lights,
     headbutt,
+    headbutt_remembers_a_miss,
+    heel_turn,
+    hive_mind,
+    horde,
+    howl_at_the_moon,
+    howl_at_the_moon_lifts,
+    incorporeal,
+    ka_chomp,
+    kaleidoscopic,
     kneecapper,
     knife_thrower,
+    libre,
+    lingering_haunt_arms,
+    lingering_haunt_lingers,
+    lingering_haunt_ticks,
     momentum,
     nimble_flyer,
+    no_vital_organs,
+    pouncing_strike,
     quicker_than_she_looks,
     ramp_up_costs_fear,
     ramp_up_sweeps,
@@ -111,18 +169,36 @@ from features.adversaries import (
     shadow_fang,
     shadow_fang_shakes_them,
     shallow_cuts,
+    shadow_stalker,
+    shadow_stalker_opens,
+    shadow_stalker_was_already_there,
     shapeshifter,
     shapeshifter_beguiles,
+    scaly,
     skin_crawling,
+    smothering_grapple,
+    smothering_grapple_releases,
+    smothering_grapple_smothers,
+    spectral_suplex,
+    specter,
     spit_acid,
+    splutch,
+    squirt_ink,
+    stolen_armor,
     surprise,
     surprise_hits_harder,
     survival_instinct,
     swooping_attack,
+    tag_team,
+    tag_team_grinds_them_down,
     tail_swat,
+    tireless,
     torchbearer,
     toxic_aura,
     trample,
+    unmasking_death,
+    venomous,
+    wax_ball,
     weak_structure,
     wind_lord,
     wrap_in_shadow_silk,
@@ -217,6 +293,29 @@ def _duality(*, succeeds: bool, critical: bool = False) -> DualityRollResult:
         help_dice_results=None,
         difficulty=1 if succeeds else 100,
     )
+
+
+def _with_fear(succeeds: bool = False) -> DualityRollResult:
+    """A roll whose Fear die came up higher - the GM's side of a duality roll."""
+    return DualityRollResult(
+        hope_die_result=4,
+        fear_die_result=5,
+        modifier=0,
+        advantage_state=AdvantageState.NONE,
+        advantage_die_result=None,
+        help_dice_results=None,
+        difficulty=1 if succeeds else 100,
+    )
+
+
+def _with_hope(succeeds: bool = True) -> DualityRollResult:
+    """A roll whose Hope die came up higher. `_duality` already builds one."""
+    return _duality(succeeds=succeeds)
+
+
+def _swung(band: str):
+    """The slice of a weapon that content keying on range actually reads."""
+    return SimpleNamespace(range=band)
 
 
 def _landed(hp_marked: int = 1) -> AttackResult:
@@ -8203,5 +8302,1771 @@ def test_every_feature_of_the_five_beasts_is_modelled():
         "Swooping Attack",
         "Shapeshifter",
         "Enchant",
+    ):
+        assert assess(qualified(ADVERSARY, name)).status is Status.MODELLED
+
+
+# --- Masque Muerte -----------------------------------------------------------
+
+
+def _masque(name: str = "Masque Muerte", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Libre", "Heel Turn", "Spectral Suplex", "Unmasking Death", "Tag Team"],
+        difficulty=13,
+        major_threshold=7,
+        severe_threshold=14,
+        hp_max=8,
+        stress_max=4,
+        attack_modifier=4,
+        damage_dice=[DiceGroup(count=1, sides=12)],
+        damage_modifier=2,
+        damage_type="magic",
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_libre_refuses_a_restrain():
+    masque = _masque()
+    fight = _fight(adversaries=[masque])
+
+    assert libre(masque, Condition(name=RESTRAINED), fight) is True
+
+
+def test_libre_lets_everything_else_land():
+    masque = _masque()
+    fight = _fight(adversaries=[masque])
+
+    assert libre(masque, Condition(name=VULNERABLE), fight) is False
+
+
+def test_a_masque_muerte_cannot_be_restrained_through_the_fight_state():
+    """The refusal has to reach `apply_condition`, not just answer the hook."""
+    masque = _masque()
+    fight = _fight(adversaries=[masque])
+
+    fight.apply_condition(masque, Condition(name=RESTRAINED))
+
+    assert not fight.has_condition(masque, RESTRAINED)
+
+
+def test_tag_team_pins_and_restrains_together():
+    masque = _masque()
+    pc = _make_pc("Grappled")
+    fight = _fight(party=[pc], adversaries=[masque], fear=2)
+
+    tag_team(masque, pc, _landed(), fight)
+
+    assert fight.has_condition(pc, PINNED)
+    assert fight.has_condition(pc, RESTRAINED)
+    assert fight.fear == 1
+
+
+def test_tag_team_is_not_spent_on_an_already_pinned_target():
+    masque = _masque()
+    pc = _make_pc("Grappled")
+    fight = _fight(party=[pc], adversaries=[masque], fear=2)
+    fight.apply_condition(pc, Condition(name=PINNED, source=masque))
+
+    tag_team(masque, pc, _landed(), fight)
+
+    assert fight.fear == 2
+
+
+def test_a_pin_adds_a_d12_to_this_adversarys_attacks():
+    masque = _masque()
+    pc = _make_pc("Grappled")
+    fight = _fight(party=[pc], adversaries=[masque], fear=2)
+    fight.apply_condition(pc, Condition(name=PINNED, source=masque))
+
+    assert 1 <= tag_team_grinds_them_down(masque, pc, fight) <= 12
+
+
+def test_a_pin_pays_out_only_for_whoever_placed_it():
+    masque, other = _masque("Masque Muerte"), _masque("Masque Muerte")
+    pc = _make_pc("Grappled")
+    fight = _fight(party=[pc], adversaries=[masque, other], fear=2)
+    fight.apply_condition(pc, Condition(name=PINNED, source=masque))
+
+    assert tag_team_grinds_them_down(other, pc, fight) == 0
+
+
+def test_a_pin_pays_nothing_to_a_free_target():
+    masque = _masque()
+    pc = _make_pc("Free")
+    fight = _fight(party=[pc], adversaries=[masque], fear=2)
+
+    assert tag_team_grinds_them_down(masque, pc, fight) == 0
+
+
+def test_spectral_suplex_needs_a_held_target():
+    masque = _masque()
+    pc = _make_pc("Free")
+    fight = _fight(party=[pc], adversaries=[masque], fear=2)
+
+    assert spectral_suplex(masque, pc, fight) is None
+    assert fight.fear == 2
+
+
+def test_spectral_suplex_cannot_miss():
+    masque = _masque()
+    pc = _make_pc("Grappled", armor_max=0)
+    fight = _fight(party=[pc], adversaries=[masque], fear=2)
+    fight.apply_condition(pc, Condition(name=RESTRAINED, source=masque))
+
+    result = spectral_suplex(masque, pc, fight)
+
+    assert result.attack_roll is None
+    assert pc.hp_marked > 0
+    assert fight.fear == 1
+
+
+def test_heel_turn_leaves_them_stressed_and_vulnerable():
+    masque = _masque(hp_max=8, stress_max=4)
+    pc = _make_pc("Heckled")
+    fight = _fight(party=[pc, _make_pc("B"), _make_pc("C"), _make_pc("D")],
+                   adversaries=[masque])
+
+    with patch("features.adversaries.random.random", return_value=0.0), patch.object(
+        Adversary, "attack", return_value=AttackResult(attack_roll=_d20(20), damage_roll=None)
+    ):
+        heel_turn(masque, pc, fight)
+
+    assert pc.stress_marked == 1
+    assert fight.is_vulnerable(pc)
+    assert masque.stress_marked == 1
+
+
+def test_heel_turn_declines_against_someone_already_vulnerable():
+    masque = _masque(hp_max=8, stress_max=4)
+    pc = _make_pc("Heckled")
+    fight = _fight(party=[pc], adversaries=[masque])
+    fight.apply_condition(pc, Condition(name=VULNERABLE))
+
+    assert heel_turn(masque, pc, fight) is None
+    assert masque.stress_marked == 0
+
+
+def test_unmasking_death_costs_a_stress_on_a_failed_save():
+    masque = _masque()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[masque], fear=2)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        unmasking_death(masque, party[0], fight)
+
+    assert fight.fear == 1
+    assert sum(pc.stress_marked for pc in party) > 0
+
+
+def test_unmasking_death_costs_nothing_when_everyone_holds():
+    masque = _masque()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[masque], fear=2)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        unmasking_death(masque, party[0], fight)
+
+    assert fight.fear == 1
+    assert sum(pc.stress_marked for pc in party) == 0
+
+
+# --- Mechanorb ---------------------------------------------------------------
+
+
+def _orb(name: str = "Mechanorb", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Hive Mind", "Adaptive Tactics"],
+        difficulty=12,
+        major_threshold=5,
+        severe_threshold=10,
+        hp_max=4,
+        stress_max=3,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=10)],
+        damage_modifier=1,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_a_lone_mechanorb_gets_no_hive_mind():
+    orb = _orb()
+    pc = _make_pc("Swinger")
+    fight = _fight(party=[pc], adversaries=[orb])
+
+    assert hive_mind(orb, pc, fight) == 0
+
+
+def test_hive_mind_counts_the_others_through_the_area_rule():
+    swarm = [_orb() for _ in range(4)]
+    pc = _make_pc("Swinger")
+    fight = _fight(party=[pc], adversaries=swarm)
+
+    # Close over the three others reaches min(3 * 3 // 4, 2) = 2.
+    assert hive_mind(swarm[0], pc, fight) == 2
+
+
+def test_hive_mind_reaches_the_roll_through_dispatch():
+    swarm = [_orb() for _ in range(4)]
+    pc = _make_pc("Swinger")
+    fight = _fight(party=[pc], adversaries=swarm)
+
+    assert total_live_difficulty_bonus(swarm[0], pc, fight) == 2
+
+
+def test_a_failed_needle_fills_the_shared_pool():
+    swarm = [_orb() for _ in range(3)]
+    pc = _make_pc("Target")
+    fight = _fight(party=[pc], adversaries=swarm)
+
+    adaptive_tactics_learns(swarm[0], pc, _d20(2), fight)
+
+    # Every one of them reads the same pool - that is what makes it a Pool.
+    assert adaptive_tactics_aims(swarm[1], pc, fight) == 1
+    assert adaptive_tactics_aims(swarm[2], pc, fight) == 1
+
+
+def test_the_pool_outlives_the_orb_that_filled_it():
+    swarm = [_orb() for _ in range(2)]
+    pc = _make_pc("Target")
+    fight = _fight(party=[pc], adversaries=swarm)
+    adaptive_tactics_learns(swarm[0], pc, _d20(2), fight)
+
+    swarm[0].mark_hp(swarm[0].hp_max)
+
+    assert adaptive_tactics_aims(swarm[1], pc, fight) == 1
+
+
+def test_a_severe_hit_clears_the_pool():
+    swarm = [_orb() for _ in range(2)]
+    pc = _make_pc("Target")
+    fight = _fight(party=[pc], adversaries=swarm)
+    adaptive_tactics_learns(swarm[0], pc, _d20(2), fight)
+
+    adaptive_tactics_resets(swarm[0], amount=12, hp_marked=3, fight=fight)
+
+    assert adaptive_tactics_aims(swarm[1], pc, fight) == 0
+
+
+def test_an_ordinary_hit_leaves_the_pool_alone():
+    swarm = [_orb() for _ in range(2)]
+    pc = _make_pc("Target")
+    fight = _fight(party=[pc], adversaries=swarm)
+    adaptive_tactics_learns(swarm[0], pc, _d20(2), fight)
+
+    adaptive_tactics_resets(swarm[0], amount=6, hp_marked=2, fight=fight)
+
+    assert adaptive_tactics_aims(swarm[1], pc, fight) == 1
+
+
+def test_the_pool_reaches_the_attack_roll_through_dispatch():
+    orb = _orb()
+    pc = _make_pc("Target")
+    fight = _fight(party=[pc], adversaries=[orb])
+    adaptive_tactics_learns(orb, pc, _d20(2), fight)
+    adaptive_tactics_learns(orb, pc, _d20(3), fight)
+
+    assert total_attack_roll_bonus(orb, pc, fight) == 2
+
+
+def test_an_adversarys_failed_swing_announces_attack_failed():
+    """The new GM-side call site: a miss has to reach the attacker's own content."""
+    orb = _orb()
+    pc = _make_pc("Target")
+    fight = _fight(party=[pc], adversaries=[orb])
+
+    # Pinned rather than stacked against, because a natural 20 succeeds whatever
+    # the modifier is.
+    with patch("adversaries.adversary.roll_d20", return_value=_d20(2)):
+        orb.attack(pc, fight=fight)
+
+    assert total_attack_roll_bonus(orb, pc, fight) == 1
+
+
+# --- Mountain Troll ----------------------------------------------------------
+
+
+def _troll(name: str = "Mountain Troll", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Relentless (3)", "Stolen Armor", "Flail Swipe"],
+        type="Solo",
+        difficulty=14,
+        major_threshold=8,
+        severe_threshold=15,
+        hp_max=8,
+        stress_max=3,
+        attack_modifier=2,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=1,
+        range="Very Close",
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_stolen_armor_turns_a_hit_down_one_band():
+    troll = _troll()
+    fight = _fight(party=_party(4), adversaries=[troll])
+
+    assert stolen_armor(troll, amount=16, hp_to_mark=3, fight=fight) == 2
+
+
+def test_stolen_armor_absorbs_the_smallest_hits_entirely():
+    troll = _troll()
+    fight = _fight(party=_party(4), adversaries=[troll])
+
+    assert stolen_armor(troll, amount=4, hp_to_mark=1, fight=fight) == 0
+
+
+def test_the_countdown_starts_at_the_number_of_pcs():
+    troll = _troll()
+    fight = _fight(party=_party(4), adversaries=[troll])
+
+    stolen_armor(troll, amount=4, hp_to_mark=1, fight=fight)
+
+    assert fight.token_count(troll, STOLEN_ARMOR_COUNTDOWN) == 3
+
+
+def test_every_hit_ticks_the_countdown_whatever_its_size():
+    troll = _troll()
+    fight = _fight(party=_party(4), adversaries=[troll])
+
+    for _ in range(3):
+        stolen_armor(troll, amount=4, hp_to_mark=1, fight=fight)
+
+    assert fight.token_count(troll, STOLEN_ARMOR_COUNTDOWN) == 1
+
+
+def test_the_troll_evolves_when_the_armor_runs_out():
+    troll = _troll()
+    fight = _fight(party=_party(4), adversaries=[troll])
+
+    for _ in range(4):
+        stolen_armor(troll, amount=4, hp_to_mark=1, fight=fight)
+
+    assert troll.name == ENRAGED_MOUNTAIN_TROLL
+    assert troll.difficulty == 15
+    assert troll.damage_dice == [DiceGroup(count=1, sides=10)]
+    assert troll.damage_modifier == 3
+    assert "Double Swipe" in troll.features
+    assert "Stolen Armor" not in troll.features
+    assert "Flail Swipe" not in troll.features
+
+
+def test_an_evolution_keeps_the_damage_already_done():
+    troll = _troll()
+    troll.mark_hp(5)
+    troll.mark_stress(2)
+    fight = _fight(party=_party(4), adversaries=[troll])
+
+    for _ in range(4):
+        stolen_armor(troll, amount=4, hp_to_mark=1, fight=fight)
+
+    assert troll.hp_marked == 5
+    assert troll.stress_marked == 2
+
+
+def test_an_evolved_troll_is_the_same_object_on_the_field():
+    troll = _troll()
+    fight = _fight(party=_party(4), adversaries=[troll])
+
+    for _ in range(4):
+        stolen_armor(troll, amount=4, hp_to_mark=1, fight=fight)
+
+    assert troll in fight.living_adversaries
+
+
+def test_the_armor_stops_softening_once_it_is_gone():
+    troll = _troll()
+    fight = _fight(party=_party(4), adversaries=[troll])
+    for _ in range(4):
+        stolen_armor(troll, amount=4, hp_to_mark=1, fight=fight)
+
+    assert stolen_armor(troll, amount=16, hp_to_mark=3, fight=fight) == 3
+
+
+def test_stolen_armor_reaches_the_damage_pipeline_through_dispatch():
+    troll = _troll()
+    fight = _fight(party=_party(4), adversaries=[troll])
+
+    assert soften_damage(troll, 16, 3, fight, None) == 2
+
+
+def test_flail_swipe_sweeps_very_close_for_two_d8():
+    troll = _troll()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[troll])
+
+    with patch.object(
+        Adversary, "area_attack",
+        return_value=(AttackResult(attack_roll=None, damage_roll=None), []),
+    ) as sweep:
+        flail_swipe(troll, party[0], fight)
+
+    assert sweep.call_args.kwargs["damage_dice"] == [DiceGroup(count=2, sides=8)]
+    assert sweep.call_args.kwargs["damage_modifier"] == 2
+    assert troll.stress_marked == 1
+
+
+def test_double_swipe_combines_both_hits_into_one_wound():
+    troll = _troll(name=ENRAGED_MOUNTAIN_TROLL, features=["Double Swipe"],
+                   damage_dice=[DiceGroup(count=1, sides=10)], damage_modifier=3)
+    pc = _make_pc("Mauled", armor_max=0)
+    fight = _fight(party=[pc], adversaries=[troll], fear=2)
+
+    with patch("features.adversaries.roll_d20", return_value=_d20(19)), patch(
+        "features.adversaries.roll_damage",
+        return_value=DamageRollResult(
+            dice_groups=[DiceGroup(count=2, sides=10)],
+            die_results=[[5, 5]],
+            modifier=6,
+        ),
+    ) as damage:
+        double_swipe(troll, pc, fight)
+
+    # Two swipes landed, so the dice and the flat modifier are both doubled and
+    # the target's thresholds see the total once.
+    assert damage.call_args.kwargs["dice_groups"] == [DiceGroup(count=2, sides=10)]
+    assert damage.call_args.kwargs["modifier"] == 6
+    assert fight.fear == 1
+
+
+def test_double_swipe_takes_a_hope_only_when_both_land():
+    troll = _troll(name=ENRAGED_MOUNTAIN_TROLL, features=["Double Swipe"])
+    pc = _make_pc("Mauled", armor_max=0)
+    pc.gain_hope(3)
+    banked = pc.hope_marked
+    fight = _fight(party=[pc], adversaries=[troll], fear=2)
+
+    with patch("features.adversaries.roll_d20", return_value=_d20(19)):
+        double_swipe(troll, pc, fight)
+
+    assert pc.hope_marked == banked - 1
+
+
+def test_double_swipe_leaves_hope_alone_when_only_one_lands():
+    troll = _troll(name=ENRAGED_MOUNTAIN_TROLL, features=["Double Swipe"])
+    pc = _make_pc("Mauled", armor_max=0)
+    pc.gain_hope(3)
+    banked = pc.hope_marked
+    fight = _fight(party=[pc], adversaries=[troll], fear=2)
+
+    with patch("features.adversaries.roll_d20", side_effect=[_d20(19), _d20(2)]):
+        double_swipe(troll, pc, fight)
+
+    assert pc.hope_marked == banked
+
+
+# --- Octopus -----------------------------------------------------------------
+
+
+def _octopus(name: str = "Octopus", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Grapple", "Squirt Ink"],
+        difficulty=12,
+        major_threshold=3,
+        severe_threshold=NO_THRESHOLD,
+        hp_max=2,
+        stress_max=3,
+        attack_modifier=-1,
+        damage_dice=[DiceGroup(count=1, sides=6)],
+        damage_modifier=0,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_grapple_holds_and_exposes_on_a_hit():
+    octopus = _octopus()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[octopus])
+
+    with patch("features.adversaries.random.random", return_value=0.0), patch.object(
+        Adversary, "attack",
+        return_value=AttackResult(attack_roll=_d20(20), damage_roll=None),
+    ):
+        grapple(octopus, party[0], fight)
+
+    assert fight.has_condition(party[0], RESTRAINED)
+    assert fight.is_vulnerable(party[0])
+
+
+def test_one_roll_frees_a_grappled_pc_of_both_conditions():
+    octopus = _octopus()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[octopus])
+    with patch("features.adversaries.random.random", return_value=0.0), patch.object(
+        Adversary, "attack",
+        return_value=AttackResult(attack_roll=_d20(20), damage_roll=None),
+    ):
+        grapple(octopus, party[0], fight)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        list(fight.expire_conditions(party[0], WHEN_THEY_ACT))
+
+    assert not fight.has_condition(party[0], RESTRAINED)
+    assert not fight.is_vulnerable(party[0])
+
+
+def test_grapple_declines_against_a_pc_it_already_holds():
+    octopus = _octopus()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[octopus])
+    fight.apply_condition(
+        party[0], Condition(name=RESTRAINED, source=octopus)
+    )
+
+    assert grapple(octopus, party[0], fight) is None
+
+
+def test_squirt_ink_puts_the_failures_on_the_floor():
+    octopus = _octopus()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[octopus])
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        squirt_ink(octopus, party[0], fight)
+
+    assert sum(1 for pc in party if fight.is_vulnerable(pc)) == 1
+    assert octopus.stress_marked == 1
+
+
+def test_squirt_ink_leaves_a_steady_footing_alone():
+    octopus = _octopus()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[octopus])
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        squirt_ink(octopus, party[0], fight)
+
+    assert not any(fight.is_vulnerable(pc) for pc in party)
+
+
+def test_squirt_ink_catches_the_octopuss_own_side():
+    """'Each creature' is the printed noun, and it does not stop at the party."""
+    octopus = _octopus()
+    ally = _adversary("Bugboar")
+    fight = _fight(party=[], adversaries=[octopus, ally])
+
+    with patch("features.adversaries.roll_d20", return_value=_d20(1, evasion=12)):
+        squirt_ink(octopus, None, fight)
+
+    assert fight.is_vulnerable(ally)
+    assert not fight.is_vulnerable(octopus)
+
+
+# --- Panther -----------------------------------------------------------------
+
+
+def _panther(name: str = "Panther", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Shadow Stalker", "Pouncing Strike"],
+        difficulty=14,
+        major_threshold=5,
+        severe_threshold=10,
+        hp_max=4,
+        stress_max=3,
+        attack_modifier=2,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=1,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_the_panther_opens_the_fight_in_cover():
+    panther = _panther()
+    fight = _fight(adversaries=[panther])
+
+    shadow_stalker_opens(panther, fight)
+
+    assert fight.has_condition(panther, HIDDEN)
+
+
+def test_the_cloak_is_up_before_the_first_swing_at_it():
+    """The party holds the spotlight first, so this is the commoner entry point."""
+    panther = _panther()
+    pc = _make_pc("Hunter")
+    fight = _fight(party=[pc], adversaries=[panther])
+
+    shadow_stalker_was_already_there(panther, pc, None, fight)
+
+    assert fight.has_condition(panther, HIDDEN)
+
+
+def test_shadow_stalker_pays_out_while_hidden():
+    panther = _panther()
+    pc = _make_pc("Prey")
+    fight = _fight(party=[pc], adversaries=[panther])
+    shadow_stalker_opens(panther, fight)
+
+    assert shadow_stalker(panther, pc, fight) == SHADOW_STALKER_BONUS
+
+
+def test_shadow_stalker_pays_nothing_once_the_cloak_is_gone():
+    panther = _panther()
+    pc = _make_pc("Prey")
+    fight = _fight(party=[pc], adversaries=[panther])
+    shadow_stalker_opens(panther, fight)
+    list(fight.expire_conditions(panther, WHEN_THEY_ACT))
+
+    assert shadow_stalker(panther, pc, fight) == 0
+
+
+def test_the_panther_does_not_slip_back_into_cover():
+    panther = _panther()
+    fight = _fight(adversaries=[panther])
+    shadow_stalker_opens(panther, fight)
+    list(fight.expire_conditions(panther, WHEN_THEY_ACT))
+
+    shadow_stalker_opens(panther, fight)
+
+    assert not fight.has_condition(panther, HIDDEN)
+
+
+def test_pouncing_strike_deals_a_d12():
+    panther = _panther()
+    pc = _make_pc("Prey")
+    fight = _fight(party=[pc], adversaries=[panther])
+
+    with patch.object(
+        Adversary, "attack", return_value=AttackResult(attack_roll=None, damage_roll=None)
+    ) as swing:
+        pouncing_strike(panther, pc, fight)
+
+    assert swing.call_args.kwargs["damage_dice"] == [DiceGroup(count=1, sides=12)]
+    assert swing.call_args.kwargs["damage_modifier"] == 2
+    assert panther.stress_marked == 1
+
+
+# --- The batch's shared machinery --------------------------------------------
+
+
+def test_a_pool_is_keyed_by_name_rather_than_by_holder():
+    fight = _fight()
+
+    fight.add_to_pool("Anything", 2)
+
+    assert fight.pool_count("Anything") == 2
+    fight.clear_pool("Anything")
+    assert fight.pool_count("Anything") == 0
+
+
+def test_evolving_keeps_conditions_keyed_to_the_same_combatant():
+    troll = _troll()
+    fight = _fight(party=_party(4), adversaries=[troll])
+    fight.apply_condition(troll, Condition(name=VULNERABLE))
+
+    for _ in range(4):
+        stolen_armor(troll, amount=4, hp_to_mark=1, fight=fight)
+
+    assert fight.is_vulnerable(troll)
+
+
+# --- Phantom -----------------------------------------------------------------
+
+
+def _phantom(name: str = "Phantom", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Incorporeal", "Fear Aura", "Lingering Haunt"],
+        difficulty=11,
+        major_threshold=5,
+        severe_threshold=NO_THRESHOLD,
+        hp_max=2,
+        stress_max=1,
+        attack_modifier=-1,
+        damage_dice=[DiceGroup(count=1, sides=6)],
+        damage_modifier=2,
+        damage_type="magic",
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_incorporeal_halves_physical_and_nothing_else():
+    phantom = _phantom()
+
+    assert incorporeal(phantom, DamageType.PHYSICAL) == RESISTED
+    assert incorporeal(phantom, DamageType.MAGIC) is None
+    assert incorporeal(phantom, None) is None
+
+
+def test_incorporeal_reaches_the_damage_pipeline():
+    phantom = _phantom()
+    fight = _fight(adversaries=[phantom])
+
+    assert resistance_to(phantom, DamageType.PHYSICAL, fight) == RESISTED
+
+
+def test_fear_aura_costs_a_stress_on_a_failed_save():
+    phantom = _phantom()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[phantom])
+
+    with patch("features.adversaries.random.random", return_value=0.0), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        fear_aura(phantom, party[0], fight)
+
+    assert party[0].stress_marked == 1
+
+
+def test_fear_aura_costs_nothing_to_a_pc_who_holds():
+    phantom = _phantom()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[phantom])
+
+    with patch("features.adversaries.random.random", return_value=0.0), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        fear_aura(phantom, party[0], fight)
+
+    assert party[0].stress_marked == 0
+
+
+def test_fear_aura_reaches_nobody_standing_away_from_it():
+    phantom = _phantom()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[phantom])
+
+    with patch("features.adversaries.random.random", return_value=0.99), patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        fear_aura(phantom, party[0], fight)
+
+    assert party[0].stress_marked == 0
+
+
+def test_lingering_haunt_arms_only_on_the_phantoms_defeat():
+    phantom = _phantom()
+    fight = _fight(adversaries=[phantom])
+
+    lingering_haunt_arms(phantom, amount=3, hp_marked=1, fight=fight)
+
+    assert fight.fear == 0
+    assert not fight.token_count(phantom, LINGERING_HAUNT_COUNTDOWN)
+
+
+def test_lingering_haunt_starts_a_countdown_as_the_phantom_dies():
+    phantom = _phantom()
+    fight = _fight(adversaries=[phantom], fear=2)
+    phantom.mark_hp(phantom.hp_max)
+
+    with patch("features.adversaries.random.randint", return_value=3):
+        lingering_haunt_arms(phantom, amount=6, hp_marked=2, fight=fight)
+
+    assert fight.fear == 1
+    assert fight.token_count(phantom, LINGERING_HAUNT_COUNTDOWN) == 3
+
+
+def test_a_body_hit_again_does_not_buy_a_second_haunting():
+    phantom = _phantom()
+    fight = _fight(adversaries=[phantom], fear=3)
+    phantom.mark_hp(phantom.hp_max)
+
+    with patch("features.adversaries.random.randint", return_value=3):
+        lingering_haunt_arms(phantom, amount=6, hp_marked=2, fight=fight)
+        lingering_haunt_arms(phantom, amount=6, hp_marked=0, fight=fight)
+
+    assert fight.fear == 2
+
+
+def test_the_countdown_ticks_only_on_a_roll_with_fear():
+    phantom = _phantom()
+    fight = _fight(adversaries=[phantom], fear=2)
+    phantom.mark_hp(phantom.hp_max)
+    with patch("features.adversaries.random.randint", return_value=2):
+        lingering_haunt_arms(phantom, amount=6, hp_marked=2, fight=fight)
+
+    lingering_haunt_ticks(phantom, _make_pc("Roller"), _duality(succeeds=True), fight)
+
+    assert fight.token_count(phantom, LINGERING_HAUNT_COUNTDOWN) == 2
+
+
+def test_the_phantom_re_forms_when_the_countdown_runs_out():
+    phantom = _phantom()
+    fight = _fight(adversaries=[phantom], fear=2)
+    phantom.mark_hp(phantom.hp_max)
+    with patch("features.adversaries.random.randint", return_value=1):
+        lingering_haunt_arms(phantom, amount=6, hp_marked=2, fight=fight)
+
+    lingering_haunt_ticks(phantom, _make_pc("Roller"), _with_fear(), fight)
+
+    assert not phantom.is_defeated
+    assert phantom in fight.living_adversaries
+
+
+# --- Poltergeist -------------------------------------------------------------
+
+
+def test_specter_halves_physical_and_nothing_else():
+    poltergeist = _adversary("Poltergeist", features=["Specter"])
+
+    assert specter(poltergeist, DamageType.PHYSICAL) == RESISTED
+    assert specter(poltergeist, DamageType.MAGIC) is None
+
+
+def test_possessor_and_ghost_storm_are_dismissed_on_their_trigger():
+    for name in ("Possessor", "Ghost Storm"):
+        assessment = assess(qualified(ADVERSARY, name))
+        assert assessment.status is Status.NO_COMBAT_EFFECT
+        assert assessment.reason
+
+
+# --- Rabble Mawb -------------------------------------------------------------
+
+
+def _mawb(name: str = "Rabble Mawb", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Horde (1d4+1)", "Come Back Worse"],
+        type="Horde (3/HP)",
+        difficulty=8,
+        major_threshold=4,
+        severe_threshold=8,
+        hp_max=4,
+        stress_max=2,
+        attack_modifier=-2,
+        damage_dice=[DiceGroup(count=1, sides=6)],
+        damage_modifier=3,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_come_back_worse_stands_it_straight_back_up():
+    mawb = _mawb()
+    fight = _fight(adversaries=[mawb], fear=2)
+    mawb.mark_hp(mawb.hp_max)
+    mawb.mark_stress(mawb.stress_max)
+
+    come_back_worse(mawb, amount=9, hp_marked=3, fight=fight)
+
+    assert not mawb.is_defeated
+    assert mawb.hp_marked == 0
+    assert mawb.stress_marked == 0
+    assert fight.fear == 1
+
+
+def test_come_back_worse_does_nothing_while_it_is_alive():
+    mawb = _mawb()
+    fight = _fight(adversaries=[mawb], fear=2)
+
+    come_back_worse(mawb, amount=3, hp_marked=1, fight=fight)
+
+    assert fight.fear == 2
+
+
+def test_each_revival_sharpens_it_further():
+    mawb = _mawb()
+    pc = _make_pc("Target")
+    fight = _fight(party=[pc], adversaries=[mawb], fear=5)
+
+    for _ in range(3):
+        mawb.mark_hp(mawb.hp_max)
+        come_back_worse(mawb, amount=9, hp_marked=3, fight=fight)
+
+    assert fight.token_count(mawb, COME_BACK_TIMES) == 3
+    assert come_back_worse_sharpens(mawb, pc, fight) == 3
+
+
+def test_come_back_worse_stops_when_the_fear_runs_out():
+    mawb = _mawb()
+    fight = _fight(adversaries=[mawb], fear=0)
+    mawb.mark_hp(mawb.hp_max)
+
+    come_back_worse(mawb, amount=9, hp_marked=3, fight=fight)
+
+    assert mawb.is_defeated
+
+
+# --- Rugaru ------------------------------------------------------------------
+
+
+def _rugaru(name: str = "Rugaru", **overrides) -> Adversary:
+    defaults = dict(
+        features=[
+            "Relentless (3)", "Child of Night (2)", "Bloodthirsty",
+            "Howl at the Moon", "Flesh Ripper",
+        ],
+        type="Solo",
+        difficulty=14,
+        major_threshold=7,
+        severe_threshold=14,
+        hp_max=8,
+        stress_max=4,
+        attack_modifier=4,
+        damage_dice=[DiceGroup(count=2, sides=8)],
+        damage_modifier=4,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_child_of_night_reads_its_bonus_off_the_stat_block():
+    assert child_of_night(_adversary(features=["Child of Night (2)"])) == 2
+
+
+def test_child_of_night_without_a_number_grants_nothing():
+    assert child_of_night(_adversary(features=["Child of Night"])) == 0
+
+
+def test_child_of_night_lands_in_the_difficulty_at_spawn():
+    assert _rugaru().spawn().difficulty == 16
+
+
+def test_bloodthirsty_banks_a_token_per_wound():
+    rugaru = _rugaru()
+    pc = _make_pc("Bitten")
+    fight = _fight(party=[pc], adversaries=[rugaru])
+
+    bloodthirsty(rugaru, pc, _landed(hp_marked=2), fight)
+
+    assert fight.token_count(rugaru, BLOODTHIRSTY_TOKENS) == 1
+    assert bloodthirsty_sharpens(rugaru, pc, fight) == 1
+
+
+def test_bloodthirsty_banks_nothing_from_a_hit_armor_swallowed():
+    rugaru = _rugaru()
+    pc = _make_pc("Bitten")
+    fight = _fight(party=[pc], adversaries=[rugaru])
+
+    bloodthirsty(rugaru, pc, _landed(hp_marked=0), fight)
+
+    assert fight.token_count(rugaru, BLOODTHIRSTY_TOKENS) == 0
+
+
+def test_a_severe_hit_breaks_the_bloodthirst():
+    rugaru = _rugaru()
+    pc = _make_pc("Bitten")
+    fight = _fight(party=[pc], adversaries=[rugaru])
+    bloodthirsty(rugaru, pc, _landed(), fight)
+
+    bloodthirsty_is_broken(rugaru, amount=15, hp_marked=3, fight=fight)
+
+    assert bloodthirsty_sharpens(rugaru, pc, fight) == 0
+
+
+def test_an_ordinary_hit_leaves_the_bloodthirst_alone():
+    rugaru = _rugaru()
+    pc = _make_pc("Bitten")
+    fight = _fight(party=[pc], adversaries=[rugaru])
+    bloodthirsty(rugaru, pc, _landed(), fight)
+
+    bloodthirsty_is_broken(rugaru, amount=8, hp_marked=2, fight=fight)
+
+    assert bloodthirsty_sharpens(rugaru, pc, fight) == 1
+
+
+def test_howl_takes_a_hope_and_hands_the_gm_a_fear():
+    rugaru = _rugaru()
+    party = _party(4)
+    for pc in party:
+        pc.gain_hope(3)
+    banked = sum(pc.hope_marked for pc in party)
+    fight = _fight(party=party, adversaries=[rugaru])
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        howl_at_the_moon(rugaru, party[0], fight)
+
+    lost = banked - sum(pc.hope_marked for pc in party)
+    assert lost > 0
+    assert fight.fear == lost
+
+
+def test_howl_breaks_a_pc_who_has_no_hope_left():
+    rugaru = _rugaru()
+    pc = _make_pc("Hopeless")
+    pc.spend_hope(pc.hope_marked)
+    fight = _fight(party=[pc], adversaries=[rugaru])
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        howl_at_the_moon(rugaru, pc, fight)
+
+    assert pc.stress_marked == 1
+    assert fight.is_vulnerable(pc)
+
+
+def test_a_roll_with_hope_lifts_the_howls_vulnerable():
+    rugaru = _rugaru()
+    pc = _make_pc("Hopeless")
+    fight = _fight(party=[pc], adversaries=[rugaru])
+    fight.apply_condition(pc, Condition(name=VULNERABLE, source=rugaru))
+
+    howl_at_the_moon_lifts(rugaru, pc, _with_hope(), fight)
+
+    assert not fight.is_vulnerable(pc)
+
+
+def test_the_howl_does_not_lift_somebody_elses_vulnerable():
+    rugaru = _rugaru()
+    other = _adversary("Elemental")
+    pc = _make_pc("Hopeless")
+    fight = _fight(party=[pc], adversaries=[rugaru, other])
+    fight.apply_condition(pc, Condition(name=VULNERABLE, source=other))
+
+    howl_at_the_moon_lifts(rugaru, pc, _with_hope(), fight)
+
+    assert fight.is_vulnerable(pc)
+
+
+def test_flesh_ripper_is_direct():
+    rugaru = _rugaru()
+    pc = _make_pc("Torn")
+    fight = _fight(party=[pc], adversaries=[rugaru])
+
+    with patch.object(
+        Adversary, "attack", return_value=AttackResult(attack_roll=None, damage_roll=None)
+    ) as swing:
+        flesh_ripper(rugaru, pc, fight)
+
+    assert swing.call_args.kwargs["direct"] is True
+    assert swing.call_args.kwargs["damage_dice"] == [DiceGroup(count=1, sides=12)]
+    assert rugaru.stress_marked == 1
+
+
+# --- Sawtoothed Gillbeast ----------------------------------------------------
+
+
+def _gillbeast(name: str = "Sawtoothed Gillbeast", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Ka-Chomp", "Feeding Frenzy", "Scaly"],
+        difficulty=12,
+        major_threshold=5,
+        severe_threshold=10,
+        hp_max=4,
+        stress_max=2,
+        attack_modifier=1,
+        damage_dice=[DiceGroup(count=1, sides=8)],
+        damage_modifier=1,
+        range="Close",
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_ka_chomp_burns_an_armor_slot_on_a_hit():
+    fish = _gillbeast()
+    pc = _make_pc("Chomped", armor_max=2)
+    fight = _fight(party=[pc], adversaries=[fish])
+
+    with patch.object(
+        Adversary, "attack",
+        return_value=AttackResult(attack_roll=_d20(20), damage_roll=None),
+    ):
+        ka_chomp(fish, pc, fight)
+
+    assert pc.armor_marked == 1
+    assert fish.stress_marked == 1
+
+
+def test_ka_chomp_costs_an_hp_when_there_is_no_armor_left():
+    fish = _gillbeast()
+    pc = _make_pc("Chomped", armor_max=0)
+    fight = _fight(party=[pc], adversaries=[fish])
+
+    with patch.object(
+        Adversary, "attack",
+        return_value=AttackResult(attack_roll=_d20(20), damage_roll=None),
+    ):
+        ka_chomp(fish, pc, fight)
+
+    assert pc.hp_marked == 1
+
+
+def test_scaly_turns_a_wound_into_a_stress_on_a_six():
+    fish = _gillbeast()
+    fight = _fight(adversaries=[fish])
+
+    with patch("features.adversaries.random.randint", return_value=6):
+        marked = scaly(fish, amount=12, hp_to_mark=3, fight=fight)
+
+    assert marked == 0
+    assert fish.stress_marked == 1
+
+
+def test_scaly_does_nothing_on_anything_but_a_six():
+    fish = _gillbeast()
+    fight = _fight(adversaries=[fish])
+
+    with patch("features.adversaries.random.randint", return_value=5):
+        marked = scaly(fish, amount=12, hp_to_mark=3, fight=fight)
+
+    assert marked == 3
+    assert fish.stress_marked == 0
+
+
+def test_scaly_cannot_help_with_a_full_stress_track():
+    fish = _gillbeast()
+    fish.mark_stress(fish.stress_max)
+    fight = _fight(adversaries=[fish])
+
+    with patch("features.adversaries.random.randint", return_value=6):
+        assert scaly(fish, amount=12, hp_to_mark=3, fight=fight) == 3
+
+
+def test_feeding_frenzy_combines_the_school_into_one_wound():
+    # Six, because Very Close takes a third: over three it reaches one, and the
+    # combining is only visible with two or more biting.
+    school = [_gillbeast() for _ in range(6)]
+    pc = _make_pc("Bleeding", armor_max=0)
+    fight = _fight(party=[pc], adversaries=school, fear=2)
+
+    with patch("features.adversaries.roll_d20", return_value=_d20(19)), patch(
+        "features.adversaries.roll_damage",
+        return_value=DamageRollResult(
+            dice_groups=[DiceGroup(count=2, sides=8)], die_results=[[4, 4]], modifier=2
+        ),
+    ) as damage:
+        feeding_frenzy(school[0], pc, amount=6, hp_marked=2, fight=fight)
+
+    # Very Close over three reaches two, and both landed - so two sets of dice.
+    assert damage.call_args.kwargs["dice_groups"] == [DiceGroup(count=2, sides=8)]
+    assert fight.fear == 1
+
+
+def test_feeding_frenzy_turns_on_a_wounded_ally():
+    """'A creature' was ruled to include the GM's own side."""
+    school = [_gillbeast() for _ in range(3)]
+    ally = _adversary("Bugboar")
+    fight = _fight(party=[_make_pc("Bystander")],
+                   adversaries=[*school, ally], fear=2)
+
+    with patch("features.adversaries.roll_d20", return_value=_d20(19)):
+        feeding_frenzy(school[0], ally, amount=6, hp_marked=2, fight=fight)
+
+    assert fight.fear == 1
+    assert ally.hp_marked > 0
+
+
+def test_a_frenzy_does_not_feed_on_the_blood_it_draws():
+    """Its own bites make the victim mark HP, which is this feature's own trigger."""
+    school = [_gillbeast() for _ in range(6)]
+    pc = _make_pc("Bleeding", armor_max=0)
+    fight = _fight(party=[pc], adversaries=school, fear=5)
+
+    with patch("features.adversaries.roll_d20", return_value=_d20(19)):
+        feeding_frenzy(school[0], pc, amount=6, hp_marked=2, fight=fight)
+
+    assert fight.fear == 4
+
+
+def test_feeding_frenzy_ignores_a_hit_that_marked_nothing():
+    school = [_gillbeast() for _ in range(3)]
+    pc = _make_pc("Grazed")
+    fight = _fight(party=[pc], adversaries=school, fear=2)
+
+    feeding_frenzy(school[0], pc, amount=2, hp_marked=0, fight=fight)
+
+    assert fight.fear == 2
+
+
+def test_one_gillbeast_answers_for_the_school():
+    school = [_gillbeast() for _ in range(3)]
+    pc = _make_pc("Bleeding")
+    fight = _fight(party=[pc], adversaries=school, fear=2)
+
+    with patch("features.adversaries.roll_d20", return_value=_d20(19)):
+        feeding_frenzy(school[1], pc, amount=6, hp_marked=2, fight=fight)
+
+    assert fight.fear == 2
+
+
+def test_a_frenzy_spends_each_biters_activation():
+    school = [_gillbeast() for _ in range(6)]
+    pc = _make_pc("Bleeding", armor_max=0)
+    fight = _fight(party=[pc], adversaries=school, fear=2)
+
+    with patch("features.adversaries.roll_d20", return_value=_d20(19)):
+        feeding_frenzy(school[0], pc, amount=6, hp_marked=2, fight=fight)
+
+    assert sum(fight.consumed_activations(fish) for fish in school) == 2
+
+
+def test_every_feature_of_this_batch_is_modelled():
+    for name in (
+        "Libre",
+        "Heel Turn",
+        "Spectral Suplex",
+        "Unmasking Death",
+        "Tag Team",
+        "Hive Mind",
+        "Adaptive Tactics",
+        "Stolen Armor",
+        "Flail Swipe",
+        "Double Swipe",
+        "Grapple",
+        "Squirt Ink",
+        "Shadow Stalker",
+        "Pouncing Strike",
+    ):
+        assert assess(qualified(ADVERSARY, name)).status is Status.MODELLED
+
+
+def test_a_haunting_phantom_is_still_on_the_field():
+    """It has to be, or nothing would ever tick its countdown down."""
+    phantom = _phantom()
+    fight = _fight(adversaries=[phantom], fear=2)
+    phantom.mark_hp(phantom.hp_max)
+    with patch("features.adversaries.random.randint", return_value=3):
+        lingering_haunt_arms(phantom, amount=6, hp_marked=2, fight=fight)
+
+    assert lingering_haunt_lingers(phantom, fight) is True
+    assert spotlights_while_defeated(phantom, fight)
+
+
+def test_a_phantom_nobody_paid_for_stays_down():
+    phantom = _phantom()
+    fight = _fight(adversaries=[phantom], fear=0)
+    phantom.mark_hp(phantom.hp_max)
+    lingering_haunt_arms(phantom, amount=6, hp_marked=2, fight=fight)
+
+    assert not spotlights_while_defeated(phantom, fight)
+
+
+def test_gm_side_dispatch_reaches_an_adversary_that_declares_it_is_still_in_play():
+    """The one-line widening `_gm_offers` needed; every other body stays excluded."""
+    phantom = _phantom()
+    fight = _fight(adversaries=[phantom], fear=2)
+    phantom.mark_hp(phantom.hp_max)
+    with patch("features.adversaries.random.randint", return_value=2):
+        lingering_haunt_arms(phantom, amount=6, hp_marked=2, fight=fight)
+
+    apply_on_party_attack_roll(_make_pc("Roller"), _with_fear(), fight)
+
+    assert fight.token_count(phantom, LINGERING_HAUNT_COUNTDOWN) == 1
+
+
+def test_an_ordinary_body_is_not_reached_by_gm_side_dispatch():
+    dead = _adversary("Corpse", features=["Momentum"])
+    fight = _fight(adversaries=[dead])
+    dead.mark_hp(dead.hp_max)
+
+    assert not spotlights_while_defeated(dead, fight)
+
+
+def test_come_back_worse_sharpens_reaction_rolls_too():
+    """'A bonus to all rolls' - an adversary makes exactly two kinds."""
+    mawb = _mawb()
+    pc = _make_pc("Target")
+    fight = _fight(party=[pc], adversaries=[mawb], fear=5)
+    mawb.mark_hp(mawb.hp_max)
+    come_back_worse(mawb, amount=9, hp_marked=3, fight=fight)
+
+    assert total_reaction_roll_bonus(mawb, fight) == 1
+    assert total_attack_roll_bonus(mawb, pc, fight) == 1
+
+
+def test_shadow_stalker_does_not_follow_the_panther_into_a_save():
+    """The attack bonus and the reaction bonus are deliberately separate hooks."""
+    panther = _panther()
+    fight = _fight(adversaries=[panther])
+    shadow_stalker_opens(panther, fight)
+
+    assert total_reaction_roll_bonus(panther, fight) == 0
+
+
+def test_a_missed_swing_still_records_who_the_elk_went_for():
+    elk = _elk()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[elk])
+
+    headbutt_remembers_a_miss(elk, party[0], _d20(2), fight)
+
+    assert headbutt(elk, party[0], None, fight) is None
+
+
+def test_stressing_an_adversary_to_death_tells_the_field():
+    """The one route to defeat that does not pass through take_damage."""
+    warband = _warband()
+    leader = _adversary("Head Guard", type="Leader", hp_max=1, stress_max=1)
+    fight = _fight(adversaries=[warband, leader])
+
+    with patch("features.adversaries.random.randint", return_value=1):
+        leader.mark_stress(5, fight)
+
+    assert leader.is_defeated
+    assert warband not in fight.living_adversaries
+
+
+# --- Soul-Shattered Mage -----------------------------------------------------
+
+
+def _mage(name: str = "Soul-Shattered Mage", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Relentless (3)", "Broken Magic", "Feel My Pain"],
+        type="Solo",
+        difficulty=12,
+        major_threshold=8,
+        severe_threshold=15,
+        hp_max=6,
+        stress_max=5,
+        attack_modifier=2,
+        damage_dice=[DiceGroup(count=1, sides=12)],
+        damage_modifier=0,
+        damage_type="magic",
+        range="Far",
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_a_low_roll_rifts_one_target_for_direct_damage():
+    mage = _mage()
+    party = _party(4)
+    pc = party[0]
+    pc.armor_max = 0
+    fight = _fight(party=party, adversaries=[mage])
+
+    with patch("features.adversaries.random.randint", return_value=1):
+        broken_magic(mage, pc, fight)
+
+    assert pc.hp_marked > 0
+    assert mage.stress_marked == 1
+
+
+def test_a_middling_roll_slows_the_party():
+    mage = _mage()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[mage])
+
+    with patch("features.adversaries.random.randint", return_value=3):
+        broken_magic(mage, party[0], fight)
+
+    assert any(fight.has_condition(pc, SLOWED) for pc in party)
+
+
+def test_a_roll_with_hope_ends_time_dilation():
+    mage = _mage()
+    pc = _make_pc("Slowed")
+    fight = _fight(party=[pc], adversaries=[mage])
+    fight.apply_condition(pc, Condition(name=SLOWED, source=mage))
+
+    broken_magic_time_resumes(mage, pc, _with_hope(), fight)
+
+    assert not fight.has_condition(pc, SLOWED)
+
+
+def test_broken_magic_waits_for_the_stress_rule():
+    mage = _mage(hp_max=40)
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[mage])
+
+    assert broken_magic(mage, party[0], fight) is None
+
+
+def test_feel_my_pain_scales_on_the_mages_own_stress():
+    mage = _mage()
+    mage.mark_stress(3)
+    party = _party(4, armor_max=0)
+    fight = _fight(party=party, adversaries=[mage])
+
+    with patch(
+        "features.adversaries.roll_damage",
+        return_value=DamageRollResult(
+            dice_groups=[DiceGroup(count=3, sides=6)], die_results=[[4, 4, 4]], modifier=0
+        ),
+    ) as damage:
+        feel_my_pain(mage, amount=9, hp_marked=2, fight=fight)
+
+    assert damage.call_args.kwargs["dice_groups"] == [DiceGroup(count=3, sides=6)]
+    assert any(pc.hp_marked > 0 for pc in party)
+
+
+def test_an_unstressed_mage_shares_nothing():
+    mage = _mage()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[mage])
+
+    feel_my_pain(mage, amount=9, hp_marked=2, fight=fight)
+
+    assert all(pc.hp_marked == 0 for pc in party)
+
+
+# --- Spellbound Armor --------------------------------------------------------
+
+
+def _armor(name: str = "Spellbound Armor", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Tireless", "Clatter & Recombobulate"],
+        difficulty=10,
+        major_threshold=9,
+        severe_threshold=17,
+        hp_max=6,
+        stress_max=0,
+        attack_modifier=0,
+        damage_dice=[DiceGroup(count=1, sides=10)],
+        damage_modifier=1,
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_tireless_ignores_forced_stress_without_costing_an_hp():
+    """A zero-length track would otherwise overflow into a Hit Point every time."""
+    armor = _armor()
+    fight = _fight(adversaries=[armor])
+
+    armor.mark_stress(3, fight)
+
+    assert armor.stress_marked == 0
+    assert armor.hp_marked == 0
+
+
+def test_an_ordinary_adversary_with_no_stress_still_overflows():
+    """The contrast that shows Tireless is doing the work, not the empty track."""
+    plain = _adversary("Statue", stress_max=0)
+    fight = _fight(adversaries=[plain])
+
+    plain.mark_stress(1, fight)
+
+    assert plain.hp_marked == 1
+
+
+def test_tireless_reaches_the_track_through_dispatch():
+    armor = _armor()
+    fight = _fight(adversaries=[armor])
+
+    assert refuses_stress(armor, 1, fight) is True
+
+
+def test_clatter_stands_the_armor_back_up_once():
+    armor = _armor()
+    fight = _fight(adversaries=[armor], fear=4)
+    armor.mark_hp(armor.hp_max)
+
+    with patch("combat.policy.take_adversary_turn"):
+        clatter_and_recombobulate(armor, amount=20, hp_marked=3, fight=fight)
+
+    assert not armor.is_defeated
+    assert armor.hp_marked == armor.hp_max - 2
+    assert fight.fear == 3
+
+
+def test_clatter_is_once_per_scene():
+    armor = _armor()
+    fight = _fight(adversaries=[armor], fear=4)
+
+    with patch("combat.policy.take_adversary_turn"):
+        armor.mark_hp(armor.hp_max)
+        clatter_and_recombobulate(armor, amount=20, hp_marked=3, fight=fight)
+        armor.mark_hp(armor.hp_max)
+        clatter_and_recombobulate(armor, amount=20, hp_marked=3, fight=fight)
+
+    assert armor.is_defeated
+    assert fight.fear == 3
+
+
+# --- Viper -------------------------------------------------------------------
+
+
+def test_venomous_costs_a_stress_on_every_action_roll():
+    viper = _adversary("Viper", features=["Minion (4)", "Venomous", "Group Attack"],
+                       hp_max=1, stress_max=1, damage_dice=[], damage_modifier=1)
+    pc = _make_pc("Bitten")
+    fight = _fight(party=[pc], adversaries=[viper])
+
+    venomous(viper, pc, _landed(), fight)
+    fight.apply_condition_effects(pc, BEFORE_AN_ACTION_ROLL)
+
+    assert fight.has_condition(pc, ENVENOMATED)
+    assert pc.stress_marked == 1
+
+
+def test_venomous_is_not_re_applied():
+    viper = _adversary("Viper", features=["Venomous"])
+    pc = _make_pc("Bitten")
+    fight = _fight(party=[pc], adversaries=[viper])
+    fight.apply_condition(pc, Condition(name=ENVENOMATED))
+
+    venomous(viper, pc, _landed(), fight)
+    fight.apply_condition_effects(pc, BEFORE_AN_ACTION_ROLL)
+
+    assert pc.stress_marked == 0
+
+
+# --- Waxwork Creation --------------------------------------------------------
+
+
+def _waxwork(name: str = "Waxwork Creation", **overrides) -> Adversary:
+    defaults = dict(
+        features=[
+            "Relentless (2)", "No Vital Organs", "Wax Ball", "Splutch!",
+            "Smothering Grapple",
+        ],
+        type="Solo",
+        difficulty=13,
+        major_threshold=8,
+        severe_threshold=15,
+        hp_max=10,
+        stress_max=3,
+        attack_modifier=2,
+        damage_dice=[DiceGroup(count=1, sides=20)],
+        damage_modifier=0,
+        range="Very Close",
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_no_vital_organs_denies_the_critical_bonus():
+    waxwork = _waxwork()
+    pc = _make_pc("Swinger")
+    fight = _fight(party=[pc], adversaries=[waxwork])
+
+    assert no_vital_organs(waxwork, pc, fight) is True
+    assert denies_critical_bonus(waxwork, pc, fight) is True
+
+
+def test_an_ordinary_adversary_still_takes_the_critical_bonus():
+    plain = _adversary("Ordinary")
+    pc = _make_pc("Swinger")
+    fight = _fight(party=[pc], adversaries=[plain])
+
+    assert denies_critical_bonus(plain, pc, fight) is False
+
+
+def test_wax_ball_restrains_on_a_hit():
+    waxwork = _waxwork()
+    pc = _make_pc("Stuck")
+    fight = _fight(party=[pc], adversaries=[waxwork])
+
+    with patch.object(
+        Adversary, "attack",
+        return_value=AttackResult(attack_roll=_d20(20), damage_roll=None),
+    ):
+        wax_ball(waxwork, pc, fight)
+
+    assert fight.has_condition(pc, RESTRAINED)
+    assert waxwork.stress_marked == 1
+
+
+def test_splutch_takes_the_weapon_and_not_the_turn():
+    waxwork = _waxwork()
+    pc = _make_pc("Swinger")
+    fight = _fight(party=[pc], adversaries=[waxwork])
+
+    with patch("features.adversaries.random.randint", return_value=6):
+        splutch(waxwork, pc, _swung("Melee"), damage=5, hp_marked=1, fight=fight)
+
+    assert fight.has_condition(pc, WEAPON_STUCK)
+    assert fight.cannot_swing(pc)
+    assert not fight.cannot_act(pc)
+
+
+def test_splutch_never_catches_a_ranged_attacker():
+    waxwork = _waxwork()
+    pc = _make_pc("Archer")
+    fight = _fight(party=[pc], adversaries=[waxwork])
+
+    with patch("features.adversaries.random.randint", return_value=6):
+        splutch(waxwork, pc, _swung("Far"), damage=5, hp_marked=1, fight=fight)
+
+    assert not fight.has_condition(pc, WEAPON_STUCK)
+
+
+def test_splutch_lets_go_on_a_low_die():
+    waxwork = _waxwork()
+    pc = _make_pc("Swinger")
+    fight = _fight(party=[pc], adversaries=[waxwork])
+
+    with patch("features.adversaries.random.randint", return_value=4):
+        splutch(waxwork, pc, _swung("Melee"), damage=5, hp_marked=1, fight=fight)
+
+    assert not fight.has_condition(pc, WEAPON_STUCK)
+
+
+def test_a_stuck_weapon_comes_free_on_a_strength_roll():
+    waxwork = _waxwork()
+    pc = _make_pc("Swinger")
+    fight = _fight(party=[pc], adversaries=[waxwork])
+    with patch("features.adversaries.random.randint", return_value=6):
+        splutch(waxwork, pc, _swung("Melee"), damage=5, hp_marked=1, fight=fight)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        list(fight.expire_conditions(pc, WHEN_THEY_ACT))
+
+    assert not fight.cannot_swing(pc)
+
+
+def test_smothering_grapple_traps_and_restrains():
+    waxwork = _waxwork()
+    pc = _make_pc("Smothered")
+    fight = _fight(party=[pc], adversaries=[waxwork], fear=2)
+
+    smothering_grapple(waxwork, pc, _landed(), fight)
+
+    assert fight.has_condition(pc, TRAPPED)
+    assert fight.has_condition(pc, RESTRAINED)
+    assert fight.fear == 1
+
+
+def test_a_trapped_pc_pays_on_the_creations_spotlights():
+    """The upkeep is charged on the Creation's turn, not its victim's."""
+    waxwork = _waxwork()
+    pc = _make_pc("Smothered")
+    fight = _fight(party=[pc], adversaries=[waxwork], fear=2)
+    smothering_grapple(waxwork, pc, _landed(), fight)
+
+    smothering_grapple_smothers(waxwork, fight)
+
+    assert pc.stress_marked == 1
+
+
+def test_a_major_hit_splits_the_wax_open():
+    waxwork = _waxwork()
+    pc = _make_pc("Smothered")
+    fight = _fight(party=[pc], adversaries=[waxwork], fear=2)
+    smothering_grapple(waxwork, pc, _landed(), fight)
+
+    smothering_grapple_releases(waxwork, amount=9, hp_marked=2, fight=fight)
+
+    assert not fight.has_condition(pc, TRAPPED)
+    assert not fight.has_condition(pc, RESTRAINED)
+
+
+def test_a_glancing_hit_leaves_them_inside():
+    waxwork = _waxwork()
+    pc = _make_pc("Smothered")
+    fight = _fight(party=[pc], adversaries=[waxwork], fear=2)
+    smothering_grapple(waxwork, pc, _landed(), fight)
+
+    smothering_grapple_releases(waxwork, amount=4, hp_marked=1, fight=fight)
+
+    assert fight.has_condition(pc, TRAPPED)
+
+
+# --- Will-o'-the-Wisps -------------------------------------------------------
+
+
+def _wisps(name: str = "Will-o'-the-Wisps", **overrides) -> Adversary:
+    defaults = dict(
+        features=["Horde (1d4-1)", "Kaleidoscopic", "Fascinating"],
+        type="Horde (8/HP)",
+        difficulty=9,
+        major_threshold=5,
+        severe_threshold=9,
+        hp_max=4,
+        stress_max=2,
+        attack_modifier=-3,
+        damage_dice=[DiceGroup(count=1, sides=4)],
+        damage_modifier=2,
+        damage_type="magic",
+        range="Close",
+    )
+    defaults.update(overrides)
+    return _adversary(name, **defaults)
+
+
+def test_a_horde_parameter_can_carry_a_minus():
+    """`Horde (1d4-1)` is the first printed parameter with a minus in it."""
+    wisps = _wisps()
+    pc = _make_pc("Target")
+    fight = _fight(party=[pc], adversaries=[wisps])
+    wisps.mark_hp(wisps.hp_max // 2)
+
+    swapped = horde(wisps, pc, None, fight)
+
+    assert swapped == ([DiceGroup(count=1, sides=4)], -1)
+
+
+def test_kaleidoscopic_catches_the_party_and_not_the_wisps():
+    """'All targets' is the printed noun, so the GM's own side is untouched."""
+    wisps = _wisps()
+    ally = _adversary("Bugboar")
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[wisps, ally])
+
+    kaleidoscopic(wisps, wisps, fight)
+
+    assert sum(1 for pc in party if fight.is_vulnerable(pc)) == 1
+    assert not fight.is_vulnerable(ally)
+
+
+def test_kaleidoscopic_lifts_its_previous_draw():
+    wisps = _wisps()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[wisps])
+
+    kaleidoscopic(wisps, wisps, fight)
+    kaleidoscopic(wisps, wisps, fight)
+
+    assert sum(1 for pc in party if fight.is_vulnerable(pc)) == 1
+
+
+def test_fascinating_costs_a_stress_on_a_failed_save():
+    wisps = _wisps()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[wisps], fear=2)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=False)
+    ):
+        fascinating(wisps, party[0], fight)
+
+    assert fight.fear == 1
+    assert sum(pc.stress_marked for pc in party) > 0
+
+
+def test_fascinating_costs_nothing_when_everyone_looks_away():
+    wisps = _wisps()
+    party = _party(4)
+    fight = _fight(party=party, adversaries=[wisps], fear=2)
+
+    with patch(
+        "features.adversaries.roll_duality", return_value=_duality(succeeds=True)
+    ):
+        fascinating(wisps, party[0], fight)
+
+    assert sum(pc.stress_marked for pc in party) == 0
+
+
+def test_every_feature_of_the_last_batch_is_modelled():
+    for name in (
+        "Broken Magic",
+        "Feel My Pain",
+        "Tireless",
+        "Clatter & Recombobulate",
+        "Venomous",
+        "No Vital Organs",
+        "Wax Ball",
+        "Splutch!",
+        "Smothering Grapple",
+        "Kaleidoscopic",
+        "Fascinating",
+    ):
+        assert assess(qualified(ADVERSARY, name)).status is Status.MODELLED
+
+
+def test_every_implemented_feature_of_the_hauntings_batch_is_modelled():
+    for name in (
+        "Incorporeal",
+        "Fear Aura",
+        "Lingering Haunt",
+        "Specter",
+        "Come Back Worse",
+        "Child of Night",
+        "Bloodthirsty",
+        "Howl at the Moon",
+        "Flesh Ripper",
+        "Ka-Chomp",
+        "Feeding Frenzy",
+        "Scaly",
     ):
         assert assess(qualified(ADVERSARY, name)).status is Status.MODELLED

@@ -34,7 +34,9 @@ from content.names import ADVERSARY, qualified
 from content.aoe import Range, band_named, targets_hit
 from content.damage_types import damage_type_named, reduced
 from content.registry import (
+    apply_adversary_on_damaged,
     apply_ally_defeated,
+    apply_attack_failed,
     apply_on_damaged,
     apply_stress_marked,
     deals_direct_damage,
@@ -42,11 +44,13 @@ from content.registry import (
     harden_damage,
     incoming_damage_multiplier,
     marked_as_stress_instead,
+    refuses_stress,
     resistance_to,
     soften_damage,
     standard_attack_damage,
     standard_attack_damage_type,
     total_ally_damage_bonus,
+    total_attack_roll_bonus,
     total_damage_bonus,
     total_difficulty_bonus,
     total_evasion_bonus,
@@ -230,6 +234,47 @@ class Adversary:
         spawned.difficulty += total_difficulty_bonus(spawned)
         return spawned
 
+    def evolve(self, into: "Adversary") -> None:
+        """Become a different stat block, in place, keeping what has been marked.
+
+        SRD 2.0 prints an **Evolution** as a sub-block under the adversary it
+        belongs to - the Mountain Troll's "Enraged Mountain Troll" loses two
+        features, gains a Difficulty, gains an Action and replaces its standard
+        attack. Ruled by the user as a change to *this* combatant rather than as a
+        swap for a fresh one: the same object stays on the field, so every
+        condition, token, targeting memory and granted activation keyed to its
+        `id()` survives, and so does the damage the party has already done.
+
+        `into` is a **spawned** copy of the evolved catalogue entry, so the two
+        forms are both ordinary JSON records that stay checkable against the page
+        and neither is written into Python. Everything that describes the stat
+        block is taken from it; everything that describes the state of *this*
+        fight - `hp_marked`, `stress_marked` - is deliberately left alone.
+
+        Note `hp_max` is taken from the evolved form, which is what the page
+        implies where it states one. If an evolution's `hp_max` were lower than
+        the HP already marked the adversary would arrive defeated, which is the
+        honest reading of a form that is simply frailer; no printed evolution does
+        that, and the Troll's is identical either side.
+
+        The Difficulty is copied whole rather than added to, since `into` came
+        through `spawn` and has already had any `difficulty_bonus` resolved into
+        it - adding here would count the evolved form's own passives twice.
+        """
+        self.name = into.name
+        self.type = into.type
+        self.difficulty = into.difficulty
+        self.major_threshold = into.major_threshold
+        self.severe_threshold = into.severe_threshold
+        self.hp_max = into.hp_max
+        self.stress_max = into.stress_max
+        self.attack_modifier = into.attack_modifier
+        self.damage_dice = list(into.damage_dice)
+        self.damage_modifier = into.damage_modifier
+        self.damage_type = into.damage_type
+        self.range = into.range
+        self.features = list(into.features)
+
     def _damage_for(self, dice, modifier, attack_roll, target, fight):
         """Roll this attack's damage, letting content add to it first.
 
@@ -351,9 +396,16 @@ class Adversary:
         if not targets:
             return AttackResult(attack_roll=None, damage_roll=None), []
 
+        # The same passive bonus a single-target swing gets; see `attack_roll_bonus`.
+        # Asked about the first target, since the hook's registrants key on the
+        # attacker's own state rather than on who is being swept.
+        sweeps_at = self.attack_modifier + total_attack_roll_bonus(
+            self, targets[0], fight
+        )
+
         def swing():
             return roll_d20(
-                modifier=self.attack_modifier,
+                modifier=sweeps_at,
                 # The area rule reads a success as beating *somebody*, so the
                 # roll is checked against the easiest target and each one
                 # re-checked below.
@@ -445,9 +497,16 @@ class Adversary:
         # attack. Nothing here knows what content answers.
         evasion = target.evasion + total_evasion_bonus(target, self, fight)
 
+        # Content this adversary carries that moves its own attack roll - the
+        # Panther's Shadow Stalker while it is still in cover. Added on top of
+        # whatever a feature stated, since the two are different things: the
+        # override says what this attack swings at, and this is a passive that
+        # applies to whatever it swings at. Asked once and outside the closure, so
+        # a forced reroll never charges content twice. Nothing here knows what
+        # answers.
         swings_at = (
             self.attack_modifier if attack_modifier is None else attack_modifier
-        )
+        ) + total_attack_roll_bonus(self, target, fight)
 
         def swing():
             return roll_d20(
@@ -461,6 +520,16 @@ class Adversary:
         attack_roll = force_adversary_reroll(self, target, swing(), swing, fight)
 
         if not attack_roll.is_success:
+            # Content this adversary carries that answers its **own** swing coming
+            # up short - the Mechanorb's Adaptive Tactics, which learns something
+            # from every miss. `attack_failed` has always meant "the attacker's own
+            # content answers an attack that failed", and it was announced only
+            # from `items/weapons.py`, so it could only ever hear about a PC
+            # missing. This is its second call site, exactly as `attack_missed` was
+            # opened to the party's side: one hook, both sides of the table, and
+            # dispatch scans the attacker's own features so neither reaches the
+            # other's content.
+            apply_attack_failed(self, target, attack_roll, fight)
             return AttackResult(attack_roll=attack_roll, damage_roll=None)
 
         damage_roll = self._damage_for(
@@ -518,7 +587,16 @@ class Adversary:
         without one still marks the Stress correctly and simply announces nothing.
         See `content/registry.py`'s `on_stress_marked`.
         """
+        # Content that ignores forced Stress outright - the Spellbound Armor's
+        # Tireless. Asked first, because a refusal stops the overflow into a Hit
+        # Point as well as the marking: the Armor prints `Stress: None`, so without
+        # this every forced Stress would cost it an HP, which is the opposite of
+        # what the page says. Nothing here knows what answers.
+        if fight is not None and refuses_stress(self, amount, fight):
+            return
+
         free = self.stress_max - self.stress_marked
+        was_defeated = self.is_defeated
         self.stress_marked = min(self.stress_marked + amount, self.stress_max)
         if amount > free:
             self.mark_hp(1)
@@ -528,6 +606,14 @@ class Adversary:
         # the amount that fitted; see the hook. Nothing here knows what answers.
         if fight is not None:
             apply_stress_marked(self, amount, fight)
+
+            # Stress that would not fit is the one route to defeat that does not
+            # pass through `take_damage`, so the defeat announcements are made here
+            # too rather than left as the one case nothing hears about. Same
+            # transition guard, so a body stressed again announces nothing.
+            if self.is_defeated and not was_defeated:
+                fight.release_conditions_from(self)
+                apply_ally_defeated(self, fight)
 
     def clear_stress(self, amount: int) -> None:
         self.stress_marked = max(self.stress_marked - amount, 0)
@@ -707,6 +793,14 @@ class Adversary:
         # Slots - and the type is the one resolved at the top of this method, so
         # this hook and the two severity hooks above always read the same hit.
         apply_on_damaged(self, amount, hp_to_mark, fight, False, kind)
+
+        # And the rest of the GM's own side, which the holder-scoped hook above
+        # cannot reach - the Sawtoothed Gillbeast's Feeding Frenzy turns on
+        # anything bleeding nearby, its own allies included. The mirror of the
+        # party's `ally_on_damaged`, announced from both places a combatant can be
+        # wounded; see `adversary_on_damaged`.
+        if fight is not None:
+            apply_adversary_on_damaged(self, amount, hp_to_mark, fight)
 
         # An adversary that has just died takes its holds with it. A condition
         # whose only printed way out is something happening to *this* adversary -

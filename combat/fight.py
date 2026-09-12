@@ -33,6 +33,7 @@ from content import (
     apply_ally_on_spotlight,
     apply_on_party_attack_roll,
     apply_on_roll,
+    apply_party_spotlight,
     converted_party_roll,
     extra_spotlight_cost,
     fear_is_converted,
@@ -149,6 +150,15 @@ def _take_pc_spotlight(state: FightState) -> None:
         return
 
     state.acted_this_pass.add(id(pc))
+
+    # GM-side content that answers a PC taking the spotlight - the Phantom's Fear
+    # Aura, whose face is the first thing anybody standing near it has to deal
+    # with. Fired before the PC acts, so a Stress marked here is already marked
+    # when they choose what to do with the turn, and whether or not the spotlight
+    # goes on to contain a roll. The mirror of the two hooks announced on the GM's
+    # own activations; see `on_party_spotlight`. Nothing here knows what answers.
+    apply_party_spotlight(pc, state)
+
     result = take_pc_turn(pc, state)
 
     # Conditions that *do* something when their holder acts get their moment

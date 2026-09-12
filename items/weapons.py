@@ -35,10 +35,12 @@ from content import (
     dealt_damage_floor,
     dealt_damage_scaling,
     dealt_damage_type,
+    denies_critical_bonus,
     remake_action_roll,
     total_ally_extra_damage,
     total_ally_roll_bonus,
     total_extra_damage,
+    total_live_difficulty_bonus,
     total_roll_bonus,
 )
 from content.help import help_with_roll
@@ -210,10 +212,22 @@ def attack_with(
         + total_ally_roll_bonus(attacker, target, fight, weapon.trait)
     )
 
+    # Content the *target* carries that raises its Difficulty for the length of a
+    # fight rather than from its stat block - the Mechanorb's Hive Mind, which is
+    # worth +1 for every other Mechanorb still standing nearby. The mirror of the
+    # Evasion bonus `Adversary.attack` already asks for on the other side of the
+    # table, and it has to be asked here rather than resolved at spawn because the
+    # number moves as the field thins; see `live_difficulty_bonus`. Worked out
+    # once and outside the closure below, with the modifier, so a forced reroll
+    # never charges content for being asked twice.
+    difficulty = target.difficulty + total_live_difficulty_bonus(
+        target, attacker, fight
+    )
+
     def roll():
         return roll_duality(
             modifier=modifier,
-            difficulty=target.difficulty,
+            difficulty=difficulty,
             advantage_state=advantage_state,
             hope_die=hope_die,
             help_dice=help_offered.dice,
@@ -289,10 +303,21 @@ def attack_with(
     # thresholds once, exactly as the holder-scoped dice above do.
     dice_groups += total_ally_extra_damage(attacker, target, attack_roll, fight)
 
+    # Content the *target* carries that denies a critical its bonus - the Waxwork
+    # Creation has no vital organs to find. It takes away the maximum-damage-dice
+    # bonus and nothing else: the critical still succeeded regardless of
+    # Difficulty, which is most of what a natural 20 is worth. Asked here because
+    # this is where the criticality is handed to the roll, and no softening hook
+    # downstream could separate the bonus back out of a total. Nothing here knows
+    # what answers.
+    critical = attack_roll.is_critical and not denies_critical_bonus(
+        target, attacker, fight
+    )
+
     damage_roll = roll_damage(
         dice_groups=dice_groups,
         modifier=pool.modifier + damage_bonus,
-        is_critical=attack_roll.is_critical,
+        is_critical=critical,
         drop_lowest=pool.drop_lowest,
         # Content the attacker carries that scales the whole roll - Splendor's
         # Smite, which doubles it. Passed into the roll rather than applied to the

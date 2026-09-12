@@ -271,6 +271,13 @@ class Fight(Protocol):
     def add_token(self, holder, name: str, cap: int) -> bool: ...
     def set_token(self, holder, name: str, value: int) -> None: ...
     def spend_tokens(self, holder, name: str, amount: int) -> int: ...
+
+    # Pools - tokens belonging to no single combatant, keyed by name alone. See
+    # `FightState.pools`; the SRD defines one on p. 94 and the Mechanorb's
+    # *Adaptive Tactics* is the first thing that needs one.
+    def pool_count(self, name: str) -> int: ...
+    def add_to_pool(self, name: str, amount: int = 1) -> int: ...
+    def clear_pool(self, name: str) -> None: ...
     def spend_fear(self, amount: int = 1) -> bool: ...
     def can_use_once_per_rest(self, holder, ability: str, long: bool = False) -> bool: ...
     def use_once_per_rest(self, holder, ability: str, long: bool = False) -> bool: ...
@@ -339,6 +346,13 @@ _adversary_on_spotlights: dict[str, Callable] = {}
 _ally_damage_bonuses: dict[str, Callable] = {}
 _on_stress_marked: dict[str, Callable] = {}
 _ally_defeats: dict[str, Callable] = {}
+_attack_roll_bonuses: dict[str, Callable] = {}
+_live_difficulty_bonuses: dict[str, Callable] = {}
+_party_spotlights: dict[str, Callable] = {}
+_adversary_on_damaged: dict[str, Callable] = {}
+_reaction_roll_bonuses: dict[str, Callable] = {}
+_stress_refusals: dict[str, Callable] = {}
+_critical_refusals: dict[str, Callable] = {}
 _skip_spotlight: dict[str, Callable] = {}
 _spotlight_while_defeated: dict[str, Callable] = {}
 _on_party_attack_rolls: dict[str, Callable] = {}
@@ -580,17 +594,250 @@ def on_ally_defeated(name: str, unmodelled: Iterable[str] = ()):
     is read off `defeated` by the content, exactly as `ally_damage_bonus` leaves
     range to the area rule.
 
-    Announced from `Adversary.take_damage`, on the transition into defeat, so it
-    fires once rather than on every later hit against a body. **The gap that
-    leaves** is a defeat by any route other than damage - an adversary that
-    overflows its Stress track into its last Hit Point, or content that marks HP
-    outright - since neither passes through that method with a fight in hand.
-    Damage is how essentially every adversary in the catalogue is defeated, and
-    the gap is declared where the content registers rather than here.
+    Announced on the **transition** into defeat, so it fires once rather than on
+    every later hit against a body, from both routes an adversary can be killed:
+    `Adversary.take_damage`, and `Adversary.mark_stress` where Stress that will not
+    fit overflows into a last Hit Point. Between them those are every path that
+    carries a fight, so there is no way to be defeated without the field hearing it.
     """
 
     def register(function: Callable) -> Callable:
         _claim(_ally_defeats, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def attack_roll_bonus(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that adds to its holder's own attack roll.
+
+    Signature: `(adversary, target, fight) -> int` - the bonus, or 0 to decline.
+    Holder-scoped on whoever is swinging, and the answers sum.
+
+    **The GM side's twin of `roll_bonus`, and a separate hook for the reason
+    `ally_damage_bonus` was.** That one carries a `trait` and a set of weapon
+    feature names, because a PC's swing is a trait rolled with a weapon; an
+    adversary has neither, and a registrant there would be handed arguments that
+    mean nothing on this side of the table.
+
+    Nothing could say this before. `attack_advantage` grants Advantage rather than
+    a number, and the `attack_modifier` override on `Adversary.attack` belongs to a
+    *feature* stating what its own attack swings at - neither reaches a passive
+    that moves the stat block's ordinary roll. The Panther's *Shadow Stalker*
+    ("while *Hidden*, the Panther gains a +2 bonus to its attack rolls") and the
+    Mechanorb's *Adaptive Tactics* both need exactly that, which is what makes it
+    worth a hook rather than a second override.
+
+    Two call sites, in `Adversary.attack` and `Adversary.area_attack`, so a
+    passive reaches a swept attack as readily as a single one. Asked **outside**
+    the reroll closure, for the reason `items/weapons.py` works its modifier out
+    once: being asked is the commitment, and a forced reroll must not charge for
+    it twice.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_attack_roll_bonuses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def live_difficulty_bonus(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that raises its holder's Difficulty **during** a fight.
+
+    Signature: `(adversary, attacker, fight) -> int` - the bonus, or 0 to decline.
+    Holder-scoped on whoever is being attacked, and the answers sum.
+
+    **Distinct from `difficulty_bonus` next door, which cannot say this.** That
+    hook takes no `fight` on purpose: it is a standing fact about a stat block and
+    is resolved into `Adversary.difficulty` once, at spawn, so the four places
+    that read Difficulty never have to ask. `Flying (X)` is exactly that shape.
+
+    The Mechanorb's *Hive Mind* is not: "+1 bonus to their Difficulty for each
+    other Mechanorb within Close range" is a number that moves as the field
+    changes, and resolving it at spawn would freeze it at the count an encounter
+    happened to start with - so a swarm reduced to one would keep the bonus it had
+    when it was six.
+
+    The exact mirror of `evasion_bonus` on the party's side, which answers the same
+    question about a PC being attacked, and asked from the matching place: one call
+    site in `items/weapons.py`, where a PC's swing reads the target's Difficulty.
+    It is therefore **the party's attacks only** - an adversary never rolls against
+    another adversary's Difficulty, and a Reaction Roll's Difficulty is the printed
+    number rather than this. Declared as a gap by any content that would want more.
+
+    Asked once per swing and outside the reroll closure, for `attack_roll_bonus`'s
+    reason.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_live_difficulty_bonuses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def stress_refusal(name: str, unmodelled: Iterable[str] = ()):
+    """Register content that stops its holder marking Stress at all.
+
+    Signature: `(holder, amount, fight) -> bool` - True to refuse, in which case no
+    Stress is marked and **nothing falls through to a Hit Point either**. The
+    Spellbound Armor's *Tireless* is the reason: "the Armor can't be forced to mark
+    Stress. When an effect would cause it to mark Stress, the Armor ignores that
+    part of the effect."
+
+    That last clause is the whole point of the hook. The Armor prints `Stress: None`,
+    so its track is zero-length, and the SRD's overflow rule would turn every forced
+    Stress into a Hit Point - which is the opposite of what the page says. Nothing
+    could express "ignore it": `condition_refusal` next door refuses a *condition*,
+    and a zero-length track is not a refusal, it is a track that is always full.
+
+    Asked from `Adversary.mark_stress`, which is **forced** Stress only. A cost the
+    holder chooses to pay goes through `spend_stress` and is unaffected - though an
+    adversary with no Stress could never afford one anyway.
+
+    The first answer wins, since Stress is refused once.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_stress_refusals, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def critical_refusal(name: str, unmodelled: Iterable[str] = ()):
+    """Register content on a *target* that denies an attacker their critical bonus.
+
+    Signature: `(holder, attacker, fight) -> bool` - True if a critical hit against
+    this holder rolls its damage as an ordinary one. The Waxwork Creation's *No
+    Vital Organs* is the reason: "the Creation doesn't take extra damage from
+    attacks that critically succeed against it."
+
+    **It denies the bonus, not the critical.** A critical still succeeds regardless
+    of Difficulty, which is most of what a natural 20 is worth; what this takes away
+    is the maximum-damage-dice bonus that rides on top. Nothing else could say it -
+    the three damage-softening hooks all receive a number that already has the bonus
+    baked into it, and no amount of subtracting afterwards knows how much of the
+    total the critical was.
+
+    Asked in `items/weapons.py`, where a PC's swing decides what to hand
+    `roll_damage`. **Content that rolls its own damage is never asked**, and states
+    its own critical on the page - the same discriminator `standard_damage_type` and
+    `damage_typing` already use to tell a printed attack from a feature's own.
+
+    The first answer wins; a bonus is denied once.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_critical_refusals, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def reaction_roll_bonus(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that adds to its holder's **Reaction Rolls**.
+
+    Signature: `(adversary, fight) -> int` - the bonus, or 0 to decline. Holder-
+    scoped on whoever is rolling, and the answers sum.
+
+    `attack_roll_bonus`'s sibling, and the pair of them is the whole of what "a
+    bonus to **all** rolls" can mean on this side of the table: an adversary makes
+    exactly two kinds of roll, an attack and a Reaction Roll, and nothing reached
+    the second. The Rabble Mawb's *Come Back Worse* is the reason - it hands out a
+    bonus to all rolls for every time the thing has been killed, and half of that
+    would otherwise have quietly done nothing.
+
+    Two hooks rather than one because most content means only the attack: the
+    Panther's *Shadow Stalker* is "+2 to its **attack** rolls" and must not follow
+    the Panther into a save. Content that really does mean both registers twice,
+    which says so where a reader can see it.
+
+    One call site, in `features/adversaries.py`'s `_reaction_roll`, and it reaches
+    the **d20 branch only** - a PC's Reaction Roll is Duality Dice plus a trait and
+    has the party's own bonus machinery.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_reaction_roll_bonuses, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def on_party_spotlight(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that answers a **PC** taking the spotlight.
+
+    Signature: `(adversary, pc, fight) -> None`, where `adversary` carries the
+    feature and `pc` is whoever is about to act. Scanned across the living
+    adversaries, and everything registered is asked with nothing short-circuiting.
+
+    The Phantom's *Fear Aura* is the reason: "a PC who **takes the spotlight**
+    within Very Close range of the Phantom must succeed on a Presence Reaction Roll
+    (10) or mark a Stress." The trigger is the spotlight arriving, not a roll being
+    made, and nothing announced it to the GM's side.
+
+    **The mirror of `on_spotlight` across the table.** That hook fires when an
+    *adversary* is spotlighted and is holder-scoped on it; `adversary_on_spotlight`
+    widens the same moment to the whole field. This is the third of that family and
+    the one pointed at the party's spotlight.
+
+    **Built rather than improvised, which was the user's ruling.** The cheap
+    alternative was to register on `convert_party_roll` and return None - it is
+    asked on every PC roll, so it fires about once per spotlight - which is the
+    trick *Shallow Cuts* uses. That was declined: a hook is meant to name a moment
+    somebody at a table would recognise, and a feature filed under a hook that
+    means something else cannot be checked against the page. See
+    SIMULATION-RULES.md.
+
+    Fired **before** the PC acts, so a Stress marked here is already marked when
+    they choose what to do with the spotlight - which is the page read in order.
+    It fires whether or not the spotlight goes on to contain a roll.
+
+    One call site, in `combat/fight.py`'s `_take_pc_spotlight`.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_party_spotlights, name, function)
+        _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
+        return function
+
+    return register
+
+
+def adversary_on_damaged(name: str, unmodelled: Iterable[str] = ()):
+    """Register GM-side content that answers **anyone** having just marked HP.
+
+    Signature: `(holder, target, amount, hp_marked, fight) -> None`, where `holder`
+    carries the feature and `target` is whoever took the wound - a PC or another
+    adversary. Scanned across the living adversaries; everything registered is
+    asked and nothing short-circuits.
+
+    The exact mirror of `ally_on_damaged` on the party's side, and it needs the
+    same two call sites that hook's trigger has: one in `PlayerCharacter.take_damage`
+    and one in `Adversary.take_damage`, because the Sawtoothed Gillbeast's *Feeding
+    Frenzy* triggers on "when a **creature** marks HP" and the user ruled that
+    printed noun to reach the GM's own side. A school of Gillbeasts turns on a
+    wounded ally exactly as it turns on a wounded PC.
+
+    **Distinct from `on_damaged`**, which is holder-scoped on whoever took the hit
+    and so can only ever speak for the wounded combatant's own stat block. Nothing
+    let one adversary hear about another being hurt - the same gap
+    `on_ally_defeated` closed for defeat, one step earlier.
+
+    Content is expected to check for itself whether this wound is one it has a
+    claim on; range is the feature's business, answered by the area rule.
+    """
+
+    def register(function: Callable) -> Callable:
+        _claim(_adversary_on_damaged, name, function)
         _assess(name, Status.MODELLED, function.__module__, unmodelled=tuple(unmodelled))
         return function
 
@@ -3238,9 +3485,25 @@ def _gm_offers(fight: Fight, table: dict[str, Callable]) -> list[tuple[object, C
     if fight is None:
         return []
 
+    # Living, **plus** anything defeated that declares it is still in play. That
+    # second set is not a special case: it is exactly what `combat/fight.py`'s
+    # `_next_adversary` already treats as spotlightable, so "on the field" means
+    # the same thing to dispatch as it does to the loop. The Phantom's *Lingering
+    # Haunt* is the reason - it arms as the Phantom dies and then has to keep
+    # hearing about PC rolls to tick its countdown down, which a scan of the
+    # living could never let it do.
+    #
+    # Nothing else changes: every other stat block answers False to
+    # `spotlights_while_defeated`, so a defeated Head Guard's countdown stays out
+    # of this exactly as it was.
+    standing = fight.living_adversaries + [
+        adversary
+        for adversary in fight.defeated_adversaries
+        if spotlights_while_defeated(adversary, fight)
+    ]
     offers: list[tuple[object, Callable]] = [
         (adversary, found)
-        for adversary in fight.living_adversaries
+        for adversary in standing
         for name in adversary.named_features
         if (found := _registered(table, name)) is not None
     ]
@@ -4026,6 +4289,109 @@ def apply_stress_marked(holder, amount: int, fight: Fight = None) -> None:
         respond = _registered(_on_stress_marked, name)
         if respond is not None:
             respond(holder, amount, fight)
+
+
+def refuses_stress(holder, amount: int, fight: Fight = None) -> bool:
+    """Whether this holder's own content ignores Stress it is being forced to mark.
+
+    False unless something answers, and the first answer wins. See `stress_refusal`
+    for why a refusal also stops the overflow into a Hit Point.
+    """
+    _discover()
+    for name in holder.named_features:
+        refuse = _registered(_stress_refusals, name)
+        if refuse is not None and refuse(holder, amount, fight):
+            return True
+    return False
+
+
+def denies_critical_bonus(target, attacker, fight: Fight = None) -> bool:
+    """Whether a critical against `target` rolls its damage as an ordinary hit.
+
+    False unless something answers, and the first answer wins - see
+    `critical_refusal`. Holder-scoped on whoever is being hit.
+    """
+    _discover()
+    for name in target.named_features:
+        refuse = _registered(_critical_refusals, name)
+        if refuse is not None and refuse(target, attacker, fight):
+            return True
+    return False
+
+
+def total_reaction_roll_bonus(adversary, fight: Fight = None) -> int:
+    """Everything this adversary carries that adds to the Reaction Roll it is making.
+
+    Zero unless something answers, and the answers sum. See `reaction_roll_bonus`
+    for why this is a separate hook from the attack one.
+    """
+    _discover()
+    total = 0
+    for name in adversary.named_features:
+        contribute = _registered(_reaction_roll_bonuses, name)
+        if contribute is not None:
+            total += contribute(adversary, fight)
+    return total
+
+
+def apply_party_spotlight(pc, fight: Fight = None) -> None:
+    """Let GM-side content answer this PC taking the spotlight. Everyone gets a say.
+
+    Scanned across the living adversaries - see `on_party_spotlight`. Nothing
+    without a fight, since there is no field to scan.
+    """
+    _discover()
+    for holder, respond in _gm_offers(fight, _party_spotlights):
+        respond(holder, pc, fight)
+
+
+def apply_adversary_on_damaged(
+    target, amount: int, hp_marked: int, fight: Fight = None
+) -> None:
+    """Let GM-side content answer any combatant having just marked Hit Points.
+
+    The mirror of `apply_ally_on_damaged` across the table, called from both places
+    that hook's trigger happens - a PC taking damage and an adversary taking
+    damage - because the one registrant is keyed on "a creature", which the user
+    ruled to reach both sides. Scanned across the living adversaries.
+
+    Nothing without a fight, since there is no field to scan.
+    """
+    _discover()
+    for holder, respond in _gm_offers(fight, _adversary_on_damaged):
+        respond(holder, target, amount, hp_marked, fight)
+
+
+def total_attack_roll_bonus(attacker, target, fight: Fight = None) -> int:
+    """Everything this adversary carries that adds to the attack roll it is making.
+
+    Zero unless something answers, and the answers sum. Holder-scoped on the
+    swinger - see `attack_roll_bonus`.
+    """
+    _discover()
+    total = 0
+    for name in attacker.named_features:
+        contribute = _registered(_attack_roll_bonuses, name)
+        if contribute is not None:
+            total += contribute(attacker, target, fight)
+    return total
+
+
+def total_live_difficulty_bonus(target, attacker, fight: Fight = None) -> int:
+    """Everything `target` carries that raises its Difficulty against this swing.
+
+    Zero unless something answers, and the answers sum. The mirror of
+    `total_evasion_bonus` across the table, and asked from the matching place; see
+    `live_difficulty_bonus` for why this and the spawn-time `total_difficulty_bonus`
+    are different questions.
+    """
+    _discover()
+    total = 0
+    for name in target.named_features:
+        contribute = _registered(_live_difficulty_bonuses, name)
+        if contribute is not None:
+            total += contribute(target, attacker, fight)
+    return total
 
 
 def apply_ally_defeated(defeated, fight: Fight = None) -> None:

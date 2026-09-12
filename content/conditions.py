@@ -331,6 +331,68 @@ COVERED_IN_SPIDERS = "Covered in Spiders"
 # to hit their own charmed friend, which is a real cost rather than a formality.
 ENCHANTED = "Enchanted"
 
+# **Pinned**, from the Masque Muerte's *Tag Team*: a spectral wrestler appears and
+# pins the target "until they escape with a successful Strength Roll. While
+# *Pinned*, the target is *Restrained* and takes an extra 1d12 magic damage from
+# the Masque Muerte's attacks."
+#
+# Its own name rather than a Restrained tagged with a source, which is the user's
+# ruling and the standing call for a state the page names and refers back to -
+# Cloaked, Frenzied and Horrified all got it. A Restrained record goes on
+# alongside, so the Jagged Knife Kneebreaker's *I've Got 'Em* can still see the
+# hold; what this name adds is the damage rider, which is the whole of what being
+# Pinned is worth here, since Restrained by itself is recorded and inert.
+#
+# The rider is read by the Masque Muerte's own hook rather than by anything here -
+# the arrangement Chained and Shaky already use.
+PINNED = "Pinned"
+
+# **Envenomated**, from the Viper's *Venomous*: "the target must mark a Stress
+# whenever they make an action roll."
+#
+# Mechanically the Darkweave Crawler's *Exhausted* exactly, and kept as its own
+# name for the reason HIDDEN and INVISIBLE are kept apart: the two arrive from
+# different stat blocks and a report saying "Exhausted" when a Viper bit somebody
+# would name the wrong feature. Its effect rides `Condition.effect` at
+# `BEFORE_AN_ACTION_ROLL`, as Exhausted's does.
+#
+# "Temporarily" on a PC is the whole fight, the standing reading, so it carries no
+# ender - unlike Exhausted, which prints a Strength Roll out.
+ENVENOMATED = "Envenomated"
+
+# **Slowed**, from the Soul-Shattered Mage's *Time Dilation*: "each target is
+# *Slowed* until they roll with Hope. While *Slowed*, a target is *Vulnerable* and
+# must mark a Stress when they move."
+#
+# The Vulnerable is what it is worth here; the movement half has nothing to touch.
+# Its ender is the Rugaru's *Howl at the Moon* ender - a roll with Hope, which no
+# `end` predicate can see, so the Mage's own hook on the party's rolls lifts it.
+SLOWED = "Slowed"
+
+# **Trapped**, from the Waxwork Creation's *Smothering Grapple*: a target pulled
+# inside the wax body is "*Restrained* and must mark a Stress and move with the
+# Creation each time it's spotlighted", and is freed when the Creation takes Major
+# or greater damage.
+#
+# Its own name rather than a sourced Restrained, the standing call for a state the
+# page names - and here the name carries real weight, because the upkeep is charged
+# on the **Creation's** spotlights rather than its holder's, which no condition
+# effect can express. The Creation's own hook does it.
+TRAPPED = "Trapped"
+
+# **Weapon Stuck**, from the Waxwork Creation's *Splutch!*: a PC's weapon lodges in
+# the wax and "can be removed only with a successful Strength Roll (15)".
+#
+# The SRD gives the state no keyword; the name is the simulator's own label, the
+# way TRANSFORMED's is. What it does is the user's ruling: the PC **cannot make
+# weapon attacks** until they pull it free, and keeps everything else - their
+# domain cards, their spells. Losing the whole turn, and swinging at Disadvantage,
+# were both offered and declined.
+#
+# It is the first condition to take a PC's *weapon* rather than their turn, which
+# is why `prevents_weapon_attack` is a field of its own next to `prevents_action`.
+WEAPON_STUCK = "Weapon Stuck"
+
 # The moments a condition is announced at. A condition's `end` decides whether
 # one of them is its cue to lift, and its `effect` whether one is its cue to
 # fire. The same vocabulary serves both, so a condition that costs something at a
@@ -411,6 +473,18 @@ class Condition:
     # turn charges before an adversary is asked what it does, which is the same
     # weight the Green Ooze's `Slow` carries.
     prevents_action: bool = False
+
+    # Whether this condition stops its holder attacking with a weapon, while
+    # leaving everything else they could do alone. Data rather than a callable, for
+    # `prevents_action`'s reason: it is a standing fact about what a spotlight may
+    # be spent on, read where that is decided (`combat/policy.py`).
+    #
+    # Deliberately narrower than `prevents_action` next door, and the Waxwork
+    # Creation's *Splutch!* is why - a PC whose sword is stuck in a wax giant has
+    # lost their swing and not their turn, so their domain cards still run. Ruled
+    # by the user against both the wider reading (lose the turn) and the softer one
+    # (swing at Disadvantage).
+    prevents_weapon_attack: bool = False
 
     # Whether this condition puts its holder out of reach of being aimed at. Data
     # rather than a callable, for `prevents_action`'s reason: it isn't something

@@ -616,6 +616,78 @@
     },
 
     {
+      "name": "Masque Muerte",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 13,
+      "major_threshold": 7,
+      "severe_threshold": 14,
+      "hp_max": 8,
+      "stress_max": 4,
+      "attack_modifier": 4,
+      "range": "Melee",
+      "damage_dice": "1d12",
+      "damage_modifier": 2,
+      "damage_type": "magic",
+      "features": ["Libre", "Heel Turn", "Spectral Suplex", "Unmasking Death", "Tag Team"],
+      "notes": "Open-Handed Strike: Melee, 1d12+2 magic. Experience: Grappler +3, Showboat +3. New in SRD 2.0. One of the few tier 1 stat blocks whose standard attack is magic. Tag Team applies the Pinned condition, which carries an extra 1d12 on this adversary's own attacks; Spectral Suplex needs a Restrained target and cannot miss."
+    },
+
+    {
+      "name": "Mechanorb",
+      "tier": 1,
+      "type": "Standard",
+      "difficulty": 12,
+      "major_threshold": 5,
+      "severe_threshold": 10,
+      "hp_max": 4,
+      "stress_max": 3,
+      "attack_modifier": 1,
+      "range": "Melee",
+      "damage_dice": "1d10",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Hive Mind", "Adaptive Tactics"],
+      "notes": "Needle: Melee, 1d10+1 physical. Experience: Machines +2. New in SRD 2.0. Adaptive Tactics is the first Pool - tokens shared across every Mechanorb on the field rather than held on one stat block. Hive Mind raises Difficulty live rather than at spawn, since the count falls as the swarm is cleared."
+    },
+
+    {
+      "name": "Mountain Troll",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 14,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 8,
+      "stress_max": 3,
+      "attack_modifier": 2,
+      "range": "Very Close",
+      "damage_dice": "1d8",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Relentless (3)", "Stolen Armor", "Flail Swipe"],
+      "notes": "Skull Flail: Very Close, 1d8+1 physical. Experience: Mountains +4. New in SRD 2.0. Stolen Armor is a Countdown equal to the number of PCs; when it runs out the Troll evolves into the Enraged Mountain Troll below, in place, keeping whatever HP and Stress it has already marked."
+    },
+
+    {
+      "name": "Enraged Mountain Troll",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 15,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 8,
+      "stress_max": 3,
+      "attack_modifier": 2,
+      "range": "Very Close",
+      "damage_dice": "1d10",
+      "damage_modifier": 3,
+      "damage_type": "physical",
+      "features": ["Relentless (3)", "Double Swipe"],
+      "notes": "Claw Swipe: Very Close, 1d10+3 physical. The SRD prints this as an Evolution under the Mountain Troll rather than as a roster entry, and it is not in the tier index - it is a catalogue entry here so both halves of the page stay checkable and neither is written into Python. Difficulty is the Troll's 14 plus the printed +1. It is never spawned by an encounter directly; Stolen Armor swaps it in."
+    },
+
+    {
       "name": "Minor Chaos Elemental",
       "tier": 1,
       "type": "Solo",
@@ -685,6 +757,24 @@
       "damage_type": "physical",
       "features": ["Minion (5)", "Group Attack"],
       "notes": "Clawed Branch: Melee, a flat 4 physical - no dice, so damage_dice is empty and the whole attack sits in damage_modifier, as the Giant Rat's and Jagged Knife Lackey's do. Thresholds print as 'None'. This entry needed no new code at all: Minion (X) reads its own 5 off this stat block and Group Attack was written for Minions in general, so the whole adversary came online with its JSON. A flat 4 apiece makes a Treant Group Attack the hardest-hitting swarm in tier 1."
+    },
+
+    {
+      "name": "Octopus",
+      "tier": 1,
+      "type": "Skulk",
+      "difficulty": 12,
+      "major_threshold": 3,
+      "severe_threshold": null,
+      "hp_max": 2,
+      "stress_max": 3,
+      "attack_modifier": -1,
+      "range": "Melee",
+      "damage_dice": "1d6",
+      "damage_modifier": 0,
+      "damage_type": "physical",
+      "features": ["Grapple", "Squirt Ink"],
+      "notes": "Beak: Melee, 1d6 physical. Experience: Dexterity +3, Water +3. New in SRD 2.0. Printed 'Thresholds: 3/None', stored as NO_THRESHOLD - with 2 HP the severe band is out of reach either way. Squirt Ink's 'each creature' reaches the Octopus's own side; the underwater darkness half is a declared gap."
     },
 
     {
@@ -760,6 +850,42 @@
     },
 
     {
+      "name": "Panther",
+      "tier": 1,
+      "type": "Skulk",
+      "difficulty": 14,
+      "major_threshold": 5,
+      "severe_threshold": 10,
+      "hp_max": 4,
+      "stress_max": 3,
+      "attack_modifier": 2,
+      "range": "Melee",
+      "damage_dice": "1d8",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Shadow Stalker", "Pouncing Strike"],
+      "notes": "Teeth and Claws: Melee, 1d8+1 physical. Experience: Keen Senses +3, Slink +3. New in SRD 2.0. Shadow Stalker is ruled to open the fight Hidden, breaking when the Panther acts - see SIMULATION-RULES.md - so the +2 lands on its first swing and nothing afterwards."
+    },
+
+    {
+      "name": "Phantom",
+      "tier": 1,
+      "type": "Standard",
+      "difficulty": 11,
+      "major_threshold": 5,
+      "severe_threshold": null,
+      "hp_max": 2,
+      "stress_max": 1,
+      "attack_modifier": -1,
+      "range": "Melee",
+      "damage_dice": "1d6",
+      "damage_modifier": 2,
+      "damage_type": "magic",
+      "features": ["Incorporeal", "Fear Aura", "Lingering Haunt"],
+      "notes": "Chill Touch: Melee, 1d6+2 magic. Experience: Spooky +3. New in SRD 2.0. Printed 'Thresholds: 5/None', stored as NO_THRESHOLD. Incorporeal is the Skeleton Warrior's Only Bones under another name. Lingering Haunt brings the Phantom back from defeat on a Fear spent as it dies."
+    },
+
+    {
       "name": "Pirate Captain",
       "tier": 1,
       "type": "Leader",
@@ -811,6 +937,42 @@
       "damage_type": "physical",
       "features": ["Swashbuckler", "Clear the Decks"],
       "notes": "Massive Fists: Melee, 2d6 physical - no flat bonus, the second tier 1 attack written that way after the Construct's. Experience: Sailor +2. Clear the Decks is worth barely more than the printed attack once its repositioning is stripped out, which is declared where it is registered."
+    },
+
+    {
+      "name": "Poltergeist",
+      "tier": 1,
+      "type": "Ranged",
+      "difficulty": 9,
+      "major_threshold": 4,
+      "severe_threshold": null,
+      "hp_max": 2,
+      "stress_max": 2,
+      "attack_modifier": -1,
+      "range": "Far",
+      "damage_dice": "1d6",
+      "damage_modifier": 3,
+      "damage_type": "physical",
+      "features": ["Specter", "Possessor", "Ghost Storm"],
+      "notes": "Thrown Object: Far, 1d6+3 physical. Experience: Spooky +3. New in SRD 2.0. Printed 'Thresholds: 4/None', stored as NO_THRESHOLD. Possessor and Ghost Storm are both dismissed on their trigger - each needs loose scenery, which has no representation - so Specter's physical resistance is the whole of what this one carries beyond its attack."
+    },
+
+    {
+      "name": "Rabble Mawb",
+      "tier": 1,
+      "type": "Horde (3/HP)",
+      "difficulty": 8,
+      "major_threshold": 4,
+      "severe_threshold": 8,
+      "hp_max": 4,
+      "stress_max": 2,
+      "attack_modifier": -2,
+      "range": "Melee",
+      "damage_dice": "1d6",
+      "damage_modifier": 3,
+      "damage_type": "physical",
+      "features": ["Horde (1d4+1)", "Come Back Worse"],
+      "notes": "Chomp: Melee, 1d6+3 physical. Experience: Underground +2. New in SRD 2.0. Horde (1d4+1) needed no code. Come Back Worse is uncapped by ruling - the Fear pool is the only limit - and each revival adds +1 to its rolls, so this is the first thing in the catalogue that can lengthen a fight without bound."
     },
 
     {
@@ -904,6 +1066,42 @@
     },
 
     {
+      "name": "Rugaru",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 14,
+      "major_threshold": 7,
+      "severe_threshold": 14,
+      "hp_max": 8,
+      "stress_max": 4,
+      "attack_modifier": 4,
+      "range": "Melee",
+      "damage_dice": "2d8",
+      "damage_modifier": 4,
+      "damage_type": "physical",
+      "features": ["Relentless (3)", "Child of Night (2)", "Bloodthirsty", "Howl at the Moon", "Flesh Ripper"],
+      "notes": "Snapping Jaws: Melee, 2d8+4 physical. Experience: Swamps +3. New in SRD 2.0. Difficulty is the printed 14; Child of Night (2) resolves it to 16 at spawn, and the parameter is where 'while in moonlight' goes - a daylight Rugaru is written with a smaller number or drops the feature. Bloodthirsty is a runaway attack bonus that only a Severe hit clears."
+    },
+
+    {
+      "name": "Sawtoothed Gillbeast",
+      "tier": 1,
+      "type": "Standard",
+      "difficulty": 12,
+      "major_threshold": 5,
+      "severe_threshold": 10,
+      "hp_max": 4,
+      "stress_max": 2,
+      "attack_modifier": 1,
+      "range": "Close",
+      "damage_dice": "1d8",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Ka-Chomp", "Feeding Frenzy", "Scaly"],
+      "notes": "Waterlogged Weaponry: Close, 1d8+1 physical. Experience: Aquatic +2. New in SRD 2.0. Stress is 2, not the 3 an earlier outstanding-list entry recorded - checked against the printed page. Feeding Frenzy's 'a creature' was ruled to include the GM's own side, so a school turns on a wounded ally."
+    },
+
+    {
       "name": "Sellsword",
       "tier": 1,
       "type": "Minion",
@@ -994,6 +1192,24 @@
     },
 
     {
+      "name": "Soul-Shattered Mage",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 12,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 6,
+      "stress_max": 5,
+      "attack_modifier": 2,
+      "range": "Far",
+      "damage_dice": "1d12",
+      "damage_modifier": 0,
+      "damage_type": "magic",
+      "features": ["Relentless (3)", "Broken Magic", "Feel My Pain"],
+      "notes": "Wormwood Staff: Far, 1d12 magic. Experience: Forbidden Knowledge +2. New in SRD 2.0. Broken Magic is a printed d6 table, so which of its three moves comes out is the die's choice rather than a policy. Feel My Pain scales on the Mage's own marked Stress, so a Mage that has been casting hard hurts far more to kill."
+    },
+
+    {
       "name": "Spellblade",
       "tier": 1,
       "type": "Leader",
@@ -1009,6 +1225,24 @@
       "damage_type": "phy/mag",
       "features": ["Arcane Steel", "Suppressing Blast", "Move as a Unit", "Momentum"],
       "notes": "Empowered Longsword: Melee, 1d8+4 phy/mag. Experience: Magical Knowledge +2. The first entry whose damage_type is the *pair* - the page prints 'phy/mag' beside the attack and Arcane Steel says the same thing in words, so the feature and the field agree. Ruled: such a hit is resisted if the target resists either type. Momentum is already modelled. Suppressing Blast is typed magic where it is rolled, so Arcane Steel does not reach it."
+    },
+
+    {
+      "name": "Spellbound Armor",
+      "tier": 1,
+      "type": "Bruiser",
+      "difficulty": 10,
+      "major_threshold": 9,
+      "severe_threshold": 17,
+      "hp_max": 6,
+      "stress_max": 0,
+      "attack_modifier": 0,
+      "range": "Very Close",
+      "damage_dice": "1d10",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Tireless", "Clatter & Recombobulate"],
+      "notes": "Zweihander: Very Close, 1d10+1 physical. Experience: Guardian +2. New in SRD 2.0. Printed 'Stress: None', stored as 0 - the only stat block in tier 1 with no Stress track at all. Tireless is what stops that turning every forced Stress into a Hit Point via the overflow rule, so every party feature that forces Stress does nothing to this one."
     },
 
     {
@@ -1084,6 +1318,42 @@
     },
 
     {
+      "name": "Viper",
+      "tier": 1,
+      "type": "Minion",
+      "difficulty": 11,
+      "major_threshold": null,
+      "severe_threshold": null,
+      "hp_max": 1,
+      "stress_max": 1,
+      "attack_modifier": 3,
+      "range": "Melee",
+      "damage_dice": "",
+      "damage_modifier": 1,
+      "damage_type": "physical",
+      "features": ["Minion (4)", "Venomous", "Group Attack"],
+      "notes": "Bite: Melee, 1 physical - flat, so the whole attack is the modifier and damage_dice is empty, the Jagged Knife Lackey's convention. Experience: Grounded +4. New in SRD 2.0. Minion (4) and Group Attack needed no code. Venomous is the Darkweave Crawler's Exhausted with no printed way out, so it lasts the fight - which is most of what a Minion with a 1-damage bite is for."
+    },
+
+    {
+      "name": "Waxwork Creation",
+      "tier": 1,
+      "type": "Solo",
+      "difficulty": 13,
+      "major_threshold": 8,
+      "severe_threshold": 15,
+      "hp_max": 10,
+      "stress_max": 3,
+      "attack_modifier": 2,
+      "range": "Very Close",
+      "damage_dice": "1d20",
+      "damage_modifier": 0,
+      "damage_type": "physical",
+      "features": ["Relentless (2)", "No Vital Organs", "Wax Ball", "Splutch!", "Smothering Grapple"],
+      "notes": "Fists: Very Close, 1d20 physical - the only d20 damage die in tier 1. Experience: Giant-Sized +2. New in SRD 2.0. No Vital Organs denies an attacker the critical bonus without denying the critical itself; Splutch! is the first thing that takes a PC's weapon rather than their turn."
+    },
+
+    {
       "name": "Weaponmaster",
       "tier": 1,
       "type": "Bruiser",
@@ -1099,6 +1369,24 @@
       "damage_type": "physical",
       "features": ["Goading Strike", "Adrenaline Burst", "Momentum"],
       "notes": "Claymore: Very Close, 1d12+2 physical. No Experience printed. Momentum is already modelled. Goading Strike is the first content that reaches the *party's* targeting rule - a Taunted PC's target is fixed to the Weaponmaster until they land a hit, which is the user's ruling on a clause the page gives two different durations for. Adrenaline Burst is the first once-per-scene heal on the GM's side."
+    },
+
+    {
+      "name": "Will-o'-the-Wisps",
+      "tier": 1,
+      "type": "Horde (8/HP)",
+      "difficulty": 9,
+      "major_threshold": 5,
+      "severe_threshold": 9,
+      "hp_max": 4,
+      "stress_max": 2,
+      "attack_modifier": -3,
+      "range": "Close",
+      "damage_dice": "1d4",
+      "damage_modifier": 2,
+      "damage_type": "magic",
+      "features": ["Horde (1d4-1)", "Kaleidoscopic", "Fascinating"],
+      "notes": "Flash: Close, 1d4+2 magic. Experience: Darkness +3. New in SRD 2.0. Horde (1d4-1) is the first feature parameter with a minus in it; the parser was taught to read one. Kaleidoscopic is the Harpy's Toxic Aura, except the printed noun is 'targets' rather than 'creatures', so it is the party only and the Wisps' own side is untouched."
     },
 
     {

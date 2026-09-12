@@ -492,8 +492,16 @@ def _make_the_roll(
     # Exota's construct is. Without the guard `find_weapon("")` would raise about
     # half the time, on the spotlights where the shuffle happened to reach the
     # swing first.
+    #
+    # **Nor is a PC whose weapon a condition has taken away** - the Waxwork
+    # Creation's *Splutch!* leaves a sword stuck in the wax. Read generically off
+    # `Condition.prevents_weapon_attack` through `cannot_swing`; nothing here knows
+    # the condition's name or that any such condition exists. It is deliberately
+    # narrower than `cannot_act`, which is read a step earlier and skips the PC's
+    # spotlight altogether: this one leaves the turn intact and takes only the
+    # swing, so the PC still plays their cards.
     options = action_options(pc)
-    if pc.primary_weapon:
+    if pc.primary_weapon and not state.cannot_swing(pc):
         options = options + [swing_the_weapon]
     random.shuffle(options)
 

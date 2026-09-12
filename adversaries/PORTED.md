@@ -159,6 +159,22 @@ small to change an outcome), **not implemented** (work still to do).
 | Jagged Knife Shadow | Skulk | 4 | Backstab, Cloaked *implemented* |
 | Jagged Knife Sniper | Ranged | earlier | Unseen Strike *irrelevant* |
 | Kelpie | Skulk | 14 | Shapeshifter, Enchant *implemented* · Captivating *irrelevant* · Heart's Desire *no combat effect* |
+| Masque Muerte | Solo | 15 | Libre, Heel Turn, Spectral Suplex, Unmasking Death, Tag Team *implemented* |
+| Mechanorb | Standard | 15 | Hive Mind, Adaptive Tactics *implemented* — the first **Pool** |
+| Mountain Troll | Solo | 15 | Relentless (3), Stolen Armor, Flail Swipe *implemented* — the first **Evolution** |
+| Enraged Mountain Troll | Solo | 15 | Relentless (3), Double Swipe *implemented* — an Evolution rather than a roster entry; never spawned directly |
+| Octopus | Skulk | 15 | Grapple, Squirt Ink *implemented* |
+| Panther | Skulk | 15 | Shadow Stalker, Pouncing Strike *implemented* |
+| Phantom | Standard | 16 | Incorporeal, Fear Aura, Lingering Haunt *implemented* |
+| Poltergeist | Ranged | 16 | Specter *implemented* · Possessor, Ghost Storm *no combat effect* |
+| Rabble Mawb | Horde (3/HP) | 16 | Horde (1d4+1), Come Back Worse *implemented* |
+| Rugaru | Solo | 16 | Relentless (3), Child of Night (2), Bloodthirsty, Howl at the Moon, Flesh Ripper *implemented* |
+| Sawtoothed Gillbeast | Standard | 16 | Ka-Chomp, Feeding Frenzy, Scaly *implemented* |
+| Soul-Shattered Mage | Solo | 17 | Relentless (3), Broken Magic, Feel My Pain *implemented* |
+| Spellbound Armor | Bruiser | 17 | Tireless, Clatter & Recombobulate *implemented* |
+| Viper | Minion | 17 | Minion (4), Venomous, Group Attack *implemented* |
+| Waxwork Creation | Solo | 17 | Relentless (2), No Vital Organs, Wax Ball, Splutch!, Smothering Grapple *implemented* |
+| Will-o'-the-Wisps | Horde (8/HP) | 17 | Horde (1d4-1), Kaleidoscopic, Fascinating *implemented* |
 | Minor Chaos Elemental | Solo | 4 | Arcane Form, Sickening Flux, Remake Reality, Magical Reflection, Momentum *implemented* — Arcane Form was the last one outstanding and landed with damage-type resistance |
 | Minor Fire Elemental | Solo | 5 | Relentless (2), Scorched Earth, Explosion, Consume Kindling, Momentum *implemented* |
 | Minor Demon | Solo | 5 | Relentless (2), All Must Fall, Hellfire, Reaper, Momentum *implemented* |
@@ -200,10 +216,20 @@ skipped by rule — and the table above has no *not implemented* rows.
 **Against SRD 2.0 it is not.** The forty-nine ported against 1.0 are still tier 1
 and still run; 2.0 prints thirty-five more beside them. **Batch 11** took the first
 four (Ahuizotl, Atotoll, Bugboar, Common Ruffian), **batch 12** the four Darkweaves,
-**batch 13** the five Redcaps and **batch 14** the Elk, Falcon, Grimmling Warband,
-Harpy and Kelpie, so sixty-seven of the eighty-six are in, three (Courtier, Petty
-Noble, Merchant) are Socials skipped by rule, and sixteen are listed under
-*Outstanding*.
+**batch 13** the five Redcaps, **batch 14** the Elk, Falcon, Grimmling Warband,
+Harpy and Kelpie, **batch 15** the Masque Muerte, Mechanorb, Mountain Troll,
+Octopus and Panther, **batch 16** the Phantom, Poltergeist, Rabble Mawb,
+Rugaru and Sawtoothed Gillbeast, and **batch 17** the last five, so **tier 1 is
+complete again**: eighty-two of the eighty-six are in and four (Courtier, Petty
+Noble, Merchant, Yufo) are Socials skipped by rule.
+
+**Yufo is the fourth Social**, confirmed on printed p. 112. This file had been
+carrying three; the index does not give types, so it only came to light when its
+page was read for the final batch.
+
+The Enraged Mountain Troll is a **sixteenth** catalogue entry that is not one of
+the eighty-six: the SRD prints it as an Evolution under the Mountain Troll rather
+than as a roster entry, and the tier index does not list it.
 
 Four of the forty-nine were spot-checked against SRD 2.0 while this file was being
 updated — Acid Burrower, Bear, Cave Ogre and Construct (2.0 pp. 97-98) — and every
@@ -471,6 +497,214 @@ standing note that type carries no mechanics is about the *fight loop*, which
 still never reads it; the SRD's own text names a type here ("an allied
 **Leader**"), so the feature follows the page.
 
+### Batch 15 — the first Pool and the first Evolution (5 stat blocks, 14 features)
+
+**Verified against the printed page** (SRD 2.0 pp. 103-106). The batch that cost
+the most shared machinery of any so far, because three of the five reach for
+things the project had no shape for at all.
+
+| Adversary | Type | What it needed |
+|---|---|---|
+| **Masque Muerte** | Solo | Libre, Heel Turn, Spectral Suplex, Unmasking Death, Tag Team, and the *Pinned* condition |
+| **Mechanorb** | Standard | Hive Mind, Adaptive Tactics — a **Pool** and a live Difficulty |
+| **Mountain Troll** | Solo | Stolen Armor, Flail Swipe, and an **Evolution**; Relentless (3) was already generic |
+| **Octopus** | Skulk | Grapple, Squirt Ink |
+| **Panther** | Skulk | Shadow Stalker, Pouncing Strike |
+
+**Pools.** SRD 2.0 p. 94 defines one as tokens "shared by multiple adversaries"
+that the GM keeps "in a separate location" rather than on any stat block, and
+every token in the project was keyed to a single holder. `FightState` gained
+`pools` alongside `tokens`, keyed by name alone, with `pool_count` / `add_to_pool`
+/ `clear_pool`. Overloading the existing map by allowing None in the holder slot
+was the alternative and was not taken. The consequence that makes it worth having:
+**a pool outlives the adversary that filled it**, so a Mechanorb dying does not
+take the swarm's accumulated bonus with it — only the printed clear does.
+
+**Evolutions.** `Adversary.evolve` rewrites what a stat block *is* while leaving
+what the fight has done to it alone, so the Mountain Troll keeps its marked HP and
+Stress, and every condition, token and targeting memory keyed to its `id()`
+survives. The evolved form is an ordinary catalogue entry — `Enraged Mountain
+Troll` in `srd.json` — so both halves of the page stay checkable and neither is
+written into Python. Removing and re-summoning, and a per-fight toggle read by
+five features, were both offered and declined.
+
+**Two new hooks, and one new call site:**
+
+- **`attack_roll_bonus`** — GM-side content that moves its holder's own attack
+  roll, with call sites in `Adversary.attack` and `area_attack`. Nothing could say
+  it: `attack_advantage` grants Advantage rather than a number, and batch 14's
+  `attack_modifier` override belongs to a feature stating what *its* attack swings
+  at. Two registrants straight away — *Shadow Stalker* and *Adaptive Tactics*.
+- **`live_difficulty_bonus`** — the mirror of `evasion_bonus` across the table,
+  with one call site where a PC's swing reads the target's Difficulty. Distinct
+  from `difficulty_bonus`, which is resolved at spawn and correctly cannot express
+  a number that moves: *Hive Mind* falls as the swarm is cleared, and a bonus
+  frozen at the opening field would leave the last orb as hard to hit as six.
+- **`attack_failed` now fires from the GM's side too** (`Adversary.attack`). The
+  hook always meant "the attacker's own content answers a swing that came up
+  short" and was announced only from `items/weapons.py`. No new hook, one new call
+  site — exactly what batch 12 did for `attack_missed`.
+
+Four rulings worth carrying forward:
+
+- **Stolen Armor absorbs the smallest hits entirely.** "Reduce the severity by one
+  threshold" takes a hit from 3 Hit Points to 2, from 2 to 1, and **from 1 to
+  none**. Ruled over flooring it at one. It is bounded either way: the countdown is
+  the number of PCs and every hit ticks it whatever its size, so four chip hits
+  strip the armor as fast as four Severe ones.
+- **The Panther opens the fight Hidden.** Nothing in its own stat block hides it,
+  so *Shadow Stalker*'s +2 would never once have fired — the shape that left the
+  Redcap Butcher's *Knife Thrower* Advantage mostly dead. The cloak is raised
+  lazily by either of two hooks (the Panther acting, or somebody swinging at it,
+  which is the commoner opening) and breaks when it acts.
+- **Squirt Ink's "moves through that area" becomes the area rule**, so whoever
+  Very Close reaches rolls Agility when the ink goes down. "Each **creature**" is
+  the printed noun, so it catches the Octopus's own side.
+- **Pinned is its own condition**, carrying the extra 1d12 that is the whole of
+  what it is worth here — Restrained by itself is recorded and inert. A Restrained
+  record goes on beside it so the Kneebreaker's *I've Got 'Em* can still see the
+  hold, and the Restrain carries the escape roll so a PC never rolls twice.
+
+**Spectral Suplex is the second thing in the project that cannot miss**, after
+Codex's Rune Circle on the party's side: the page makes it a consequence of already
+being held rather than a swing, so nothing turns it away.
+
+### Batch 16 — two things that come back from the dead (5 stat blocks, 12 features)
+
+**Verified against the printed page** (SRD 2.0 pp. 106-109).
+
+| Adversary | Type | What it needed |
+|---|---|---|
+| **Phantom** | Standard | Incorporeal, Fear Aura, Lingering Haunt |
+| **Poltergeist** | Ranged | Specter; Possessor and Ghost Storm are dismissed on their trigger |
+| **Rabble Mawb** | Horde (3/HP) | Come Back Worse; Horde (1d4+1) was already generic |
+| **Rugaru** | Solo | Child of Night (2), Bloodthirsty, Howl at the Moon, Flesh Ripper; Relentless (3) was already generic |
+| **Sawtoothed Gillbeast** | Standard | Ka-Chomp, Feeding Frenzy, Scaly |
+
+**No hook was needed for "when this adversary is defeated", and one was nearly
+built.** Both the Phantom's *Lingering Haunt* and the Rabble Mawb's *Come Back
+Worse* arm at the moment their holder dies, and `on_ally_defeated` deliberately
+never tells a stat block about its own defeat — so a companion hook was proposed.
+The user pointed at the Skeleton Knight's *Dig Two Graves*, which already does
+this: **`on_damaged` fires after the marking has settled**, so `is_defeated` is
+already true inside it. That is the Construct's *Death Quake* arrangement, and
+both new features use it. Worth remembering before reaching for a hook again.
+
+**"On the field" now means the same thing to dispatch as to the loop.**
+`_gm_offers` scanned the living only, so a defeated Phantom was invisible to every
+GM-side hook and its countdown could never tick. It now also includes anything
+defeated that declares `spotlight_while_defeated` — which is exactly the set
+`_next_adversary` already treats as spotlightable, so this is one definition rather
+than a special case. Every other stat block answers False and is unaffected.
+
+**Three new hooks:**
+
+- **`on_party_spotlight`** — GM-side content answering a **PC** taking the
+  spotlight, with one call site in `_take_pc_spotlight`, fired before the PC acts.
+  The Phantom's *Fear Aura* is the reason. Registering on `convert_party_roll` and
+  returning None — which fires about once per spotlight, the trick *Shallow Cuts*
+  uses — was offered and **declined**: a hook is meant to name a moment somebody
+  at a table would recognise, and a feature filed under one that means something
+  else cannot be checked against the page.
+- **`adversary_on_damaged`** — the GM-side mirror of `ally_on_damaged`, scanned
+  across the living adversaries, with call sites in both `PlayerCharacter.take_damage`
+  and `Adversary.take_damage`. *Feeding Frenzy* triggers on "when a creature marks
+  HP" and the printed noun was ruled to reach both sides, so the school has to hear
+  about a wounded ally as well as a wounded PC.
+- **`reaction_roll_bonus`** — `attack_roll_bonus`'s sibling, with one call site in
+  `_reaction_roll`'s d20 branch. The Rabble Mawb's *Come Back Worse* hands out "a
+  bonus to **all** rolls", and an adversary makes exactly two kinds; nothing
+  reached the second, so half the clause would have done nothing. Two hooks rather
+  than one because most content means only the attack — the Panther's *Shadow
+  Stalker* must not follow it into a save.
+
+**No declared gaps.** Everything registered in this batch fires; where a clause was
+awkward it got machinery rather than a note. Three that would otherwise have been
+papered over: *Come Back Worse*'s Reaction Rolls (above), *Bloodthirsty* counting
+the **standard** attack only (Flesh Ripper raises a flag around its own swing, which
+Bloodthirsty reads and skips), and *Lingering Haunt*'s "immediately spotlight them",
+which now really does take the Phantom's turn on the spot rather than waiting for
+the next GM turn. Two older gaps were closed at the same time: the Elk's *Headbutt*
+now records its target on a miss as well as a hit, and an adversary stressed to
+death announces its defeat, which was previously the one route that told nobody.
+
+Four rulings worth carrying forward:
+
+- **Come Back Worse is uncapped.** The Fear pool is the only limit and each
+  revival adds +1 to the Mawb's rolls. Capping it at one, and at a tunable
+  constant, were both declined — the reasoning that left *More Where That Came
+  From* unbounded. It is the first thing in the catalogue that can lengthen a
+  fight without bound, and `MAX_PC_ACTIONS` is the only backstop.
+- **Child of Night is parameterised**, `Flying (X)`'s treatment: `Child of Night
+  (2)` carries "while in moonlight", so a daylight Rugaru is authored with a
+  smaller number or drops the feature.
+- **Feeding Frenzy turns on the GM's own side.** "A creature" read literally, so a
+  Gillbeast fielded beside anything else is a liability to it.
+- **The Poltergeist's *Possessor* and *Ghost Storm* are both dismissed on their
+  trigger**, not on their clauses. Each needs loose scenery and nothing here
+  represents objects; the vortex's 1d12+2 is plainly representable, which is
+  exactly the point of dismissing the trigger rather than salvaging the clause.
+  *Consume Kindling*'s "assume the fiction is to hand" ruling was put alongside
+  them and declined — one object big enough to hide inside and durable enough to
+  soak a blow is a stronger claim than kindling. It leaves the Poltergeist with
+  *Specter* alone.
+
+**Three printed names, one rule.** *Incorporeal*, *Specter* and the Skeleton
+Warrior's *Only Bones* are all "resistant to physical damage", registered
+separately on the same hook — one card, one place, and a coverage block should say
+which one a stat block is carrying.
+
+**A correction to the roster.** The Sawtoothed Gillbeast's Stress is **2**, not
+the 3 this file's outstanding list had recorded; the page was checked.
+
+### Batch 17 — the last of tier 1 (5 stat blocks, 11 features)
+
+**Verified against the printed page** (SRD 2.0 pp. 110-112), and **Yufo read and
+skipped** as the fourth Social.
+
+| Adversary | Type | What it needed |
+|---|---|---|
+| **Soul-Shattered Mage** | Solo | Broken Magic, Feel My Pain, and the *Slowed* condition |
+| **Spellbound Armor** | Bruiser | Tireless, Clatter & Recombobulate |
+| **Viper** | Minion | Venomous; Minion (4) and Group Attack were already generic |
+| **Waxwork Creation** | Solo | No Vital Organs, Wax Ball, Splutch!, Smothering Grapple, and three conditions |
+| **Will-o'-the-Wisps** | Horde (8/HP) | Kaleidoscopic, Fascinating; Horde (1d4-1) needed a parser fix |
+
+**Two new hooks and one new condition field:**
+
+- **`stress_refusal`** — one call site in `Adversary.mark_stress`, asked before
+  anything is marked. The Spellbound Armor prints `Stress: None`, and a
+  zero-length track is not a refusal — it is a track that is always full, which
+  the overflow rule turns into a Hit Point for every Stress forced on it. That is
+  the opposite of what *Tireless* says, and nothing could express "ignore it".
+- **`critical_refusal`** — one call site in `items/weapons.py`, where a PC's swing
+  hands `roll_damage` its criticality. *No Vital Organs* denies the bonus without
+  denying the critical, and no softening hook downstream could separate the bonus
+  back out of a total.
+- **`Condition.prevents_weapon_attack`** — read in the turn policy beside
+  `prevents_action`, and the first thing to take a PC's **weapon** rather than
+  their turn. The Waxwork Creation's *Splutch!* leaves a sword in the wax; the PC
+  still plays their cards.
+
+**One parser fix.** `Horde (1d4-1)` is the first printed feature parameter with a
+minus in it, and `_damage_spec` split on `+` alone, so the whole string reached
+`parse_dice` as one unreadable die.
+
+Rulings worth carrying forward:
+
+- **A stuck weapon costs the swing, not the spotlight.** Losing the turn outright
+  and swinging at Disadvantage were both offered and declined.
+- **Kaleidoscopic is the Harpy's Toxic Aura with a different noun.** "All
+  **targets**" rather than "all creatures", so it is the party only and the Wisps'
+  own side is untouched — the distinction *Scorched Earth* and *Hellfire* made
+  worth reading carefully.
+- **Trapped's upkeep is charged on the Creation's spotlights**, not its victim's,
+  which no `Condition.effect` can express — so the Creation's own hook does it.
+  That is the clearest case yet for why a named state earns its own condition.
+- **Broken Magic needed no usage policy at all.** The SRD prints a d6 table, so
+  which of the three moves comes out is already decided; the only choice left is
+  whether to spend the Stress, which the standing rule answers.
+
 ---
 
 ## Outstanding
@@ -480,47 +714,23 @@ pp. 95-96**, which lists every stat block in the book by name under its tier. It
 is the one place the whole roster is enumerated, so it is what this section is
 kept against.
 
-### Tier 1 — sixteen still to do
+### Tier 1 — done
 
-2.0's tier 1 runs to **86 stat blocks**. Sixty-seven are ported and three are
-Socials skipped by rule, which leaves these sixteen, in the index's own order:
+2.0's tier 1 runs to **86 stat blocks**: **82 are ported** and four are Socials
+skipped by rule (Courtier, Petty Noble, Merchant, Yufo). Nothing is outstanding,
+and no ported feature is left partly implemented.
 
-| | | |
-|---|---|---|
-| Masque Muerte | Poltergeist | Soul-Shattered Mage |
-| Mechanorb | Rabble Mawb | Spellbound Armor |
-| Mountain Troll | Rugaru | Viper |
-| Octopus | Sawtoothed Gillbeast | Waxwork Creation |
-| Panther | | Will-o'-the-Wisps |
-| Phantom | | Yufo |
-
-**Masque Muerte has been read off the page** (printed p. 103, alongside the
-Kelpie): Tier 1 **Solo**, Difficulty 13, thresholds 7/14, HP 8, Stress 4, ATK +4,
-Open-Handed Strike Melee 1d12+2 **magic**. Experience: Grappler +3, Showboat +3.
-Features: *Libre* (can't be Restrained), *Heel Turn*, *Spectral Suplex*,
-*Unmasking Death*, *Tag Team*. Worth knowing before it is planned: three of the
-five key on *Restrained* or a new *Pinned*, and Restrained is recorded-but-inert
-here, so it will want a ruling rather than just code.
+The Enraged Mountain Troll is an eighty-third catalogue entry that is not one of
+the 86 — the SRD prints it as an Evolution under the Mountain Troll rather than as
+a roster entry, and the tier index does not list it.
 
 **Merchant is a Social and is skipped**, confirmed on printed p. 104 — the third
 after Courtier and Petty Noble, and the question this list had been carrying.
 
-**Five of the twenty-one have already been read off the page** while hunting for
-others, so their pages need no second visit:
-
-| Adversary | Type | Page | Features |
-|---|---|---|---|
-| Mechanorb | Standard | 104 | Hive Mind, Adaptive Tactics — the latter uses a **Pool**, a shared token bank across several adversaries that nothing here has |
-| Poltergeist | Ranged | 107 | Specter, Possessor, Ghost Storm |
-| Rabble Mawb | Horde (3/HP) | 107 | Horde (1d4+1), Come Back Worse |
-| Rugaru | Solo | 108 | Relentless (3), Child of Night, Bloodthirsty, Howl at the Moon, Flesh Ripper |
-| Sawtoothed Gillbeast | Standard | 109 | Ka-Chomp, Feeding Frenzy, Scaly |
-
-Worth knowing before the next batch is planned: **Mechanorb's *Adaptive Tactics*
-is the first Pool** — SRD 2.0 defines one as "a collection of tokens shared by
-multiple adversaries", collected in a separate location rather than on a stat
-block (p. 94). Nothing in the project has shared state between adversaries, so
-that one will cost machinery.
+**One correction this section was carrying.** It had the Sawtoothed Gillbeast at
+3 Stress; the printed page says **2**, and the catalogue entry uses the page. Read
+a stat off its own stat block rather than off a note made while hunting for
+something else.
 
 **Types are not in the index**, so which of these are Socials — and therefore
 skipped — is not yet known. `Merchant` is the obvious candidate to check first,

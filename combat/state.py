@@ -61,6 +61,21 @@ class FightState:
     # keyed by (id(holder), name) like the per-rest uses above.
     tokens: dict[tuple[int, str], int] = field(default_factory=dict)
 
+    # **Pools** - tokens that belong to no single combatant, keyed by name alone.
+    # SRD 2.0 p. 94 defines one as "a collection of tokens shared by multiple
+    # adversaries", which the GM "collects in a separate location" rather than on
+    # any stat block, and the Mechanorb's *Adaptive Tactics* is the first.
+    #
+    # Kept beside `tokens` rather than folded into it. Overloading that map by
+    # allowing None in the holder slot was the alternative and was not taken: the
+    # two answer different questions, and a signature that accepted either would
+    # not say which kind a caller meant. Nothing that reads `tokens` changes.
+    #
+    # The consequence that makes it worth having: a pool outlives the combatant
+    # that filled it. Every Mechanorb reads the same bonus, and one of them dying
+    # does not take the tokens with it - only the printed clear does.
+    pools: dict[str, int] = field(default_factory=dict)
+
     # Temporary conditions on either side, keyed the same way. Separate from
     # tokens because a condition is a record rather than a count - it carries the
     # predicate that says when it's over.
@@ -609,6 +624,23 @@ class FightState:
             for (holder_id, _), condition in self.conditions.items()
         )
 
+    def cannot_swing(self, combatant) -> bool:
+        """Whether a condition currently stops `combatant` attacking with a weapon.
+
+        Read off `Condition.prevents_weapon_attack` rather than by name, exactly as
+        its three neighbours are read off theirs - so nothing here or in the turn
+        policy knows that the Waxwork Creation's *Splutch!* is what answers.
+
+        Narrower than `cannot_act` above: this leaves the spotlight alone and takes
+        only the swing, so a PC whose sword is stuck in a wax giant still casts and
+        still plays their cards. A PC with nothing but a weapon spends the turn
+        wrenching at it, which is the cost.
+        """
+        return any(
+            holder_id == id(combatant) and condition.prevents_weapon_attack
+            for (holder_id, _), condition in self.conditions.items()
+        )
+
     def cannot_be_targeted(self, combatant) -> bool:
         """Whether a condition currently puts `combatant` out of reach of an attack.
 
@@ -708,6 +740,38 @@ class FightState:
         if spent > 0:
             self.tokens[(id(holder), name)] = self.token_count(holder, name) - spent
         return spent
+
+    # --- Pools ---------------------------------------------------------------
+    #
+    # The three below are the whole of the Pool machinery. They are deliberately
+    # the same shape as the token methods above with the holder taken out, so a
+    # feature that reads a pool reads like one that reads its own tokens.
+
+    def pool_count(self, name: str) -> int:
+        """How many tokens the pool called `name` is holding."""
+        return self.pools.get(name, 0)
+
+    def add_to_pool(self, name: str, amount: int = 1) -> int:
+        """Add to a pool and return its new size.
+
+        **No cap**, which is where this parts company with `add_token` next door.
+        A holder's tokens are nearly always bounded by the card that places them -
+        five candles, three uses - and the SRD's pools are not: *Adaptive Tactics*
+        adds one on every failed attack roll and says nothing about a ceiling.
+        Content that wants one enforces it for itself.
+        """
+        self.pools[name] = self.pool_count(name) + amount
+        return self.pools[name]
+
+    def clear_pool(self, name: str) -> None:
+        """Empty a pool outright.
+
+        Pools are cleared rather than spent down: the SRD's wording for the one
+        that exists is "clear **all** tokens when any Mechanorb takes Severe
+        damage or is defeated". A partial spend would be `add_to_pool` with a
+        negative amount, and nothing needs it.
+        """
+        self.pools.pop(name, None)
 
     def note(self, message: str) -> None:
         """Record a line of play-by-play, if this run asked for one."""
